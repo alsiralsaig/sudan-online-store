@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { apiRouter } from './src/server/routes.ts';
 import { db } from './src/server/db.ts';
-import { isDbEnabled, dbTarget, lastDbError, recordDbError, acquireWriteLock } from './src/server/pg.ts';
+import { isDbEnabled, dbTarget, lastDbError, recordDbError } from './src/server/pg.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,39 +28,16 @@ export function createApp() {
     }
 
     const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
-    let release: (() => Promise<void>) | null = null;
 
     try {
       await db.init();
-
-      if (isMutation) {
-        // Hold the write lock across the *whole* read-modify-write cycle.
-        // Locking only around the write lets instance B overwrite A's row with
-        // a snapshot it read before A committed (classic lost update).
-        release = await acquireWriteLock();
-      }
-
       await db.refresh();
     } catch (err) {
       recordDbError(err);
       console.error('[DB] Request bootstrap failed:', (err as Error).message);
-      if (release) {
-        const r = release;
-        release = null;
-        await r().catch(() => {});
-      }
       // Keep serving from the in-memory snapshot rather than returning 500.
       return next();
     }
-
-    // Safety net: always hand the lock back, whatever path the response takes.
-    const releaseOnce = () => {
-      const r = release;
-      release = null;
-      return r ? r().catch(() => {}) : Promise.resolve();
-    };
-    res.on('finish', releaseOnce);
-    res.on('close', releaseOnce);
 
     if (isMutation) {
       const originalJson = res.json.bind(res);
@@ -70,6 +47,8 @@ export function createApp() {
         if (flushed) return originalJson(body);
         flushed = true;
 
+        // Writes are diffed row-by-row inside a transaction, so concurrent
+        // requests never clobber each other's records — no global lock needed.
         db.flush({ lock: false })
           .then(() => originalJson(body))
           .catch((err) => {

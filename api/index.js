@@ -332,6 +332,104 @@ async function schemaExists(defs) {
     return false;
   }
 }
+function rowFingerprint(row) {
+  try {
+    return JSON.stringify(row);
+  } catch {
+    return Math.random().toString(36);
+  }
+}
+function keyOf(def, row) {
+  const value = row?.[def.primaryKey];
+  return value === void 0 || value === null ? null : String(value);
+}
+function buildBaseline(defs, data) {
+  const baseline = /* @__PURE__ */ new Map();
+  for (const def of defs) {
+    const rows = data[def.collection] || [];
+    const map = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const key = keyOf(def, row);
+      if (key !== null) map.set(key, rowFingerprint(row));
+    }
+    baseline.set(def.collection, map);
+  }
+  return baseline;
+}
+async function persistDiff(defs, data, baseline) {
+  const work = [];
+  let upsertCount = 0;
+  let deleteCount = 0;
+  for (const def of defs) {
+    const rows = data[def.collection];
+    if (!Array.isArray(rows)) continue;
+    const before = baseline.get(def.collection) || /* @__PURE__ */ new Map();
+    const seen = /* @__PURE__ */ new Set();
+    const upserts = [];
+    for (const row of rows) {
+      const key = keyOf(def, row);
+      if (key === null) continue;
+      seen.add(key);
+      if (before.get(key) !== rowFingerprint(row)) {
+        upserts.push(row);
+      }
+    }
+    const deletes = [...before.keys()].filter((k) => !seen.has(k));
+    if (upserts.length || deletes.length) {
+      work.push({ def, upserts, deletes });
+      upsertCount += upserts.length;
+      deleteCount += deletes.length;
+    }
+  }
+  if (work.length === 0) return { upserts: 0, deletes: 0, collections: [] };
+  await transaction(async (client) => {
+    for (const { def, upserts, deletes } of work) {
+      for (const id of deletes) {
+        await client.query(
+          `DELETE FROM ${q(def.table)} WHERE ${q(def.primaryKey)} = $1`,
+          [id]
+        );
+      }
+      for (const row of upserts) {
+        await upsertRow(client, def, row);
+      }
+    }
+  });
+  return {
+    upserts: upsertCount,
+    deletes: deleteCount,
+    collections: work.map((w) => w.def.collection)
+  };
+}
+async function upsertRow(client, def, row) {
+  const pk = def.primaryKey;
+  const known = Object.keys(def.columns);
+  const values = [String(row[pk])];
+  const placeholders = ["$1"];
+  const assignments = [];
+  const columns = [q(pk)];
+  for (const field of known) {
+    values.push(encodeValue(row[field]));
+    placeholders.push(`$${values.length}`);
+    columns.push(q(field));
+    assignments.push(`${q(field)} = EXCLUDED.${q(field)}`);
+  }
+  const extras = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key === pk || known.includes(key)) continue;
+    extras[key] = value;
+  }
+  values.push(Object.keys(extras).length ? JSON.stringify(extras) : null);
+  placeholders.push(`$${values.length}`);
+  columns.push(q(EXTRA_COLUMN));
+  assignments.push(`${q(EXTRA_COLUMN)} = EXCLUDED.${q(EXTRA_COLUMN)}`);
+  await client.query(
+    `INSERT INTO ${q(def.table)} (${columns.join(", ")})
+     VALUES (${placeholders.join(", ")})
+     ON CONFLICT (${q(pk)}) DO UPDATE SET ${assignments.join(", ")}`,
+    values
+  );
+}
 
 // src/server/db.ts
 var INITIAL_PLANS = [
@@ -1556,7 +1654,7 @@ var Database = class {
     this.tableDefs = [];
     this.ready = null;
     this.dirty = false;
-    /** Cheap fingerprint per collection, used to persist only what changed. */
+    /** Row-level snapshot of what Postgres already holds. */
     this.baseline = /* @__PURE__ */ new Map();
     this.data = this.getInitialSeedData();
   }
@@ -1600,22 +1698,12 @@ var Database = class {
     this.data = { ...this.data, ...loaded };
     this.captureBaseline();
   }
-  /** Remember the shape of every collection so flush() can skip unchanged ones. */
+  /** Remember exactly which rows Postgres already holds. */
   captureBaseline() {
-    this.baseline.clear();
-    for (const [collection, rows] of Object.entries(this.data)) {
-      this.baseline.set(collection, fingerprint(rows));
-    }
-  }
-  /** Collections whose contents differ from what was last read from Postgres. */
-  changedCollections() {
-    const changed = /* @__PURE__ */ new Set();
-    for (const [collection, rows] of Object.entries(this.data)) {
-      if (fingerprint(rows) !== this.baseline.get(collection)) {
-        changed.add(collection);
-      }
-    }
-    return changed;
+    this.baseline = buildBaseline(
+      this.tableDefs,
+      this.data
+    );
   }
   /** Flush the in-memory snapshot back to Postgres. Serialised by an advisory
    *  lock so concurrent lambdas cannot overwrite each other. */
@@ -1623,25 +1711,23 @@ var Database = class {
     const useLock = options.lock !== false;
     if (!isDbEnabled() || this.tableDefs.length === 0) return;
     if (!this.dirty) return;
-    const changed = this.changedCollections();
-    if (changed.size === 0) {
-      this.dirty = false;
-      return;
-    }
     const release = useLock ? await acquireWriteLock() : async () => {
     };
     try {
-      await persistAll(
+      const result = await persistDiff(
         this.tableDefs,
         this.data,
-        changed
+        this.baseline
       );
       this.dirty = false;
-      for (const collection of changed) {
-        this.baseline.set(
-          collection,
-          fingerprint(this.data[collection])
+      if (result.upserts || result.deletes) {
+        const partial = buildBaseline(
+          this.tableDefs.filter((d) => result.collections.includes(d.collection)),
+          this.data
         );
+        for (const [collection, rows] of partial) {
+          this.baseline.set(collection, rows);
+        }
       }
     } finally {
       await release();
@@ -2380,13 +2466,6 @@ var Database = class {
     return { success: true };
   }
 };
-function fingerprint(rows) {
-  try {
-    return JSON.stringify(rows);
-  } catch {
-    return Math.random().toString(36);
-  }
-}
 var db = new Database();
 
 // src/server/routes.ts
@@ -4357,32 +4436,14 @@ function createApp() {
       return next();
     }
     const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-    let release = null;
     try {
       await db.init();
-      if (isMutation) {
-        release = await acquireWriteLock();
-      }
       await db.refresh();
     } catch (err) {
       recordDbError(err);
       console.error("[DB] Request bootstrap failed:", err.message);
-      if (release) {
-        const r = release;
-        release = null;
-        await r().catch(() => {
-        });
-      }
       return next();
     }
-    const releaseOnce = () => {
-      const r = release;
-      release = null;
-      return r ? r().catch(() => {
-      }) : Promise.resolve();
-    };
-    res.on("finish", releaseOnce);
-    res.on("close", releaseOnce);
     if (isMutation) {
       const originalJson = res.json.bind(res);
       let flushed = false;

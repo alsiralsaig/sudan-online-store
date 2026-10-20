@@ -327,3 +327,148 @@ export async function isSeeded(defs: TableDef[]): Promise<boolean> {
     return false;
   }
 }
+
+
+/* ------------------------------------------------------------------ */
+/*  Per-row diffing                                                    */
+/*                                                                     */
+/*  Rewriting whole tables is what loses data under concurrency:       */
+/*  instance B's snapshot, read before A committed, deletes A's row.    */
+/*  Diffing row-by-row means two concurrent inserts never touch the     */
+/*  same record, so nothing is lost — and writes get far smaller.       */
+/* ------------------------------------------------------------------ */
+
+/** collection → (primary key → row fingerprint) */
+export type Baseline = Map<string, Map<string, string>>;
+
+function rowFingerprint(row: Record<string, any>): string {
+  try {
+    return JSON.stringify(row);
+  } catch {
+    return Math.random().toString(36);
+  }
+}
+
+function keyOf(def: TableDef, row: Record<string, any>): string | null {
+  const value = row?.[def.primaryKey];
+  return value === undefined || value === null ? null : String(value);
+}
+
+export function buildBaseline(
+  defs: TableDef[],
+  data: Record<string, any[]>
+): Baseline {
+  const baseline: Baseline = new Map();
+
+  for (const def of defs) {
+    const rows = data[def.collection] || [];
+    const map = new Map<string, string>();
+    for (const row of rows) {
+      const key = keyOf(def, row);
+      if (key !== null) map.set(key, rowFingerprint(row));
+    }
+    baseline.set(def.collection, map);
+  }
+
+  return baseline;
+}
+
+/**
+ * Apply only the rows that differ from the baseline.
+ * Returns the number of upserts and deletes actually executed.
+ */
+export async function persistDiff(
+  defs: TableDef[],
+  data: Record<string, any[]>,
+  baseline: Baseline
+): Promise<{ upserts: number; deletes: number; collections: string[] }> {
+  const work: { def: TableDef; upserts: any[]; deletes: string[] }[] = [];
+  let upsertCount = 0;
+  let deleteCount = 0;
+
+  for (const def of defs) {
+    const rows = data[def.collection];
+    if (!Array.isArray(rows)) continue;
+
+    const before = baseline.get(def.collection) || new Map<string, string>();
+    const seen = new Set<string>();
+    const upserts: any[] = [];
+
+    for (const row of rows) {
+      const key = keyOf(def, row);
+      if (key === null) continue;
+      seen.add(key);
+      if (before.get(key) !== rowFingerprint(row)) {
+        upserts.push(row);
+      }
+    }
+
+    const deletes = [...before.keys()].filter((k) => !seen.has(k));
+
+    if (upserts.length || deletes.length) {
+      work.push({ def, upserts, deletes });
+      upsertCount += upserts.length;
+      deleteCount += deletes.length;
+    }
+  }
+
+  if (work.length === 0) return { upserts: 0, deletes: 0, collections: [] };
+
+  await transaction(async (client) => {
+    for (const { def, upserts, deletes } of work) {
+      for (const id of deletes) {
+        await client.query(
+          `DELETE FROM ${q(def.table)} WHERE ${q(def.primaryKey)} = $1`,
+          [id]
+        );
+      }
+      for (const row of upserts) {
+        await upsertRow(client, def, row);
+      }
+    }
+  });
+
+  return {
+    upserts: upsertCount,
+    deletes: deleteCount,
+    collections: work.map((w) => w.def.collection),
+  };
+}
+
+async function upsertRow(
+  client: SqlClient,
+  def: TableDef,
+  row: Record<string, any>
+): Promise<void> {
+  const pk = def.primaryKey;
+  const known = Object.keys(def.columns);
+
+  const values: any[] = [String(row[pk])];
+  const placeholders: string[] = ['$1'];
+  const assignments: string[] = [];
+  const columns: string[] = [q(pk)];
+
+  for (const field of known) {
+    values.push(encodeValue(row[field]));
+    placeholders.push(`$${values.length}`);
+    columns.push(q(field));
+    assignments.push(`${q(field)} = EXCLUDED.${q(field)}`);
+  }
+
+  const extras: Record<string, any> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key === pk || known.includes(key)) continue;
+    extras[key] = value;
+  }
+  values.push(Object.keys(extras).length ? JSON.stringify(extras) : null);
+  placeholders.push(`$${values.length}`);
+  columns.push(q(EXTRA_COLUMN));
+  assignments.push(`${q(EXTRA_COLUMN)} = EXCLUDED.${q(EXTRA_COLUMN)}`);
+
+  await client.query(
+    `INSERT INTO ${q(def.table)} (${columns.join(', ')})
+     VALUES (${placeholders.join(', ')})
+     ON CONFLICT (${q(pk)}) DO UPDATE SET ${assignments.join(', ')}`,
+    values
+  );
+}
