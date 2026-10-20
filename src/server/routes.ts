@@ -1,4 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
 import type {
@@ -2473,6 +2472,9 @@ apiRouter.post("/assistant/chat", async (req: Request, res: Response) => {
       return res.json({ reply: null, reason: "NO_API_KEY" });
     }
 
+    // Lazy-load the SDK: keeps it out of the static bundle so the
+    // serverless function boots even if the optional AI dependency fails.
+    const { GoogleGenAI } = await import("@google/genai");
     const ai = new GoogleGenAI({ apiKey });
     const systemInstruction = `أنت "سند" - المساعد الذكي الخبير والمتحدث الأصيل باللهجة السودانية التابع لمنصة سند (Sanad POS & Commerce) للتجارة ونقاط البيع السحابية في السودان.
 أسلوبك:
