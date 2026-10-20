@@ -19,6 +19,29 @@ export interface SqlClient {
 let pool: pg.Pool | null = null;
 let injected: SqlClient | null = null;
 
+/** Last connection/query failure, surfaced by /api/health for operations. */
+export let lastDbError: string | null = null;
+
+export function recordDbError(err: unknown): void {
+  lastDbError = err instanceof Error ? err.message : String(err);
+}
+
+export function clearDbError(): void {
+  lastDbError = null;
+}
+
+/** Redacted connection info — never exposes the password. */
+export function dbTarget(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) return 'unset';
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.pathname} pooler=${u.hostname.includes('-pooler')} sslmode=${u.searchParams.get('sslmode') || 'none'}`;
+  } catch {
+    return 'unparseable';
+  }
+}
+
 /** True when a real database is configured. */
 export function isDbEnabled(): boolean {
   return injected !== null || !!process.env.DATABASE_URL;
@@ -60,7 +83,14 @@ function activeClient(): SqlClient {
 
 export async function query(text: string, params?: any[]): Promise<QueryResult> {
   const client = activeClient();
-  return client.query(text, params);
+  try {
+    const result = await client.query(text, params);
+    clearDbError();
+    return result;
+  } catch (err) {
+    recordDbError(err);
+    throw err;
+  }
 }
 
 /**

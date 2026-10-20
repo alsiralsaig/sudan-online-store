@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { apiRouter } from './src/server/routes.ts';
 import { db } from './src/server/db.ts';
-import { isDbEnabled } from './src/server/pg.ts';
+import { isDbEnabled, dbTarget, lastDbError, recordDbError } from './src/server/pg.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +33,7 @@ export function createApp() {
       await db.init();
       await db.refresh();
     } catch (err) {
+      recordDbError(err);
       console.error('[DB] Request bootstrap failed:', (err as Error).message);
       // Keep serving from the in-memory snapshot rather than returning 500.
       return next();
@@ -62,7 +63,18 @@ export function createApp() {
 
   // Health check
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', service: 'Sanad POS', timestamp: new Date().toISOString() });
+    res.json({
+      status: 'ok',
+      service: 'Sanad POS',
+      timestamp: new Date().toISOString(),
+      database: {
+        enabled: isDbEnabled(),
+        target: dbTarget(),
+        tables: db.tableCount(),
+        persisted: db.isPersisting(),
+        lastError: lastDbError,
+      },
+    });
   });
 
   // Static assets from public/

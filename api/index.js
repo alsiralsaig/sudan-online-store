@@ -10,6 +10,23 @@ import { Router } from "express";
 import pg from "pg";
 var pool = null;
 var injected = null;
+var lastDbError = null;
+function recordDbError(err) {
+  lastDbError = err instanceof Error ? err.message : String(err);
+}
+function clearDbError() {
+  lastDbError = null;
+}
+function dbTarget() {
+  const url = process.env.DATABASE_URL;
+  if (!url) return "unset";
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.pathname} pooler=${u.hostname.includes("-pooler")} sslmode=${u.searchParams.get("sslmode") || "none"}`;
+  } catch {
+    return "unparseable";
+  }
+}
 function isDbEnabled() {
   return injected !== null || !!process.env.DATABASE_URL;
 }
@@ -39,7 +56,14 @@ function activeClient() {
 }
 async function query(text, params) {
   const client = activeClient();
-  return client.query(text, params);
+  try {
+    const result = await client.query(text, params);
+    clearDbError();
+    return result;
+  } catch (err) {
+    recordDbError(err);
+    throw err;
+  }
 }
 async function transaction(fn) {
   const client = activeClient();
@@ -1552,6 +1576,13 @@ var Database = class {
   }
   isDatabaseEnabled() {
     return isDbEnabled();
+  }
+  tableCount() {
+    return this.tableDefs.length;
+  }
+  /** True when the schema is live and writes are actually reaching Postgres. */
+  isPersisting() {
+    return isDbEnabled() && this.tableDefs.length > 0 && this.ready !== null;
   }
   getInitialSeedData() {
     return {
@@ -4247,6 +4278,7 @@ function createApp() {
       await db.init();
       await db.refresh();
     } catch (err) {
+      recordDbError(err);
       console.error("[DB] Request bootstrap failed:", err.message);
       return next();
     }
@@ -4264,7 +4296,18 @@ function createApp() {
   });
   app.use("/api", apiRouter);
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", service: "Sanad POS", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+    res.json({
+      status: "ok",
+      service: "Sanad POS",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      database: {
+        enabled: isDbEnabled(),
+        target: dbTarget(),
+        tables: db.tableCount(),
+        persisted: db.isPersisting(),
+        lastError: lastDbError
+      }
+    });
   });
   app.use("/assets", express.static(path.resolve(__dirname, "public/assets")));
   app.use("/icons", express.static(path.resolve(__dirname, "public/icons")));

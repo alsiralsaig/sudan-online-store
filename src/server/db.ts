@@ -1384,6 +1384,15 @@ class Database {
     return isDbEnabled();
   }
 
+  public tableCount(): number {
+    return this.tableDefs.length;
+  }
+
+  /** True when the schema is live and writes are actually reaching Postgres. */
+  public isPersisting(): boolean {
+    return isDbEnabled() && this.tableDefs.length > 0 && this.ready !== null;
+  }
+
   private getInitialSeedData(): DatabaseSchema {
     return {
       tenants: INITIAL_TENANTS,
