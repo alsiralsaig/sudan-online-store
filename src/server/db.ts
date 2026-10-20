@@ -1307,6 +1307,8 @@ class Database {
   private tableDefs: TableDef[] = [];
   private ready: Promise<void> | null = null;
   private dirty = false;
+  /** Cheap fingerprint per collection, used to persist only what changed. */
+  private baseline = new Map<string, string>();
 
   constructor() {
     // Synchronous seed so the API still answers if the database is unreachable.
@@ -1334,6 +1336,7 @@ class Database {
 
         if (hasTenants) {
           this.data = { ...this.data, ...loaded } as DatabaseSchema;
+          this.captureBaseline();
           console.log('[DB] Loaded from Postgres:', Object.entries(loaded)
             .map(([k, v]) => `${k}=${v.length}`)
             .join(' '));
@@ -1359,6 +1362,26 @@ class Database {
     if (!isDbEnabled() || this.tableDefs.length === 0) return;
     const loaded = await loadAll(this.tableDefs);
     this.data = { ...this.data, ...loaded } as DatabaseSchema;
+    this.captureBaseline();
+  }
+
+  /** Remember the shape of every collection so flush() can skip unchanged ones. */
+  private captureBaseline(): void {
+    this.baseline.clear();
+    for (const [collection, rows] of Object.entries(this.data)) {
+      this.baseline.set(collection, fingerprint(rows));
+    }
+  }
+
+  /** Collections whose contents differ from what was last read from Postgres. */
+  private changedCollections(): Set<string> {
+    const changed = new Set<string>();
+    for (const [collection, rows] of Object.entries(this.data)) {
+      if (fingerprint(rows) !== this.baseline.get(collection)) {
+        changed.add(collection);
+      }
+    }
+    return changed;
   }
 
   /** Flush the in-memory snapshot back to Postgres. Serialised by an advisory
@@ -1367,10 +1390,28 @@ class Database {
     if (!isDbEnabled() || this.tableDefs.length === 0) return;
     if (!this.dirty) return;
 
+    // Work out what actually changed before taking the lock — a POS sale
+    // touches two or three collections, not all 26.
+    const changed = this.changedCollections();
+    if (changed.size === 0) {
+      this.dirty = false;
+      return;
+    }
+
     const release = await acquireWriteLock();
     try {
-      await persistAll(this.tableDefs, this.data as unknown as Record<string, any[]>);
+      await persistAll(
+        this.tableDefs,
+        this.data as unknown as Record<string, any[]>,
+        changed
+      );
       this.dirty = false;
+      for (const collection of changed) {
+        this.baseline.set(
+          collection,
+          fingerprint((this.data as any)[collection])
+        );
+      }
     } finally {
       await release();
     }
@@ -2269,6 +2310,15 @@ class Database {
     audit.updatedAt = new Date().toISOString();
     this.commit();
     return { success: true };
+  }
+}
+
+/** Order-insensitive-enough fingerprint; ordering is stable in practice. */
+function fingerprint(rows: unknown): string {
+  try {
+    return JSON.stringify(rows);
+  } catch {
+    return Math.random().toString(36);
   }
 }
 

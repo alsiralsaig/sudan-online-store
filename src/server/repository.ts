@@ -198,10 +198,17 @@ function hydrate(def: TableDef, row: Record<string, any>): Record<string, any> {
  */
 export async function persistAll(
   defs: TableDef[],
-  data: Record<string, any[]>
+  data: Record<string, any[]>,
+  onlyCollections?: Set<string>
 ): Promise<void> {
+  const targets = onlyCollections
+    ? defs.filter((d) => onlyCollections.has(d.collection))
+    : defs;
+
+  if (targets.length === 0) return;
+
   await transaction(async (client) => {
-    for (const def of defs) {
+    for (const def of targets) {
       const rows = data[def.collection];
       if (!Array.isArray(rows)) continue;
       await persistTable(client, def, rows);

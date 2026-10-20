@@ -128,7 +128,7 @@ const LOCK_KEY = 982_451_301; // arbitrary but stable across deployments
  * Without this, two lambdas could each write a stale snapshot and silently
  * lose one another's changes.
  */
-export async function acquireWriteLock(): Promise<() => Promise<void>> {
+export async function acquireWriteLock(waitMs = 15_000): Promise<() => Promise<void>> {
   if (injected) {
     // Single-process test client: no cross-instance contention to guard against.
     return async () => {};
@@ -136,8 +136,23 @@ export async function acquireWriteLock(): Promise<() => Promise<void>> {
 
   const pool = getPool();
   const client = await pool.connect();
+  const deadline = Date.now() + waitMs;
+  let delay = 40;
+
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [LOCK_KEY]);
+    // Try-lock in a loop instead of blocking pg_advisory_lock: a blocking call
+    // can hang past the serverless invocation limit and fail the whole request.
+    for (;;) {
+      const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK_KEY]);
+      if (rows[0]?.ok) break;
+
+      if (Date.now() > deadline) {
+        throw new Error('DB write lock timeout — another instance is still writing');
+      }
+
+      await new Promise((r) => setTimeout(r, delay + Math.random() * delay));
+      delay = Math.min(delay * 2, 500);
+    }
   } catch (err) {
     client.release();
     throw err;

@@ -85,15 +85,25 @@ async function transaction(fn) {
   }
 }
 var LOCK_KEY = 982451301;
-async function acquireWriteLock() {
+async function acquireWriteLock(waitMs = 15e3) {
   if (injected) {
     return async () => {
     };
   }
   const pool2 = getPool();
   const client = await pool2.connect();
+  const deadline = Date.now() + waitMs;
+  let delay = 40;
   try {
-    await client.query("SELECT pg_advisory_lock($1)", [LOCK_KEY]);
+    for (; ; ) {
+      const { rows } = await client.query("SELECT pg_try_advisory_lock($1) AS ok", [LOCK_KEY]);
+      if (rows[0]?.ok) break;
+      if (Date.now() > deadline) {
+        throw new Error("DB write lock timeout \u2014 another instance is still writing");
+      }
+      await new Promise((r) => setTimeout(r, delay + Math.random() * delay));
+      delay = Math.min(delay * 2, 500);
+    }
   } catch (err) {
     client.release();
     throw err;
@@ -236,9 +246,11 @@ function hydrate(def, row) {
   }
   return out;
 }
-async function persistAll(defs, data) {
+async function persistAll(defs, data, onlyCollections) {
+  const targets = onlyCollections ? defs.filter((d) => onlyCollections.has(d.collection)) : defs;
+  if (targets.length === 0) return;
   await transaction(async (client) => {
-    for (const def of defs) {
+    for (const def of targets) {
       const rows = data[def.collection];
       if (!Array.isArray(rows)) continue;
       await persistTable(client, def, rows);
@@ -1518,6 +1530,8 @@ var Database = class {
     this.tableDefs = [];
     this.ready = null;
     this.dirty = false;
+    /** Cheap fingerprint per collection, used to persist only what changed. */
+    this.baseline = /* @__PURE__ */ new Map();
     this.data = this.getInitialSeedData();
   }
   /* ------------------------------------------------------------------ */
@@ -1537,6 +1551,7 @@ var Database = class {
         const hasTenants = (loaded.tenants || []).length > 0;
         if (hasTenants) {
           this.data = { ...this.data, ...loaded };
+          this.captureBaseline();
           console.log("[DB] Loaded from Postgres:", Object.entries(loaded).map(([k, v]) => `${k}=${v.length}`).join(" "));
         } else {
           this.data = seed;
@@ -1557,16 +1572,49 @@ var Database = class {
     if (!isDbEnabled() || this.tableDefs.length === 0) return;
     const loaded = await loadAll(this.tableDefs);
     this.data = { ...this.data, ...loaded };
+    this.captureBaseline();
+  }
+  /** Remember the shape of every collection so flush() can skip unchanged ones. */
+  captureBaseline() {
+    this.baseline.clear();
+    for (const [collection, rows] of Object.entries(this.data)) {
+      this.baseline.set(collection, fingerprint(rows));
+    }
+  }
+  /** Collections whose contents differ from what was last read from Postgres. */
+  changedCollections() {
+    const changed = /* @__PURE__ */ new Set();
+    for (const [collection, rows] of Object.entries(this.data)) {
+      if (fingerprint(rows) !== this.baseline.get(collection)) {
+        changed.add(collection);
+      }
+    }
+    return changed;
   }
   /** Flush the in-memory snapshot back to Postgres. Serialised by an advisory
    *  lock so concurrent lambdas cannot overwrite each other. */
   async flush() {
     if (!isDbEnabled() || this.tableDefs.length === 0) return;
     if (!this.dirty) return;
+    const changed = this.changedCollections();
+    if (changed.size === 0) {
+      this.dirty = false;
+      return;
+    }
     const release = await acquireWriteLock();
     try {
-      await persistAll(this.tableDefs, this.data);
+      await persistAll(
+        this.tableDefs,
+        this.data,
+        changed
+      );
       this.dirty = false;
+      for (const collection of changed) {
+        this.baseline.set(
+          collection,
+          fingerprint(this.data[collection])
+        );
+      }
     } finally {
       await release();
     }
@@ -2304,6 +2352,13 @@ var Database = class {
     return { success: true };
   }
 };
+function fingerprint(rows) {
+  try {
+    return JSON.stringify(rows);
+  } catch {
+    return Math.random().toString(36);
+  }
+}
 var db = new Database();
 
 // src/server/routes.ts
@@ -4288,7 +4343,18 @@ function createApp() {
       res.json = (body) => {
         if (flushed) return originalJson(body);
         flushed = true;
-        db.flush().catch((err) => console.error("[DB] Flush failed:", err.message)).finally(() => originalJson(body));
+        db.flush().then(() => originalJson(body)).catch((err) => {
+          const message = err.message;
+          console.error("[DB] Flush failed:", message);
+          recordDbError(err);
+          const status = /timeout/i.test(message) ? 503 : 500;
+          res.status(status);
+          originalJson({
+            error: "DB_WRITE_FAILED",
+            message: "\u062A\u0639\u0630\u0631 \u062D\u0641\u0638 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A\u060C \u064A\u0631\u062C\u0649 \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
+            detail: message
+          });
+        });
         return res;
       };
     }

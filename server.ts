@@ -48,8 +48,22 @@ export function createApp() {
         flushed = true;
 
         db.flush()
-          .catch((err) => console.error('[DB] Flush failed:', (err as Error).message))
-          .finally(() => originalJson(body));
+          .then(() => originalJson(body))
+          .catch((err) => {
+            // Never report success for a write that did not reach Postgres:
+            // the POS keeps unsynced sales in IndexedDB and will retry.
+            const message = (err as Error).message;
+            console.error('[DB] Flush failed:', message);
+            recordDbError(err);
+
+            const status = /timeout/i.test(message) ? 503 : 500;
+            res.status(status);
+            originalJson({
+              error: 'DB_WRITE_FAILED',
+              message: 'تعذر حفظ البيانات في قاعدة البيانات، يرجى إعادة المحاولة.',
+              detail: message,
+            });
+          });
 
         return res;
       }) as typeof res.json;
