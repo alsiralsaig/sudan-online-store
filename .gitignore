@@ -11,3 +11,5 @@ coverage/
 bun.lock
 metadata.json
 .vercel
+api/index.js
+api/index.ts
