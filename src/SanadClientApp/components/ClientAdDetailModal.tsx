@@ -44,7 +44,22 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
       >
         {/* Header Media */}
         <div className="relative aspect-[16/10] w-full bg-slate-900">
-          <img src={ad.imageUrl} alt={ad.title} className="w-full h-full object-cover" />
+          {ad.videoUrl ? (
+            <video
+              src={ad.videoUrl}
+              poster={ad.imageUrl || undefined}
+              className="w-full h-full object-cover"
+              controls
+              playsInline
+              preload="metadata"
+            />
+          ) : ad.imageUrl ? (
+            <img src={ad.imageUrl} alt={ad.title} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-emerald-900 to-slate-900">
+              <span className="text-white/70 text-sm font-bold">إعلان سند</span>
+            </div>
+          )}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
 
           <button

@@ -2479,6 +2479,106 @@ function newCode(prefix, pad = 6) {
   return `${prefix}-${rand}`;
 }
 
+// src/server/media.ts
+var TABLE = "sanad_media";
+var MAX_RAW_BYTES = 3 * 1024 * 1024;
+var ready = null;
+function ensureMediaTable() {
+  if (!ready) {
+    ready = transaction(async (client) => {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${TABLE} (
+          id          text PRIMARY KEY,
+          kind        text NOT NULL,
+          mime        text NOT NULL,
+          bytes       integer NOT NULL,
+          owner_phone text,
+          data        text NOT NULL,
+          created_at  timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_${TABLE}_created ON ${TABLE} (created_at)`
+      );
+    }).catch((err) => {
+      ready = null;
+      throw err;
+    });
+  }
+  return ready;
+}
+var ALLOWED_PREFIXES = {
+  image: ["data:image/jpeg", "data:image/png", "data:image/webp", "data:image/gif"],
+  video: ["data:video/mp4", "data:video/webm", "data:video/quicktime"]
+};
+async function saveMedia(input) {
+  await ensureMediaTable();
+  const { dataUrl, kind } = input;
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+    throw new HttpError(400, "BAD_DATA_URL", "\u0635\u064A\u063A\u0629 \u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629.");
+  }
+  const comma = dataUrl.indexOf(",");
+  if (comma === -1) {
+    throw new HttpError(400, "BAD_DATA_URL", "\u0635\u064A\u063A\u0629 \u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629.");
+  }
+  const header = dataUrl.slice(5, comma);
+  const isBase64 = header.includes(";base64");
+  if (!isBase64) {
+    throw new HttpError(400, "BAD_DATA_URL", "\u064A\u062C\u0628 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0645\u0644\u0641 \u0628\u062A\u0631\u0645\u064A\u0632 base64.");
+  }
+  const mime = header.split(";")[0].toLowerCase();
+  const allowed = ALLOWED_PREFIXES[kind] || [];
+  if (!allowed.some((prefix) => dataUrl.toLowerCase().startsWith(prefix))) {
+    throw new HttpError(
+      415,
+      "UNSUPPORTED_TYPE",
+      kind === "video" ? "\u0635\u064A\u063A\u0629 \u0627\u0644\u0641\u064A\u062F\u064A\u0648 \u063A\u064A\u0631 \u0645\u062F\u0639\u0648\u0645\u0629. \u0627\u0633\u062A\u062E\u062F\u0645 MP4 \u0623\u0648 WebM." : "\u0635\u064A\u063A\u0629 \u0627\u0644\u0635\u0648\u0631\u0629 \u063A\u064A\u0631 \u0645\u062F\u0639\u0648\u0645\u0629. \u0627\u0633\u062A\u062E\u062F\u0645 JPG \u0623\u0648 PNG \u0623\u0648 WebP."
+    );
+  }
+  const base64 = dataUrl.slice(comma + 1);
+  const bytes = Math.floor(base64.length * 3 / 4);
+  if (bytes > MAX_RAW_BYTES) {
+    throw new HttpError(
+      413,
+      "TOO_LARGE",
+      `\u062D\u062C\u0645 \u0627\u0644\u0645\u0644\u0641 ${(bytes / 1024 / 1024).toFixed(1)} \u0645\u064A\u062C\u0627\u060C \u0648\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${MAX_RAW_BYTES / 1024 / 1024} \u0645\u064A\u062C\u0627.`
+    );
+  }
+  const id = newId(kind === "video" ? "vid" : "img");
+  await query(
+    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, kind, mime, bytes, input.ownerPhone || null, base64]
+  );
+  return { id, url: `/api/media/${id}`, mime, bytes, kind };
+}
+async function getMedia(id) {
+  await ensureMediaTable();
+  const { rows } = await query(
+    `SELECT mime, data, bytes FROM ${TABLE} WHERE id = $1`,
+    [id]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    mime: row.mime,
+    bytes: Number(row.bytes) || 0,
+    data: Buffer.from(row.data, "base64")
+  };
+}
+async function deleteMedia(id) {
+  await ensureMediaTable();
+  const { rowCount } = await query(`DELETE FROM ${TABLE} WHERE id = $1`, [id]);
+  return (rowCount ?? 0) > 0;
+}
+var HttpError = class extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+};
+
 // src/server/routes.ts
 var apiRouter = Router();
 var requireTenant = (req, res, next) => {
@@ -4434,6 +4534,53 @@ apiRouter.post("/assistant/chat", async (req, res) => {
     return res.json({ reply: null, reason: "FALLBACK" });
   }
 });
+apiRouter.post("/media", async (req, res) => {
+  try {
+    const { dataUrl, kind, ownerPhone } = req.body || {};
+    const media = await saveMedia({
+      dataUrl,
+      kind: kind === "video" ? "video" : "image",
+      ownerPhone: typeof ownerPhone === "string" ? ownerPhone : void 0
+    });
+    res.json({ success: true, ...media });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ error: err.code, message: err.message });
+    }
+    console.error("[media] upload failed:", err);
+    res.status(500).json({
+      error: "UPLOAD_FAILED",
+      message: "\u062A\u0639\u0630\u0631 \u0631\u0641\u0639 \u0627\u0644\u0645\u0644\u0641\u060C \u062D\u0627\u0648\u0644 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649."
+    });
+  }
+});
+apiRouter.get("/media/:id", async (req, res) => {
+  try {
+    const media = await getMedia(req.params.id);
+    if (!media) {
+      return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+    }
+    res.setHeader("Content-Type", media.mime);
+    res.setHeader("Content-Length", String(media.data.length));
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.end(media.data);
+  } catch (err) {
+    console.error("[media] read failed:", err);
+    res.status(500).json({ error: "READ_FAILED" });
+  }
+});
+apiRouter.get("/media", (_req, res) => {
+  res.json({ maxUploadBytes: MAX_RAW_BYTES, kinds: ["image", "video"] });
+});
+apiRouter.delete("/media/:id", async (req, res) => {
+  try {
+    const removed = await deleteMedia(req.params.id);
+    res.json({ success: removed });
+  } catch (err) {
+    console.error("[media] delete failed:", err);
+    res.status(500).json({ error: "DELETE_FAILED" });
+  }
+});
 
 // server.ts
 var __filename = fileURLToPath(import.meta.url);
@@ -4453,6 +4600,9 @@ function createApp() {
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
   app.use("/api", async (req, res, next) => {
+    if (req.path === "/media" || req.path.startsWith("/media/")) {
+      return next();
+    }
     if (!isDbEnabled()) {
       return next();
     }

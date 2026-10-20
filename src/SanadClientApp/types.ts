@@ -89,6 +89,8 @@ export interface ClientMarketAd {
   location: string;
   timeAgo: string;
   imageUrl: string;
+  /** Short video attached to the ad, served from /api/media/:id */
+  videoUrl?: string;
   isVip?: boolean;
   tag?: string;
   phone?: string;

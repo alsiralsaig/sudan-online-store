@@ -16,6 +16,7 @@ import {
   Building,
 } from 'lucide-react';
 import type { ClientMarketAd, ClientPurchaseRequest } from '../types.ts';
+import { MediaUploader, type UploadedMedia } from './MediaUploader.tsx';
 
 interface ClientCreateAdOrRequestModalProps {
   isOpen: boolean;
@@ -43,8 +44,10 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
     phone: '',
     description: '',
     isVip: false,
-    selectedImage: '/src/assets/images/albander_hyundai_car_1792184093653.jpg',
   });
+
+  const [adMedia, setAdMedia] = useState<UploadedMedia | null>(null);
+  const videoUrl: string | null = null;
 
   // Purchase request form state
   const [requestForm, setRequestForm] = useState({
@@ -79,7 +82,8 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
       priceSdg: Number(adForm.priceSdg) || 0,
       location: adForm.location,
       timeAgo: 'الآن',
-      imageUrl: adForm.selectedImage,
+      imageUrl: adMedia?.kind === 'image' ? adMedia.url : '',
+      videoUrl: adMedia?.kind === 'video' ? adMedia.url : videoUrl || undefined,
       isVip: adForm.isVip,
       tag: adForm.isVip ? 'VIP' : 'service',
       phone: adForm.phone,
@@ -269,20 +273,24 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
               </div>
             </div>
 
-            {/* Image Selection */}
+            {/* Media Upload */}
+            <MediaUploader value={adMedia} onChange={setAdMedia} />
+
+            {/* Ready-made samples as a fallback */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
-                <span>اختر صورة الإعلان:</span>
-                <span className="text-[10px] text-slate-400">صور عالية الدقة جاهزة</span>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1.5">
+                أو اختر صورة جاهزة:
               </label>
               <div className="grid grid-cols-4 gap-2">
                 {sampleImages.map((img, i) => (
                   <button
                     key={i}
                     type="button"
-                    onClick={() => setAdForm({ ...adForm, selectedImage: img.url })}
+                    onClick={() =>
+                      setAdMedia({ url: img.url, kind: 'image', previewUrl: img.url })
+                    }
                     className={`relative rounded-xl overflow-hidden border-2 aspect-video transition-all ${
-                      adForm.selectedImage === img.url
+                      adMedia?.url === img.url
                         ? 'border-emerald-600 ring-2 ring-emerald-500/20'
                         : 'border-slate-200 opacity-70 hover:opacity-100'
                     }`}

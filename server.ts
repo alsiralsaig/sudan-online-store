@@ -45,6 +45,12 @@ export function createApp() {
   /*  the response would silently lose data.                             */
   /* ------------------------------------------------------------------ */
   app.use('/api', async (req, res, next) => {
+    // Media is stored in its own table and never enters the in-memory
+    // snapshot, so it does not need the refresh/flush cycle.
+    if (req.path === '/media' || req.path.startsWith('/media/')) {
+      return next();
+    }
+
     if (!isDbEnabled()) {
       return next();
     }

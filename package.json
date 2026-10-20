@@ -16,7 +16,8 @@
     "db:migrate": "tsx scripts/db-migrate.ts",
     "db:test": "tsx scripts/test-db.ts",
     "db:test:api": "tsx scripts/test-api.ts",
-    "db:clean-tests": "tsx scripts/clean-tests.ts"
+    "db:clean-tests": "tsx scripts/clean-tests.ts",
+    "db:test:media": "tsx scripts/test-media.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

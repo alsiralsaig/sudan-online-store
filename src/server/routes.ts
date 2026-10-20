@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
 import { newId, newCode } from './ids.ts';
+import { saveMedia, getMedia, deleteMedia, HttpError, MAX_RAW_BYTES } from './media.ts';
 import type {
   Sale,
   SaleItem,
@@ -2508,5 +2509,61 @@ apiRouter.post("/assistant/chat", async (req: Request, res: Response) => {
   } catch (error) {
     console.warn("Assistant route fallback:", error instanceof Error ? error.message : String(error));
     return res.json({ reply: null, reason: "FALLBACK" });
+  }
+});
+
+/* =========================================================================
+   Media uploads — photos and short videos for marketplace ads
+   ========================================================================= */
+
+apiRouter.post('/media', async (req, res) => {
+  try {
+    const { dataUrl, kind, ownerPhone } = req.body || {};
+    const media = await saveMedia({
+      dataUrl,
+      kind: kind === 'video' ? 'video' : 'image',
+      ownerPhone: typeof ownerPhone === 'string' ? ownerPhone : undefined,
+    });
+    res.json({ success: true, ...media });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ error: err.code, message: err.message });
+    }
+    console.error('[media] upload failed:', err);
+    res.status(500).json({
+      error: 'UPLOAD_FAILED',
+      message: 'تعذر رفع الملف، حاول مرة أخرى.',
+    });
+  }
+});
+
+apiRouter.get('/media/:id', async (req, res) => {
+  try {
+    const media = await getMedia(req.params.id);
+    if (!media) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'الملف غير موجود.' });
+    }
+    res.setHeader('Content-Type', media.mime);
+    res.setHeader('Content-Length', String(media.data.length));
+    // Uploaded media is immutable, so it can be cached hard.
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.end(media.data);
+  } catch (err) {
+    console.error('[media] read failed:', err);
+    res.status(500).json({ error: 'READ_FAILED' });
+  }
+});
+
+apiRouter.get('/media', (_req, res) => {
+  res.json({ maxUploadBytes: MAX_RAW_BYTES, kinds: ['image', 'video'] });
+});
+
+apiRouter.delete('/media/:id', async (req, res) => {
+  try {
+    const removed = await deleteMedia(req.params.id);
+    res.json({ success: removed });
+  } catch (err) {
+    console.error('[media] delete failed:', err);
+    res.status(500).json({ error: 'DELETE_FAILED' });
   }
 });
