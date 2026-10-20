@@ -1,11 +1,12 @@
 // Sanad POS & Commerce Service Worker (PWA)
-const CACHE_NAME = 'sanad-pwa-v2.0';
+const CACHE_NAME = 'sanad-pwa-v3.0';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
   '/sanad-logo.png',
-  '/sanad-banner.png'
+  '/sanad-banner.png',
+  '/service-worker.js'
 ];
 
 self.addEventListener('install', (event) => {
@@ -37,12 +38,10 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Do not cache API data mutation calls or web sockets
   if (url.pathname.startsWith('/api') || event.request.method !== 'GET') {
     return;
   }
 
-  // Stale-while-revalidate for static files
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request)
@@ -56,7 +55,6 @@ self.addEventListener('fetch', (event) => {
           return networkResponse;
         })
         .catch(() => {
-          // If offline and request is HTML navigation, return cached root/index.html
           if (event.request.mode === 'navigate') {
             return caches.match('/') || caches.match('/index.html');
           }

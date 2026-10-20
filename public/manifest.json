@@ -1,12 +1,12 @@
 {
   "id": "/",
-  "name": "سند - المنصة السحابية للتجارة ونقاط البيع الذكية | Sanad POS & Commerce",
+  "name": "سند - المنصة السحابية للتجارة ونقاط البيع الذكية",
   "short_name": "سند POS",
   "description": "منصة سحابية متكاملة متعددة المتاجر والفروع لنقاط البيع السحابية وتطبيق المتسوقين في السودان، تدعم العمل أوفلاين وتعدد العملات.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "theme_color": "#059669",
   "background_color": "#0f172a",
   "lang": "ar",
@@ -15,32 +15,46 @@
   "icons": [
     {
       "src": "/sanad-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/sanad-logo.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/sanad-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/sanad-banner.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "منصة سند - المنصة السحابية للتجارة ونقاط البيع الذكية"
     }
   ],
   "shortcuts": [
     {
-      "name": "تطبيق الإدارة ونقاط البيع",
-      "short_name": "كاشير سند",
+      "name": "كاشير سند - نقطة البيع",
+      "short_name": "كاشير",
       "description": "تشغيل نقطة البيع السحابية وإدارة المبيعات",
-      "url": "/?app=admin&tab=pos",
-      "icons": [{ "src": "/sanad-logo.png", "sizes": "512x512" }]
+      "url": "/?app=merchant&tab=pos",
+      "icons": [{ "src": "/sanad-logo.png", "sizes": "192x192" }]
     },
     {
-      "name": "تطبيق المتسوقين (Sanad Client)",
-      "short_name": "المتجر",
-      "description": "تصفح الكتالوج والطلب المسبق وتتبع الشحنات",
+      "name": "متجر سند - تسوق",
+      "short_name": "متجر",
+      "description": "تصفح الكتالوج والطلب المسبق",
       "url": "/?app=client",
-      "icons": [{ "src": "/sanad-logo.png", "sizes": "512x512" }]
-    },
-    {
-      "name": "تتبع حالة الطلب",
-      "short_name": "تتبع الطلب",
-      "description": "معرفة مسار الطلب لحظياً",
-      "url": "/?app=client&tab=track_order",
-      "icons": [{ "src": "/sanad-logo.png", "sizes": "512x512" }]
+      "icons": [{ "src": "/sanad-logo.png", "sizes": "192x192" }]
     }
   ]
 }
