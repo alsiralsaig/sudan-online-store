@@ -259,7 +259,7 @@ export const ClientAutocompleteSearch: React.FC<ClientAutocompleteSearchProps> =
                       >
                         <div className="w-10 h-10 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
                           <img
-                            src={p.imageUrl || "/src/assets/images/product_sugar_kenana_1792173270044.jpg"}
+                            src={p.imageUrl || "/assets/images/product_sugar_kenana_1792173270044.jpg"}
                             alt={p.name}
                             className="w-full h-full object-cover"
                           />

@@ -60,14 +60,14 @@ export const ClientWishlistView: React.FC<ClientWishlistViewProps> = ({
   const getProductImage = (p: Product) => {
     if (p.imageUrl) return p.imageUrl;
     const lower = p.name.toLowerCase();
-    if (lower.includes('سكر') || lower.includes('كنانة')) return '/src/assets/images/product_sugar_kenana_1792173270044.jpg';
-    if (lower.includes('دقيق') || lower.includes('سيقا')) return '/src/assets/images/product_sayga_flour_1792173271374.jpg';
-    if (lower.includes('زيت') || lower.includes('صباح') || lower.includes('شمس')) return '/src/assets/images/product_cooking_oil_1792173269992.jpg';
-    if (lower.includes('شاي') || lower.includes('غزالتين')) return '/src/assets/images/product_tea_box_1792173271153.jpg';
-    if (lower.includes('لابتوب') || lower.includes('ماك')) return '/src/assets/images/albander_macbook_laptop_1792184108039.jpg';
-    if (lower.includes('بوكس') || lower.includes('بيك اب')) return '/src/assets/images/albander_pickup_truck_1792184123630.jpg';
-    if (lower.includes('سيارة') || lower.includes('هيونداي')) return '/src/assets/images/albander_hyundai_car_1792184093653.jpg';
-    return '/src/assets/images/product_sugar_kenana_1792173270044.jpg';
+    if (lower.includes('سكر') || lower.includes('كنانة')) return '/assets/images/product_sugar_kenana_1792173270044.jpg';
+    if (lower.includes('دقيق') || lower.includes('سيقا')) return '/assets/images/product_sayga_flour_1792173271374.jpg';
+    if (lower.includes('زيت') || lower.includes('صباح') || lower.includes('شمس')) return '/assets/images/product_cooking_oil_1792173269992.jpg';
+    if (lower.includes('شاي') || lower.includes('غزالتين')) return '/assets/images/product_tea_box_1792173271153.jpg';
+    if (lower.includes('لابتوب') || lower.includes('ماك')) return '/assets/images/albander_macbook_laptop_1792184108039.jpg';
+    if (lower.includes('بوكس') || lower.includes('بيك اب')) return '/assets/images/albander_pickup_truck_1792184123630.jpg';
+    if (lower.includes('سيارة') || lower.includes('هيونداي')) return '/assets/images/albander_hyundai_car_1792184093653.jpg';
+    return '/assets/images/product_sugar_kenana_1792173270044.jpg';
   };
 
   const totalValue = wishlistProducts.reduce(

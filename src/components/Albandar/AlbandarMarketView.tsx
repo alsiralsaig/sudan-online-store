@@ -1079,28 +1079,28 @@ export const AlbandarMarketView: React.FC<AlbandarMarketViewProps> = ({
                   <span className="text-slate-400">نماذج سريعة:</span>
                   <button
                     type="button"
-                    onClick={() => setNewImageUrl('/src/assets/images/albander_hyundai_car_1792184093653.jpg')}
+                    onClick={() => setNewImageUrl('/assets/images/albander_hyundai_car_1792184093653.jpg')}
                     className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded hover:bg-emerald-100"
                   >
                     سيارة هيونداي
                   </button>
                   <button
                     type="button"
-                    onClick={() => setNewImageUrl('/src/assets/images/albander_pickup_truck_1792184123630.jpg')}
+                    onClick={() => setNewImageUrl('/assets/images/albander_pickup_truck_1792184123630.jpg')}
                     className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded hover:bg-emerald-100"
                   >
                     بوكس تايوتا
                   </button>
                   <button
                     type="button"
-                    onClick={() => setNewImageUrl('/src/assets/images/albander_macbook_laptop_1792184108039.jpg')}
+                    onClick={() => setNewImageUrl('/assets/images/albander_macbook_laptop_1792184108039.jpg')}
                     className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded hover:bg-emerald-100"
                   >
                     لابتوب ماك بوك
                   </button>
                   <button
                     type="button"
-                    onClick={() => setNewImageUrl('/src/assets/images/product_sugar_kenana_1792173270044.jpg')}
+                    onClick={() => setNewImageUrl('/assets/images/product_sugar_kenana_1792173270044.jpg')}
                     className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded hover:bg-emerald-100"
                   >
                     سكر كنانة

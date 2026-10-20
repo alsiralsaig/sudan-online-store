@@ -24,7 +24,7 @@ export const ClientHeroBanner: React.FC<ClientHeroBannerProps> = ({
   onExplorePreOrders,
   onTrackOrder,
 }) => {
-  const heroImage = '/src/assets/images/sanad_pos_hero_1792173270140.jpg';
+  const heroImage = '/assets/images/sanad_pos_hero_1792173270140.jpg';
 
   return (
     <div className="relative rounded-3xl overflow-hidden bg-slate-950 text-white shadow-xl border border-slate-800 my-4">

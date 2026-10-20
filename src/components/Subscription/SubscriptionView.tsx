@@ -29,7 +29,7 @@ export const SubscriptionView: React.FC<SubscriptionViewProps> = ({ tenant, onRe
   const [selectedPlanToPay, setSelectedPlanToPay] = useState<SubscriptionPlan | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'bankak' | 'syberpay'>('bankak');
   const [bankakRef, setBankakRef] = useState('');
-  const [slipUrl, setSlipUrl] = useState('/src/assets/images/sanad_pos_hero_1792173270140.jpg');
+  const [slipUrl, setSlipUrl] = useState('/assets/images/sanad_pos_hero_1792173270140.jpg');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 

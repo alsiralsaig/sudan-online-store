@@ -65,10 +65,10 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
   if (!isOpen) return null;
 
   const sampleImages = [
-    { label: 'سيارة حديثة', url: '/src/assets/images/albander_hyundai_car_1792184093653.jpg' },
-    { label: 'لابتوب وماك بوك', url: '/src/assets/images/albander_macbook_laptop_1792184108039.jpg' },
-    { label: 'شاحنة بيك آب', url: '/src/assets/images/albander_pickup_truck_1792184123630.jpg' },
-    { label: 'مواد تموينية وغذائية', url: '/src/assets/images/product_cooking_oil_1792173269992.jpg' },
+    { label: 'سيارة حديثة', url: '/assets/images/albander_hyundai_car_1792184093653.jpg' },
+    { label: 'لابتوب وماك بوك', url: '/assets/images/albander_macbook_laptop_1792184108039.jpg' },
+    { label: 'شاحنة بيك آب', url: '/assets/images/albander_pickup_truck_1792184123630.jpg' },
+    { label: 'مواد تموينية وغذائية', url: '/assets/images/product_cooking_oil_1792173269992.jpg' },
   ];
 
   const handleCreateAd = (e: React.FormEvent) => {

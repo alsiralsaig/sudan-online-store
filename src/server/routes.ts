@@ -2146,7 +2146,7 @@ apiRouter.post('/albandar/publish-product', requireTenant, (req, res) => {
     condition: condition || 'جديد أصلي',
     imageUrl:
       product.imageUrl ||
-      '/src/assets/images/product_sugar_kenana_1792173270044.jpg',
+      '/assets/images/product_sugar_kenana_1792173270044.jpg',
     sellerName: tenant?.tradeName || tenant?.name || 'متجر معتمد',
     sellerType: 'merchant' as const,
     sellerPhone: tenant?.phone || '+249912345678',

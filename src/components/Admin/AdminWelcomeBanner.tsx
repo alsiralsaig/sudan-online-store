@@ -45,7 +45,7 @@ export const AdminWelcomeBanner: React.FC<AdminWelcomeBannerProps> = ({
     localStorage.setItem('sanad_admin_banner_minimized', String(next));
   };
 
-  const bannerImg = '/src/assets/images/sanad_pos_hero_1792173270140.jpg';
+  const bannerImg = '/assets/images/sanad_pos_hero_1792173270140.jpg';
 
   if (isMinimized) {
     return (

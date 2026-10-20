@@ -4249,7 +4249,7 @@ apiRouter.post("/albandar/publish-product", requireTenant, (req, res) => {
     city: tenant?.city || "\u0628\u0648\u0631\u062A\u0633\u0648\u062F\u0627\u0646",
     state: "\u0627\u0644\u0633\u0648\u062F\u0627\u0646",
     condition: condition || "\u062C\u062F\u064A\u062F \u0623\u0635\u0644\u064A",
-    imageUrl: product.imageUrl || "/src/assets/images/product_sugar_kenana_1792173270044.jpg",
+    imageUrl: product.imageUrl || "/assets/images/product_sugar_kenana_1792173270044.jpg",
     sellerName: tenant?.tradeName || tenant?.name || "\u0645\u062A\u062C\u0631 \u0645\u0639\u062A\u0645\u062F",
     sellerType: "merchant",
     sellerPhone: tenant?.phone || "+249912345678",

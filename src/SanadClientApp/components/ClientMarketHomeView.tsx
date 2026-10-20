@@ -48,21 +48,21 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
       title: 'أعلن عن معرض سياراتك هنا',
       subtitle: 'كن من أوائل المعلنين في البندر وسند',
       badge: '★★★★★',
-      image: '/src/assets/images/albander_hyundai_car_1792184093653.jpg',
+      image: '/assets/images/albander_hyundai_car_1792184093653.jpg',
     },
     {
       id: 2,
       title: 'عروض الأجهزة الكهربائية والمكيفات',
       subtitle: 'أفضل أسعار المكيفات المائية ومولدات الكهرباء',
       badge: 'ضمان معتمد',
-      image: '/public/assets/aistudio/Screenshot_________________9bd493de.jpg',
+      image: '/assets/aistudio/Screenshot_________________9bd493de.jpg',
     },
     {
       id: 3,
       title: 'تسوق من المتاجر الكبرى المعتمدة',
       subtitle: 'مواد تموينية وغذائية بالجملة والتجزئة مع الدفع ببنكك',
       badge: 'توصيل سريع',
-      image: '/src/assets/images/sanad_pos_hero_1792173270140.jpg',
+      image: '/assets/images/sanad_pos_hero_1792173270140.jpg',
     },
   ];
 
@@ -74,7 +74,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
     location: 'الخرطوم',
     priceSdg: 1350000,
     timeAgo: 'قبل ساعة',
-    imageUrl: '/public/assets/aistudio/Screenshot_________________9bd493de.jpg',
+    imageUrl: '/assets/aistudio/Screenshot_________________9bd493de.jpg',
     isVip: true,
     tag: 'VIP',
     phone: '0912345678',
