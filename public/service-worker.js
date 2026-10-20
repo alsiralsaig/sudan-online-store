@@ -1,9 +1,13 @@
 // Sanad POS & Commerce Service Worker (PWA)
-const CACHE_NAME = 'sanad-pwa-v3.0';
+const CACHE_NAME = 'sanad-pwa-v4.0';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/icons/icon-192x192.png',
+  '/icons/icon-512x512.png',
+  '/icons/icon-maskable-512x512.png',
+  '/icons/favicon-96x96.png',
   '/sanad-logo.png',
   '/sanad-banner.png',
   '/service-worker.js'
