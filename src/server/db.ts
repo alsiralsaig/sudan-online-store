@@ -63,6 +63,20 @@ export interface DatabaseSchema {
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
+// Detect if filesystem is read-only (Vercel, Lambda, etc.)
+let IS_READ_ONLY_FS = false;
+try {
+  fs.accessSync(DATA_DIR, fs.constants.W_OK);
+} catch {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.accessSync(DATA_DIR, fs.constants.W_OK);
+  } catch {
+    IS_READ_ONLY_FS = true;
+    console.log('[DB] Read-only filesystem detected — running in memory-only mode');
+  }
+}
+
 // Initial seed data for Sudanese market
 const INITIAL_PLANS: SubscriptionPlan[] = [
   {
@@ -303,7 +317,7 @@ const INITIAL_PRODUCTS: Product[] = [
     sellingPriceSdg: 31500,
     minStockAlert: 15,
     minimumStock: 15,
-    imageUrl: '/src/assets/images/product_sugar_kenana_1792173270044.jpg',
+    imageUrl: '/assets/images/product_sugar_kenana_1792173270044.jpg',
     isActive: true,
     createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
   },
@@ -320,7 +334,7 @@ const INITIAL_PRODUCTS: Product[] = [
     sellingPriceSdg: 23800,
     minStockAlert: 10,
     minimumStock: 10,
-    imageUrl: '/src/assets/images/product_cooking_oil_1792173269992.jpg',
+    imageUrl: '/assets/images/product_cooking_oil_1792173269992.jpg',
     isActive: true,
     createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
   },
@@ -337,7 +351,7 @@ const INITIAL_PRODUCTS: Product[] = [
     sellingPriceSdg: 2650,
     minStockAlert: 30,
     minimumStock: 30,
-    imageUrl: '/src/assets/images/product_sayga_flour_1792173271374.jpg',
+    imageUrl: '/assets/images/product_sayga_flour_1792173271374.jpg',
     isActive: true,
     createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
   },
@@ -354,7 +368,7 @@ const INITIAL_PRODUCTS: Product[] = [
     sellingPriceSdg: 7200,
     minStockAlert: 15,
     minimumStock: 15,
-    imageUrl: '/src/assets/images/product_tea_box_1792173271153.jpg',
+    imageUrl: '/assets/images/product_tea_box_1792173271153.jpg',
     isActive: true,
     createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
   },
@@ -953,7 +967,7 @@ const INITIAL_PAYMENTS: SubscriptionPayment[] = [
     amountSdg: 180000,
     paymentMethod: 'bankak',
     paymentRef: 'BNK-TXN-1099238',
-    bankTransferSlipUrl: '/src/assets/images/sanad_pos_hero_1792173270140.jpg',
+    bankTransferSlipUrl: '/assets/images/sanad_pos_hero_1792173270140.jpg',
     status: 'approved',
     submittedAt: new Date(Date.now() - 35 * 24 * 60 * 60 * 1000).toISOString(),
     reviewedBy: 'إدارة منصة سند المركزية',
@@ -1007,8 +1021,8 @@ const INITIAL_ALBANDAR_SHOWROOMS: AlbandarShowroom[] = [
     address: 'شارع ديم سواكن - بجوار الميناء الجنوبي',
     phone: '+249912300456',
     whatsapp: '+249912300456',
-    logo: '/src/assets/images/albander_hyundai_car_1792184093653.jpg',
-    bannerImage: '/src/assets/images/albander_pickup_truck_1792184123630.jpg',
+    logo: '/assets/images/albander_hyundai_car_1792184093653.jpg',
+    bannerImage: '/assets/images/albander_pickup_truck_1792184123630.jpg',
     verified: true,
     rating: 4.9,
     listingsCount: 28,
@@ -1024,8 +1038,8 @@ const INITIAL_ALBANDAR_SHOWROOMS: AlbandarShowroom[] = [
     address: 'السوق الكبير - مجمع الرواد التجاري',
     phone: '+249912345678',
     whatsapp: '+249912345678',
-    logo: '/src/assets/images/product_sugar_kenana_1792173270044.jpg',
-    bannerImage: '/src/assets/images/sanad_pos_hero_1792173270140.jpg',
+    logo: '/assets/images/product_sugar_kenana_1792173270044.jpg',
+    bannerImage: '/assets/images/sanad_pos_hero_1792173270140.jpg',
     verified: true,
     rating: 4.8,
     listingsCount: 45,
@@ -1042,7 +1056,7 @@ const INITIAL_ALBANDAR_SHOWROOMS: AlbandarShowroom[] = [
     address: 'السوق الشعبي - شارع المدارس',
     phone: '+249900112233',
     whatsapp: '+249900112233',
-    logo: '/src/assets/images/albander_macbook_laptop_1792184108039.jpg',
+    logo: '/assets/images/albander_macbook_laptop_1792184108039.jpg',
     bannerImage: 'https://images.unsplash.com/photo-1509391365360-2e959784a276?auto=format&fit=crop&w=1200&q=80',
     verified: true,
     rating: 4.9,
@@ -1081,7 +1095,7 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
     city: 'بورتسودان',
     state: 'البحر الأحمر',
     condition: 'مستعمل بحالة ممتازة',
-    imageUrl: '/src/assets/images/albander_hyundai_car_1792184093653.jpg',
+    imageUrl: '/assets/images/albander_hyundai_car_1792184093653.jpg',
     sellerName: 'معرض البندر للسيارات',
     sellerType: 'showroom',
     sellerPhone: '+249912300456',
@@ -1104,7 +1118,7 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
     city: 'القضارف',
     state: 'القضارف',
     condition: 'وارد دبي',
-    imageUrl: '/src/assets/images/albander_pickup_truck_1792184123630.jpg',
+    imageUrl: '/assets/images/albander_pickup_truck_1792184123630.jpg',
     sellerName: 'شركة القضارف للتجارة والآليات',
     sellerType: 'merchant',
     sellerPhone: '+249123456789',
@@ -1127,7 +1141,7 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
     city: 'عطبرة',
     state: 'نهر النيل',
     condition: 'جديد بالكرتونة',
-    imageUrl: '/src/assets/images/albander_macbook_laptop_1792184108039.jpg',
+    imageUrl: '/assets/images/albander_macbook_laptop_1792184108039.jpg',
     sellerName: 'متجر النيلين للتقنية والأجهزة',
     sellerType: 'showroom',
     sellerPhone: '+249900112233',
@@ -1194,7 +1208,7 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
     city: 'عطبرة',
     state: 'نهر النيل',
     condition: 'جديد إنتاج كنانة',
-    imageUrl: '/src/assets/images/product_sugar_kenana_1792173270044.jpg',
+    imageUrl: '/assets/images/product_sugar_kenana_1792173270044.jpg',
     sellerName: 'مؤسسة الرواد التجارية (المتجر المعتمد)',
     sellerType: 'merchant',
     sellerPhone: '+249912345678',
@@ -1305,10 +1319,11 @@ class Database {
   }
 
   private load(): DatabaseSchema {
+    if (IS_READ_ONLY_FS) {
+      return this.getInitialSeedData();
+    }
+
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
@@ -1358,7 +1373,13 @@ class Database {
       console.warn('[DB] Failed to load from file, using seeded defaults:', err);
     }
 
-    const initialData: DatabaseSchema = {
+    const initialData = this.getInitialSeedData();
+    this.save(initialData);
+    return initialData;
+  }
+
+  private getInitialSeedData(): DatabaseSchema {
+    return {
       tenants: INITIAL_TENANTS,
       subscriptionPlans: INITIAL_PLANS,
       subscriptionPayments: INITIAL_PAYMENTS,
@@ -1386,12 +1407,14 @@ class Database {
       inventoryAlerts: [],
       inventoryAudits: [],
     };
-
-    this.save(initialData);
-    return initialData;
   }
 
   private save(data?: DatabaseSchema) {
+    if (IS_READ_ONLY_FS) {
+      // In-memory only: no-op
+      return;
+    }
+
     const toSave = data || this.data;
     try {
       if (!fs.existsSync(DATA_DIR)) {
@@ -1401,6 +1424,8 @@ class Database {
       this.isPersisted = true;
     } catch (err) {
       console.warn('[DB] Could not write to disk, holding in memory:', err);
+      // Auto-detect read-only and switch mode
+      IS_READ_ONLY_FS = true;
     }
   }
 

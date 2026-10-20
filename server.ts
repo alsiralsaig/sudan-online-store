@@ -15,8 +15,8 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // Static assets for generated photos
-  app.use('/src/assets', express.static(path.resolve(__dirname, 'src/assets')));
+  // Static assets for generated photos (public/assets → /assets)
+  app.use('/assets', express.static(path.resolve(__dirname, 'public/assets')));
 
   // Mount API Router
   app.use('/api', apiRouter);
