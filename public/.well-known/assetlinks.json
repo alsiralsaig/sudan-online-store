@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.sanadpos.app",
+      "sha256_cert_fingerprints": [
+        "14:6D:E9:01:F8:85:7E:0E:12:F6:07:6E:6E:71:08:58:AB:5F:85:5B:09:A9:35:1A:57:4A:25:24:A8:15:B4:42"
+      ]
+    }
+  }
+]
