@@ -1,6 +1,5 @@
 node_modules/
 build/
-dist/
 coverage/
 .DS_Store
 *.log
@@ -11,5 +10,5 @@ coverage/
 bun.lock
 metadata.json
 .vercel
-api/index.js
 api/index.ts
+package-lock.json
