@@ -1,0 +1,50 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.5",
+  "body": [
+    {
+      "type": "TextBlock",
+      "text": "سند - ملخص اليوم",
+      "weight": "Bolder",
+      "size": "Medium",
+      "wrap": true
+    },
+    {
+      "type": "TextBlock",
+      "text": "مبيعات اليوم",
+      "isSubtle": true,
+      "spacing": "Small"
+    },
+    {
+      "type": "TextBlock",
+      "text": "${todaySales}",
+      "size": "ExtraLarge",
+      "weight": "Bolder",
+      "color": "Good"
+    },
+    {
+      "type": "FactSet",
+      "facts": [
+        { "title": "عدد الفواتير", "value": "${invoiceCount}" },
+        { "title": "فواتير معلّقة", "value": "${pendingSync}" },
+        { "title": "نواقص المخزون", "value": "${lowStock}" }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "آخر تحديث: ${updatedAt}",
+      "isSubtle": true,
+      "size": "Small",
+      "spacing": "Small",
+      "wrap": true
+    }
+  ],
+  "actions": [
+    {
+      "type": "Action.OpenUrl",
+      "title": "فتح الكاشير",
+      "url": "https://sudan-online-store-eta.vercel.app/?app=merchant"
+    }
+  ]
+}
