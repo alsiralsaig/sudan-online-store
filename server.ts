@@ -8,6 +8,28 @@ import { isDbEnabled, dbTarget, lastDbError, recordDbError } from './src/server/
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Process-level mutex.
+ *
+ * A single Lambda instance serves concurrent requests on one shared in-memory
+ * snapshot: request B's `refresh()` can wipe a row that request A just created
+ * before A has flushed it. Row-level diffing fixes cross-instance races, but
+ * within one process the read-modify-write cycle must be serialised.
+ *
+ * Requests are short (~0.3s), so the throughput cost is negligible.
+ */
+let tail: Promise<void> = Promise.resolve();
+const MAX_HOLD_MS = 25_000;
+
+function withInstanceLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = tail.then(fn, fn);
+  tail = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
 export function createApp() {
   const app = express();
 
@@ -29,16 +51,6 @@ export function createApp() {
 
     const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
 
-    try {
-      await db.init();
-      await db.refresh();
-    } catch (err) {
-      recordDbError(err);
-      console.error('[DB] Request bootstrap failed:', (err as Error).message);
-      // Keep serving from the in-memory snapshot rather than returning 500.
-      return next();
-    }
-
     if (isMutation) {
       const originalJson = res.json.bind(res);
       let flushed = false;
@@ -47,8 +59,6 @@ export function createApp() {
         if (flushed) return originalJson(body);
         flushed = true;
 
-        // Writes are diffed row-by-row inside a transaction, so concurrent
-        // requests never clobber each other's records — no global lock needed.
         db.flush({ lock: false })
           .then(() => originalJson(body))
           .catch((err) => {
@@ -58,8 +68,7 @@ export function createApp() {
             console.error('[DB] Flush failed:', message);
             recordDbError(err);
 
-            const status = /timeout/i.test(message) ? 503 : 500;
-            res.status(status);
+            res.status(/timeout/i.test(message) ? 503 : 500);
             originalJson({
               error: 'DB_WRITE_FAILED',
               message: 'تعذر حفظ البيانات في قاعدة البيانات، يرجى إعادة المحاولة.',
@@ -71,7 +80,39 @@ export function createApp() {
       }) as typeof res.json;
     }
 
-    next();
+    // The critical section covers refresh → handler → flush → response.
+    // Everything inside shares one in-memory snapshot, so it must not overlap
+    // with another request in this process.
+    withInstanceLock(async () => {
+      try {
+        await db.init();
+        await db.refresh();
+      } catch (err) {
+        recordDbError(err);
+        console.error('[DB] Request bootstrap failed:', (err as Error).message);
+      }
+
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(guard);
+          resolve();
+        };
+
+        const guard = setTimeout(finish, MAX_HOLD_MS);
+        if (typeof guard.unref === 'function') guard.unref();
+
+        res.on('finish', finish);
+        res.on('close', finish);
+
+        next();
+      });
+    }).catch((err) => {
+      console.error('[API] Request failed:', (err as Error).message);
+      if (!res.headersSent) next(err);
+    });
   });
 
   // API routes (must come first)

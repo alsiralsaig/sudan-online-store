@@ -4427,6 +4427,16 @@ apiRouter.post("/assistant/chat", async (req, res) => {
 // server.ts
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
+var tail = Promise.resolve();
+var MAX_HOLD_MS = 25e3;
+function withInstanceLock(fn) {
+  const run = tail.then(fn, fn);
+  tail = run.then(
+    () => void 0,
+    () => void 0
+  );
+  return run;
+}
 function createApp() {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
@@ -4436,14 +4446,6 @@ function createApp() {
       return next();
     }
     const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-    try {
-      await db.init();
-      await db.refresh();
-    } catch (err) {
-      recordDbError(err);
-      console.error("[DB] Request bootstrap failed:", err.message);
-      return next();
-    }
     if (isMutation) {
       const originalJson = res.json.bind(res);
       let flushed = false;
@@ -4454,8 +4456,7 @@ function createApp() {
           const message = err.message;
           console.error("[DB] Flush failed:", message);
           recordDbError(err);
-          const status = /timeout/i.test(message) ? 503 : 500;
-          res.status(status);
+          res.status(/timeout/i.test(message) ? 503 : 500);
           originalJson({
             error: "DB_WRITE_FAILED",
             message: "\u062A\u0639\u0630\u0631 \u062D\u0641\u0638 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A\u060C \u064A\u0631\u062C\u0649 \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
@@ -4465,7 +4466,32 @@ function createApp() {
         return res;
       };
     }
-    next();
+    withInstanceLock(async () => {
+      try {
+        await db.init();
+        await db.refresh();
+      } catch (err) {
+        recordDbError(err);
+        console.error("[DB] Request bootstrap failed:", err.message);
+      }
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(guard);
+          resolve();
+        };
+        const guard = setTimeout(finish, MAX_HOLD_MS);
+        if (typeof guard.unref === "function") guard.unref();
+        res.on("finish", finish);
+        res.on("close", finish);
+        next();
+      });
+    }).catch((err) => {
+      console.error("[API] Request failed:", err.message);
+      if (!res.headersSent) next(err);
+    });
   });
   app.use("/api", apiRouter);
   app.get("/api/health", (req, res) => {
