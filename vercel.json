@@ -5,18 +5,9 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
     {
-      "source": "/([^/]+)\\.(png|jpg|jpeg|gif|svg|ico|webp|bmp|woff|woff2|ttf|otf|eot)",
-      "destination": "/__missing_asset__"
-    },
-    {
-      "source": "/icons/(.*)",
-      "destination": "/__missing_asset__"
-    },
-    {
-      "source": "/screenshots/(.*)",
-      "destination": "/__missing_asset__"
-    },
-    { "source": "/(.*)", "destination": "/index.html" }
+      "source": "/((?!.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|bmp|woff2?|ttf|otf|eot|txt|xml|json|js|css|map)$).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
