@@ -1386,7 +1386,8 @@ class Database {
 
   /** Flush the in-memory snapshot back to Postgres. Serialised by an advisory
    *  lock so concurrent lambdas cannot overwrite each other. */
-  public async flush(): Promise<void> {
+  public async flush(options: { lock?: boolean } = {}): Promise<void> {
+    const useLock = options.lock !== false;
     if (!isDbEnabled() || this.tableDefs.length === 0) return;
     if (!this.dirty) return;
 
@@ -1398,7 +1399,7 @@ class Database {
       return;
     }
 
-    const release = await acquireWriteLock();
+    const release = useLock ? await acquireWriteLock() : async () => {};
     try {
       await persistAll(
         this.tableDefs,

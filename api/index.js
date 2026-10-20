@@ -1619,7 +1619,8 @@ var Database = class {
   }
   /** Flush the in-memory snapshot back to Postgres. Serialised by an advisory
    *  lock so concurrent lambdas cannot overwrite each other. */
-  async flush() {
+  async flush(options = {}) {
+    const useLock = options.lock !== false;
     if (!isDbEnabled() || this.tableDefs.length === 0) return;
     if (!this.dirty) return;
     const changed = this.changedCollections();
@@ -1627,7 +1628,8 @@ var Database = class {
       this.dirty = false;
       return;
     }
-    const release = await acquireWriteLock();
+    const release = useLock ? await acquireWriteLock() : async () => {
+    };
     try {
       await persistAll(
         this.tableDefs,
@@ -4355,21 +4357,39 @@ function createApp() {
       return next();
     }
     const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+    let release = null;
     try {
       await db.init();
+      if (isMutation) {
+        release = await acquireWriteLock();
+      }
       await db.refresh();
     } catch (err) {
       recordDbError(err);
       console.error("[DB] Request bootstrap failed:", err.message);
+      if (release) {
+        const r = release;
+        release = null;
+        await r().catch(() => {
+        });
+      }
       return next();
     }
+    const releaseOnce = () => {
+      const r = release;
+      release = null;
+      return r ? r().catch(() => {
+      }) : Promise.resolve();
+    };
+    res.on("finish", releaseOnce);
+    res.on("close", releaseOnce);
     if (isMutation) {
       const originalJson = res.json.bind(res);
       let flushed = false;
       res.json = (body) => {
         if (flushed) return originalJson(body);
         flushed = true;
-        db.flush().then(() => originalJson(body)).catch((err) => {
+        db.flush({ lock: false }).then(() => originalJson(body)).catch((err) => {
           const message = err.message;
           console.error("[DB] Flush failed:", message);
           recordDbError(err);
