@@ -277,19 +277,11 @@ export default function App() {
   if (appMode === 'client') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900">
-        <SanadAppModeBar
-          currentApp="client"
-          onSwitchApp={(app) => switchAppMode(app)}
-          tenantName={tenant?.tradeName || tenant?.name}
-          branchName={currentBranch?.name}
-        />
-        <SanadClientApp
-          onSwitchToAdmin={() => switchAppMode('merchant')}
-          onSwitchToSuperAdmin={() => switchAppMode('super_admin')}
-        />
+        {/* The app-switcher bar is a platform-admin tool: shoppers and
+            merchants must never see links into the other apps. */}
+        <SanadClientApp />
         <SanadAIAssistant
           currentMode="client"
-          onSwitchMode={(m) => switchAppMode(m as any)}
           tenantName={tenant?.tradeName || tenant?.name}
           branchName={currentBranch?.name}
         />
@@ -353,12 +345,8 @@ export default function App() {
   // Merchant Mode (Store POS & Management)
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans select-none antialiased">
-      <SanadAppModeBar
-        currentApp="merchant"
-        onSwitchApp={(app) => switchAppMode(app)}
-        tenantName={tenant?.tradeName || tenant?.name}
-        branchName={currentBranch?.name}
-      />
+      {/* No app-switcher bar here: merchants open their own app, and the
+          platform console is reachable through its URL only. */}
 
       {/* Top Notification Toast */}
       {notification && (

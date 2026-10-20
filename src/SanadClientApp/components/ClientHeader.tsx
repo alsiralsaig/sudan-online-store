@@ -37,7 +37,7 @@ interface ClientHeaderProps {
   selectedBranch: Branch | null;
   onSelectBranch: (branch: Branch) => void;
   tenant: Tenant | null;
-  onSwitchToAdmin: () => void;
+  onSwitchToAdmin?: () => void;
   currency: string;
   products?: Product[];
   onSelectProduct?: (product: Product) => void;
@@ -57,7 +57,6 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
   selectedBranch,
   onSelectBranch,
   tenant,
-  onSwitchToAdmin,
   currency = 'SDG',
   products = [],
   onSelectProduct,
@@ -85,14 +84,6 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
           </button>
         </div>
 
-        <button
-          onClick={onSwitchToAdmin}
-          className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-all shadow-xs"
-        >
-          <LayoutDashboard className="w-3 h-3" />
-          <span>التبديل إلى لوحة الإدارة ونقاط البيع</span>
-          <ArrowLeft className="w-3 h-3" />
-        </button>
       </div>
 
       {/* Main Header Row */}

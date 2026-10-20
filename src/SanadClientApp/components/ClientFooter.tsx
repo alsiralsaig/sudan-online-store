@@ -19,7 +19,7 @@ import { usePwaInstall } from '../../lib/usePwaInstall.ts';
 import type { ClientActiveTab } from '../types.ts';
 
 interface ClientFooterProps {
-  onSwitchToAdmin: () => void;
+  onSwitchToAdmin?: () => void;
   setActiveTab: (tab: ClientActiveTab) => void;
   wishlistCount: number;
   loyaltyPoints: number;
@@ -36,7 +36,6 @@ interface SocialChannel {
 }
 
 export const ClientFooter: React.FC<ClientFooterProps> = ({
-  onSwitchToAdmin,
   setActiveTab,
   wishlistCount,
   loyaltyPoints,
@@ -439,14 +438,6 @@ export const ClientFooter: React.FC<ClientFooterProps> = ({
               </button>
             )}
 
-            <button
-              onClick={onSwitchToAdmin}
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-xs"
-              title="دخول لوحة تحكم الإدارة ونقاط البيع"
-            >
-              <LayoutDashboard className="w-3.5 h-3.5" />
-              <span>دخول الإدارة ونقاط البيع</span>
-            </button>
           </div>
         </div>
 

@@ -48,12 +48,11 @@ import {
 } from 'lucide-react';
 
 interface SanadClientAppProps {
-  onSwitchToAdmin: () => void;
+  onSwitchToAdmin?: () => void;
   onSwitchToSuperAdmin?: () => void;
 }
 
 export const SanadClientApp: React.FC<SanadClientAppProps> = ({
-  onSwitchToAdmin,
   onSwitchToSuperAdmin,
 }) => {
   // Default to Market Home (matching user screenshot 2)
@@ -429,7 +428,6 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         branches={branches}
         onSelectBranch={setSelectedBranch}
         tenant={tenant}
-        onSwitchToAdmin={onSwitchToAdmin}
         wishlistCount={wishlist.length}
         loyaltyPoints={loyaltyAccount.currentPoints}
         currency="SDG"
@@ -632,25 +630,6 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                 </button>
               </div>
 
-              {/* Quick switch to merchant admin */}
-              <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
-                <button
-                  onClick={onSwitchToAdmin}
-                  className="flex-1 py-3 px-4 bg-emerald-800 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-2"
-                >
-                  <LayoutDashboard className="w-4 h-4" />
-                  <span>دخول تطبيق التاجر المشترك (POS)</span>
-                </button>
-
-                {onSwitchToSuperAdmin && (
-                  <button
-                    onClick={onSwitchToSuperAdmin}
-                    className="py-3 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-2xl text-xs font-bold flex items-center justify-center gap-2"
-                  >
-                    <span>رابط المنصة الإداري (SaaS)</span>
-                  </button>
-                )}
-              </div>
             </div>
           </div>
         )}
@@ -842,7 +821,6 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
 
       {/* 7. Professional Footer with Social Media & Contact Form */}
       <ClientFooter
-        onSwitchToAdmin={onSwitchToAdmin}
         setActiveTab={setActiveTab}
         wishlistCount={wishlist.length}
         loyaltyPoints={loyaltyAccount.currentPoints}
@@ -860,7 +838,6 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
       {/* 9. Floating Sudanese Dialect AI Assistant */}
       <SanadAIAssistant
         currentMode="client"
-        onSwitchMode={(m) => (m === 'admin' ? onSwitchToAdmin() : null)}
         tenantName={tenant?.tradeName || tenant?.name}
         branchName={selectedBranch?.name}
       />
