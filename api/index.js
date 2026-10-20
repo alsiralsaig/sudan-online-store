@@ -215,6 +215,9 @@ ${cols.map((c) => `${c},`).join("\n")}
 }
 async function ensureSchema(seed) {
   const defs = buildTableDefs(seed);
+  if (await schemaExists(defs)) {
+    return defs;
+  }
   await transaction(async (client) => {
     for (const def of defs) {
       for (const statement of ddlStatementsFor(def)) {
@@ -226,10 +229,19 @@ async function ensureSchema(seed) {
 }
 async function loadAll(defs) {
   const result = {};
-  for (const def of defs) {
-    const { rows } = await query(`SELECT * FROM ${q(def.table)}`);
-    result[def.collection] = rows.map((row) => hydrate(def, row));
+  if (defs.length === 0) return result;
+  const parts = defs.map(
+    (def, i) => `SELECT ${i}::int AS idx, COALESCE(json_agg(t), '[]'::json) AS rows FROM ${q(def.table)} t`
+  );
+  const { rows } = await query(parts.join("\nUNION ALL\n"));
+  const byIndex = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    byIndex.set(Number(row.idx), row.rows || []);
   }
+  defs.forEach((def, i) => {
+    const tableRows = byIndex.get(i) || [];
+    result[def.collection] = tableRows.map((row) => hydrate(def, row));
+  });
   return result;
 }
 function hydrate(def, row) {
@@ -305,6 +317,20 @@ function encodeValue(value) {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   return value;
+}
+async function schemaExists(defs) {
+  try {
+    const { rows } = await query(
+      `SELECT COUNT(*)::int AS n
+         FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = ANY($1::text[])`,
+      [defs.map((d) => d.table)]
+    );
+    return Number(rows[0]?.n) === defs.length;
+  } catch {
+    return false;
+  }
 }
 
 // src/server/db.ts

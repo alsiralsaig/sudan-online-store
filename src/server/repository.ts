@@ -149,6 +149,11 @@ export function ddlFor(def: TableDef): string {
 export async function ensureSchema(seed: Record<string, any[]>): Promise<TableDef[]> {
   const defs = buildTableDefs(seed);
 
+  // One cheap round trip beats ~100 DDL statements on a cross-region link.
+  if (await schemaExists(defs)) {
+    return defs;
+  }
+
   await transaction(async (client) => {
     for (const def of defs) {
       // Run statements one at a time: the extended query protocol used by
@@ -162,14 +167,31 @@ export async function ensureSchema(seed: Record<string, any[]>): Promise<TableDe
   return defs;
 }
 
-/** Read every collection back into the in-memory shape the app expects. */
+/**
+ * Read every collection back into the in-memory shape the app expects.
+ * All tables are fetched in a single round trip — on a cross-region link
+ * 26 sequential queries cost seconds of pure latency.
+ */
 export async function loadAll(defs: TableDef[]): Promise<Record<string, any[]>> {
   const result: Record<string, any[]> = {};
+  if (defs.length === 0) return result;
 
-  for (const def of defs) {
-    const { rows } = await query(`SELECT * FROM ${q(def.table)}`);
-    result[def.collection] = rows.map((row) => hydrate(def, row));
+  const parts = defs.map(
+    (def, i) =>
+      `SELECT ${i}::int AS idx, COALESCE(json_agg(t), '[]'::json) AS rows FROM ${q(def.table)} t`
+  );
+
+  const { rows } = await query(parts.join('\nUNION ALL\n'));
+
+  const byIndex = new Map<number, any[]>();
+  for (const row of rows) {
+    byIndex.set(Number(row.idx), row.rows || []);
   }
+
+  defs.forEach((def, i) => {
+    const tableRows = byIndex.get(i) || [];
+    result[def.collection] = tableRows.map((row: any) => hydrate(def, row));
+  });
 
   return result;
 }
@@ -278,6 +300,22 @@ function encodeValue(value: any): any {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   return value;
+}
+
+/** True when every expected table is already present. */
+async function schemaExists(defs: TableDef[]): Promise<boolean> {
+  try {
+    const { rows } = await query(
+      `SELECT COUNT(*)::int AS n
+         FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = ANY($1::text[])`,
+      [defs.map((d) => d.table)]
+    );
+    return Number(rows[0]?.n) === defs.length;
+  } catch {
+    return false;
+  }
 }
 
 /** True when every table exists and holds at least one row. */
