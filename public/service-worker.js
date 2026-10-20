@@ -1,16 +1,15 @@
 // Sanad POS & Commerce Service Worker (PWA)
-const CACHE_NAME = 'sanad-pwa-v4.0';
+const CACHE_NAME = 'sanad-pwa-v5.0';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icons/icon-192x192.png',
-  '/icons/icon-512x512.png',
-  '/icons/icon-maskable-512x512.png',
-  '/icons/favicon-96x96.png',
-  '/sanad-logo.png',
-  '/sanad-banner.png',
-  '/service-worker.js'
+  '/icons/sanad-icon-192.png',
+  '/icons/sanad-icon-512.png',
+  '/icons/sanad-maskable-512.png',
+  '/icons/sanad-apple-180.png',
+  '/icons/sanad-favicon-96.png',
+  '/sanad-banner.png'
 ];
 
 self.addEventListener('install', (event) => {

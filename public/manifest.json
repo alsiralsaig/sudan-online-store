@@ -16,19 +16,31 @@
   "categories": ["shopping", "business", "finance", "productivity"],
   "icons": [
     {
-      "src": "/icons/icon-192x192.png",
+      "src": "/icons/sanad-icon-144.png",
+      "sizes": "144x144",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/sanad-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-512x512.png",
+      "src": "/icons/sanad-icon-384.png",
+      "sizes": "384x384",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/sanad-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-maskable-512x512.png",
+      "src": "/icons/sanad-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -56,21 +68,21 @@
       "short_name": "كاشير",
       "description": "تشغيل نقطة البيع السحابية وإدارة المبيعات",
       "url": "/?app=merchant",
-      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png" }]
+      "icons": [{ "src": "/icons/sanad-icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "متجر سند - تسوق",
       "short_name": "متجر",
       "description": "تصفح الكتالوج والطلب المسبق",
       "url": "/?app=client",
-      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png" }]
+      "icons": [{ "src": "/icons/sanad-icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "إدارة السند - المنصة المركزية",
       "short_name": "الإدارة",
       "description": "لوحة التحكم المركزية للمشرف العام",
       "url": "/?app=super_admin",
-      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png" }]
+      "icons": [{ "src": "/icons/sanad-icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }
