@@ -1,28 +1,277 @@
 // server.ts
 import express from "express";
-import path2 from "path";
+import path from "path";
 import { fileURLToPath } from "url";
 
 // src/server/routes.ts
 import { Router } from "express";
 
-// src/server/db.ts
-import fs from "fs";
-import path from "path";
-var DATA_DIR = path.resolve(process.cwd(), ".data");
-var DB_FILE = path.join(DATA_DIR, "db.json");
-var IS_READ_ONLY_FS = false;
-try {
-  fs.accessSync(DATA_DIR, fs.constants.W_OK);
-} catch {
+// src/server/pg.ts
+import pg from "pg";
+var pool = null;
+var injected = null;
+function isDbEnabled() {
+  return injected !== null || !!process.env.DATABASE_URL;
+}
+function getPool() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is not set");
+  }
+  if (!pool) {
+    const isNeon = /neon\.tech/.test(process.env.DATABASE_URL);
+    pool = new pg.Pool({
+      connectionString: process.env.DATABASE_URL,
+      // Neon and most managed Postgres providers require TLS.
+      ssl: isNeon ? { rejectUnauthorized: false } : void 0,
+      max: Number(process.env.PG_POOL_MAX || 3),
+      idleTimeoutMillis: 1e4,
+      connectionTimeoutMillis: 1e4
+    });
+    pool.on("error", (err) => {
+      console.error("[DB] Unexpected pool error:", err.message);
+    });
+  }
+  return pool;
+}
+function activeClient() {
+  if (injected) return injected;
+  return getPool();
+}
+async function query(text, params) {
+  const client = activeClient();
+  return client.query(text, params);
+}
+async function transaction(fn) {
+  const client = activeClient();
+  const anyClient = client;
+  if (typeof anyClient.transaction === "function") {
+    return anyClient.transaction(async (tx) => fn(tx));
+  }
+  await client.query("BEGIN");
   try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.accessSync(DATA_DIR, fs.constants.W_OK);
-  } catch {
-    IS_READ_ONLY_FS = true;
-    console.log("[DB] Read-only filesystem detected \u2014 running in memory-only mode");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw err;
   }
 }
+var LOCK_KEY = 982451301;
+async function acquireWriteLock() {
+  if (injected) {
+    return async () => {
+    };
+  }
+  const pool2 = getPool();
+  const client = await pool2.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [LOCK_KEY]);
+  } catch (err) {
+    client.release();
+    throw err;
+  }
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    try {
+      await client.query("SELECT pg_advisory_unlock($1)", [LOCK_KEY]);
+    } catch (err) {
+      console.warn("[DB] Failed to release advisory lock:", err.message);
+    } finally {
+      client.release();
+    }
+  };
+}
+async function closePool() {
+  if (pool) {
+    await pool.end();
+    pool = null;
+  }
+}
+
+// src/server/repository.ts
+var PRIMARY_KEY_OVERRIDES = {
+  currencies: "code"
+};
+function primaryKeyFor(collection, rows) {
+  const override = PRIMARY_KEY_OVERRIDES[collection];
+  if (override) return override;
+  const sample = rows.find((r) => r && typeof r === "object");
+  if (sample && sample.id === void 0 && sample.code !== void 0) return "code";
+  return "id";
+}
+var EXTRA_COLUMN = "__extra";
+var INDEXED_FIELDS = [
+  "tenantId",
+  "branchId",
+  "productId",
+  "customerId",
+  "status",
+  "createdAt",
+  "timestamp",
+  "submittedAt",
+  "saleId",
+  "shiftId"
+];
+function sqlTypeOf(value) {
+  if (typeof value === "number") return "double precision";
+  if (typeof value === "boolean") return "boolean";
+  if (value && typeof value === "object") return "jsonb";
+  return "text";
+}
+function inferColumns(rows) {
+  const columns = {};
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    for (const [key, value] of Object.entries(row)) {
+      if (key === "id") continue;
+      const inferred = sqlTypeOf(value);
+      const existing = columns[key];
+      if (!existing) {
+        columns[key] = inferred;
+      } else if (existing !== inferred) {
+        columns[key] = "jsonb";
+      }
+    }
+  }
+  return columns;
+}
+function buildTableDefs(seed) {
+  return Object.entries(seed).filter(([, rows]) => Array.isArray(rows)).map(([collection, rows]) => {
+    const primaryKey = primaryKeyFor(collection, rows);
+    const columns = inferColumns(rows);
+    delete columns[primaryKey];
+    return {
+      collection,
+      table: toTableName(collection),
+      columns,
+      primaryKey
+    };
+  });
+}
+function toTableName(collection) {
+  return `sanad_${collection.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)}`;
+}
+var q = (identifier) => `"${identifier.replace(/"/g, '""')}"`;
+function ddlStatementsFor(def) {
+  const cols = Object.entries(def.columns).map(
+    ([name, type]) => `  ${q(name)} ${type}`
+  );
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS ${q(def.table)} (
+  ${q(def.primaryKey)} text PRIMARY KEY,
+${cols.map((c) => `${c},`).join("\n")}
+  ${q(EXTRA_COLUMN)} jsonb
+)`
+  ];
+  for (const field of INDEXED_FIELDS) {
+    if (field in def.columns) {
+      const indexName = `idx_${def.table}_${field.toLowerCase()}`;
+      statements.push(
+        `CREATE INDEX IF NOT EXISTS ${q(indexName)} ON ${q(def.table)} (${q(field)})`
+      );
+    }
+  }
+  return statements;
+}
+async function ensureSchema(seed) {
+  const defs = buildTableDefs(seed);
+  await transaction(async (client) => {
+    for (const def of defs) {
+      for (const statement of ddlStatementsFor(def)) {
+        await client.query(statement);
+      }
+    }
+  });
+  return defs;
+}
+async function loadAll(defs) {
+  const result = {};
+  for (const def of defs) {
+    const { rows } = await query(`SELECT * FROM ${q(def.table)}`);
+    result[def.collection] = rows.map((row) => hydrate(def, row));
+  }
+  return result;
+}
+function hydrate(def, row) {
+  const out = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key === EXTRA_COLUMN) continue;
+    out[key] = value;
+  }
+  const extra = row[EXTRA_COLUMN];
+  if (extra && typeof extra === "object" && !Array.isArray(extra)) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (out[key] === void 0) out[key] = value;
+    }
+  }
+  return out;
+}
+async function persistAll(defs, data) {
+  await transaction(async (client) => {
+    for (const def of defs) {
+      const rows = data[def.collection];
+      if (!Array.isArray(rows)) continue;
+      await persistTable(client, def, rows);
+    }
+  });
+}
+async function persistTable(client, def, rows) {
+  const known = Object.keys(def.columns);
+  const pk = def.primaryKey;
+  const ids = rows.map((row) => String(row[pk])).filter(Boolean);
+  if (ids.length > 0) {
+    await client.query(
+      `DELETE FROM ${q(def.table)} WHERE ${q(pk)} <> ALL($1::text[])`,
+      [ids]
+    );
+  } else {
+    await client.query(`DELETE FROM ${q(def.table)}`);
+  }
+  for (const row of rows) {
+    if (!row || row[pk] === void 0 || row[pk] === null) continue;
+    const values = [String(row[pk])];
+    const placeholders = ["$1"];
+    const assignments = [];
+    const columns = [q(pk)];
+    for (const field of known) {
+      const raw = row[field];
+      values.push(encodeValue(raw));
+      placeholders.push(`$${values.length}`);
+      columns.push(q(field));
+      assignments.push(`${q(field)} = EXCLUDED.${q(field)}`);
+    }
+    const extras = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (key === pk || known.includes(key)) continue;
+      extras[key] = value;
+    }
+    values.push(Object.keys(extras).length ? JSON.stringify(extras) : null);
+    placeholders.push(`$${values.length}`);
+    columns.push(q(EXTRA_COLUMN));
+    assignments.push(`${q(EXTRA_COLUMN)} = EXCLUDED.${q(EXTRA_COLUMN)}`);
+    await client.query(
+      `INSERT INTO ${q(def.table)} (${columns.join(", ")})
+       VALUES (${placeholders.join(", ")})
+       ON CONFLICT (${q(pk)}) DO UPDATE SET ${assignments.join(", ")}`,
+      values
+    );
+  }
+}
+function encodeValue(value) {
+  if (value === void 0 || value === null) return null;
+  if (typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  return value;
+}
+
+// src/server/db.ts
 var INITIAL_PLANS = [
   {
     id: "plan_starter",
@@ -1242,64 +1491,67 @@ var INITIAL_ALBANDAR_LISTINGS = [
 ];
 var Database = class {
   constructor() {
-    this.isPersisted = false;
-    this.data = this.load();
+    this.tableDefs = [];
+    this.ready = null;
+    this.dirty = false;
+    this.data = this.getInitialSeedData();
   }
-  load() {
-    if (IS_READ_ONLY_FS) {
-      return this.getInitialSeedData();
+  /* ------------------------------------------------------------------ */
+  /*  Postgres lifecycle                                                */
+  /* ------------------------------------------------------------------ */
+  /** Create the schema (once per process) and make sure seed data exists. */
+  async init() {
+    if (!isDbEnabled()) {
+      console.warn("[DB] DATABASE_URL not set \u2014 running in memory-only mode. Data will NOT persist.");
+      return;
     }
+    if (!this.ready) {
+      this.ready = (async () => {
+        const seed = this.getInitialSeedData();
+        this.tableDefs = await ensureSchema(seed);
+        const loaded = await loadAll(this.tableDefs);
+        const hasTenants = (loaded.tenants || []).length > 0;
+        if (hasTenants) {
+          this.data = { ...this.data, ...loaded };
+          console.log("[DB] Loaded from Postgres:", Object.entries(loaded).map(([k, v]) => `${k}=${v.length}`).join(" "));
+        } else {
+          this.data = seed;
+          await persistAll(this.tableDefs, seed);
+          console.log("[DB] Empty database \u2014 seeded initial Sanad data.");
+        }
+      })();
+      this.ready.catch((err) => {
+        console.error("[DB] Init failed, continuing with in-memory seed:", err.message);
+        this.ready = null;
+      });
+    }
+    await this.ready;
+  }
+  /** Re-read every table. Called at the start of each request so no instance
+   *  ever serves a stale snapshot. */
+  async refresh() {
+    if (!isDbEnabled() || this.tableDefs.length === 0) return;
+    const loaded = await loadAll(this.tableDefs);
+    this.data = { ...this.data, ...loaded };
+  }
+  /** Flush the in-memory snapshot back to Postgres. Serialised by an advisory
+   *  lock so concurrent lambdas cannot overwrite each other. */
+  async flush() {
+    if (!isDbEnabled() || this.tableDefs.length === 0) return;
+    if (!this.dirty) return;
+    const release = await acquireWriteLock();
     try {
-      if (fs.existsSync(DB_FILE)) {
-        const raw = fs.readFileSync(DB_FILE, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (!parsed.albandarListings || parsed.albandarListings.length === 0) {
-          parsed.albandarListings = INITIAL_ALBANDAR_LISTINGS;
-        }
-        if (!parsed.albandarShowrooms || parsed.albandarShowrooms.length === 0) {
-          parsed.albandarShowrooms = INITIAL_ALBANDAR_SHOWROOMS;
-        }
-        if (!parsed.customers || parsed.customers.length === 0) {
-          parsed.customers = INITIAL_CUSTOMERS;
-        }
-        if (!parsed.recurringExpenses || parsed.recurringExpenses.length === 0) {
-          parsed.recurringExpenses = INITIAL_RECURRING_EXPENSES;
-        }
-        if (!parsed.promotions || parsed.promotions.length === 0) {
-          parsed.promotions = INITIAL_PROMOTIONS;
-        }
-        if (!parsed.kitchenTickets || parsed.kitchenTickets.length === 0) {
-          parsed.kitchenTickets = INITIAL_KITCHEN_TICKETS;
-        }
-        if (!parsed.inventoryAlerts) {
-          parsed.inventoryAlerts = [];
-        }
-        if (!parsed.inventoryAudits) {
-          parsed.inventoryAudits = [];
-        }
-        if (Array.isArray(parsed.tenants)) {
-          for (const t of parsed.tenants) {
-            if (!t.settings) t.settings = {};
-            if (t.settings.vatEnabled === void 0) {
-              t.settings.vatEnabled = true;
-              t.settings.defaultVatPct = 15;
-              t.settings.taxIdentificationNumber = t.settings.taxNumber || "1004892348";
-              t.settings.pricesIncludeVat = false;
-              t.settings.showVatBreakdown = true;
-              t.settings.showTaxPerItem = true;
-              t.settings.loyaltyRateSdgPerPoint = 1e3;
-            }
-          }
-        }
-        this.isPersisted = true;
-        return parsed;
-      }
-    } catch (err) {
-      console.warn("[DB] Failed to load from file, using seeded defaults:", err);
+      await persistAll(this.tableDefs, this.data);
+      this.dirty = false;
+    } finally {
+      await release();
     }
-    const initialData = this.getInitialSeedData();
-    this.save(initialData);
-    return initialData;
+  }
+  async shutdown() {
+    await closePool();
+  }
+  isDatabaseEnabled() {
+    return isDbEnabled();
   }
   getInitialSeedData() {
     return {
@@ -1331,21 +1583,9 @@ var Database = class {
       inventoryAudits: []
     };
   }
-  save(data) {
-    if (IS_READ_ONLY_FS) {
-      return;
-    }
-    const toSave = data || this.data;
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      fs.writeFileSync(DB_FILE, JSON.stringify(toSave, null, 2), "utf-8");
-      this.isPersisted = true;
-    } catch (err) {
-      console.warn("[DB] Could not write to disk, holding in memory:", err);
-      IS_READ_ONLY_FS = true;
-    }
+  /** Mark the snapshot as changed; the request pipeline flushes it. */
+  save(_data) {
+    this.dirty = true;
   }
   // Get raw schema (safe reference copy)
   getSchema() {
@@ -1502,9 +1742,9 @@ var Database = class {
   getCustomers(tenantId, search) {
     let list = (this.data.customers || []).filter((c) => c.tenantId === tenantId);
     if (search) {
-      const q = search.trim().toLowerCase();
+      const q2 = search.trim().toLowerCase();
       list = list.filter(
-        (c) => c.name.toLowerCase().includes(q) || c.phone.includes(q) || c.taxNumber && c.taxNumber.includes(q)
+        (c) => c.name.toLowerCase().includes(q2) || c.phone.includes(q2) || c.taxNumber && c.taxNumber.includes(q2)
       );
     }
     return list;
@@ -3606,9 +3846,9 @@ apiRouter.get("/albandar/listings", (req, res) => {
     listings = listings.filter((item) => item.condition === condition);
   }
   if (search && String(search).trim()) {
-    const q = String(search).toLowerCase();
+    const q2 = String(search).toLowerCase();
     listings = listings.filter(
-      (item) => item.title.toLowerCase().includes(q) || item.description.toLowerCase().includes(q) || item.sellerName.toLowerCase().includes(q) || item.city.toLowerCase().includes(q) || item.categoryNameAr.toLowerCase().includes(q)
+      (item) => item.title.toLowerCase().includes(q2) || item.description.toLowerCase().includes(q2) || item.sellerName.toLowerCase().includes(q2) || item.city.toLowerCase().includes(q2) || item.categoryNameAr.toLowerCase().includes(q2)
     );
   }
   res.json({ listings });
@@ -3993,20 +4233,44 @@ apiRouter.post("/assistant/chat", async (req, res) => {
 
 // server.ts
 var __filename = fileURLToPath(import.meta.url);
-var __dirname = path2.dirname(__filename);
+var __dirname = path.dirname(__filename);
 function createApp() {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+  app.use("/api", async (req, res, next) => {
+    if (!isDbEnabled()) {
+      return next();
+    }
+    const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+    try {
+      await db.init();
+      await db.refresh();
+    } catch (err) {
+      console.error("[DB] Request bootstrap failed:", err.message);
+      return next();
+    }
+    if (isMutation) {
+      const originalJson = res.json.bind(res);
+      let flushed = false;
+      res.json = (body) => {
+        if (flushed) return originalJson(body);
+        flushed = true;
+        db.flush().catch((err) => console.error("[DB] Flush failed:", err.message)).finally(() => originalJson(body));
+        return res;
+      };
+    }
+    next();
+  });
   app.use("/api", apiRouter);
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", service: "Sanad POS", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
   });
-  app.use("/assets", express.static(path2.resolve(__dirname, "public/assets")));
-  app.use("/icons", express.static(path2.resolve(__dirname, "public/icons")));
-  app.use(express.static(path2.resolve(__dirname, "dist")));
+  app.use("/assets", express.static(path.resolve(__dirname, "public/assets")));
+  app.use("/icons", express.static(path.resolve(__dirname, "public/icons")));
+  app.use(express.static(path.resolve(__dirname, "dist")));
   app.get("*", (req, res) => {
-    res.sendFile(path2.resolve(__dirname, "dist", "index.html"));
+    res.sendFile(path.resolve(__dirname, "dist", "index.html"));
   });
   return app;
 }

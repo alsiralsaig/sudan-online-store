@@ -1,5 +1,14 @@
-import fs from 'fs';
-import path from 'path';
+import {
+  isDbEnabled,
+  acquireWriteLock,
+  closePool,
+} from './pg.ts';
+import {
+  ensureSchema,
+  loadAll,
+  persistAll,
+  type TableDef,
+} from './repository.ts';
 import type {
   Tenant,
   SubscriptionPlan,
@@ -58,23 +67,6 @@ export interface DatabaseSchema {
   promotions: PromotionRule[];
   inventoryAlerts: InventoryAlert[];
   inventoryAudits: InventoryAudit[];
-}
-
-const DATA_DIR = path.resolve(process.cwd(), '.data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-
-// Detect if filesystem is read-only (Vercel, Lambda, etc.)
-let IS_READ_ONLY_FS = false;
-try {
-  fs.accessSync(DATA_DIR, fs.constants.W_OK);
-} catch {
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.accessSync(DATA_DIR, fs.constants.W_OK);
-  } catch {
-    IS_READ_ONLY_FS = true;
-    console.log('[DB] Read-only filesystem detected — running in memory-only mode');
-  }
 }
 
 // Initial seed data for Sudanese market
@@ -1312,70 +1304,84 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
 
 class Database {
   private data: DatabaseSchema;
-  private isPersisted: boolean = false;
+  private tableDefs: TableDef[] = [];
+  private ready: Promise<void> | null = null;
+  private dirty = false;
 
   constructor() {
-    this.data = this.load();
+    // Synchronous seed so the API still answers if the database is unreachable.
+    this.data = this.getInitialSeedData();
   }
 
-  private load(): DatabaseSchema {
-    if (IS_READ_ONLY_FS) {
-      return this.getInitialSeedData();
+  /* ------------------------------------------------------------------ */
+  /*  Postgres lifecycle                                                */
+  /* ------------------------------------------------------------------ */
+
+  /** Create the schema (once per process) and make sure seed data exists. */
+  public async init(): Promise<void> {
+    if (!isDbEnabled()) {
+      console.warn('[DB] DATABASE_URL not set — running in memory-only mode. Data will NOT persist.');
+      return;
     }
 
+    if (!this.ready) {
+      this.ready = (async () => {
+        const seed = this.getInitialSeedData() as unknown as Record<string, any[]>;
+        this.tableDefs = await ensureSchema(seed);
+
+        const loaded = await loadAll(this.tableDefs);
+        const hasTenants = (loaded.tenants || []).length > 0;
+
+        if (hasTenants) {
+          this.data = { ...this.data, ...loaded } as DatabaseSchema;
+          console.log('[DB] Loaded from Postgres:', Object.entries(loaded)
+            .map(([k, v]) => `${k}=${v.length}`)
+            .join(' '));
+        } else {
+          this.data = seed as unknown as DatabaseSchema;
+          await persistAll(this.tableDefs, seed);
+          console.log('[DB] Empty database — seeded initial Sanad data.');
+        }
+      })();
+
+      this.ready.catch((err) => {
+        console.error('[DB] Init failed, continuing with in-memory seed:', (err as Error).message);
+        this.ready = null;
+      });
+    }
+
+    await this.ready;
+  }
+
+  /** Re-read every table. Called at the start of each request so no instance
+   *  ever serves a stale snapshot. */
+  public async refresh(): Promise<void> {
+    if (!isDbEnabled() || this.tableDefs.length === 0) return;
+    const loaded = await loadAll(this.tableDefs);
+    this.data = { ...this.data, ...loaded } as DatabaseSchema;
+  }
+
+  /** Flush the in-memory snapshot back to Postgres. Serialised by an advisory
+   *  lock so concurrent lambdas cannot overwrite each other. */
+  public async flush(): Promise<void> {
+    if (!isDbEnabled() || this.tableDefs.length === 0) return;
+    if (!this.dirty) return;
+
+    const release = await acquireWriteLock();
     try {
-      if (fs.existsSync(DB_FILE)) {
-        const raw = fs.readFileSync(DB_FILE, 'utf-8');
-        const parsed = JSON.parse(raw);
-        if (!parsed.albandarListings || parsed.albandarListings.length === 0) {
-          parsed.albandarListings = INITIAL_ALBANDAR_LISTINGS;
-        }
-        if (!parsed.albandarShowrooms || parsed.albandarShowrooms.length === 0) {
-          parsed.albandarShowrooms = INITIAL_ALBANDAR_SHOWROOMS;
-        }
-        if (!parsed.customers || parsed.customers.length === 0) {
-          parsed.customers = INITIAL_CUSTOMERS;
-        }
-        if (!parsed.recurringExpenses || parsed.recurringExpenses.length === 0) {
-          parsed.recurringExpenses = INITIAL_RECURRING_EXPENSES;
-        }
-        if (!parsed.promotions || parsed.promotions.length === 0) {
-          parsed.promotions = INITIAL_PROMOTIONS;
-        }
-        if (!parsed.kitchenTickets || parsed.kitchenTickets.length === 0) {
-          parsed.kitchenTickets = INITIAL_KITCHEN_TICKETS;
-        }
-        if (!parsed.inventoryAlerts) {
-          parsed.inventoryAlerts = [];
-        }
-        if (!parsed.inventoryAudits) {
-          parsed.inventoryAudits = [];
-        }
-        // Ensure tenants have default VAT configuration
-        if (Array.isArray(parsed.tenants)) {
-          for (const t of parsed.tenants) {
-            if (!t.settings) t.settings = {} as any;
-            if (t.settings.vatEnabled === undefined) {
-              t.settings.vatEnabled = true;
-              t.settings.defaultVatPct = 15;
-              t.settings.taxIdentificationNumber = t.settings.taxNumber || '1004892348';
-              t.settings.pricesIncludeVat = false;
-              t.settings.showVatBreakdown = true;
-              t.settings.showTaxPerItem = true;
-              t.settings.loyaltyRateSdgPerPoint = 1000;
-            }
-          }
-        }
-        this.isPersisted = true;
-        return parsed;
-      }
-    } catch (err) {
-      console.warn('[DB] Failed to load from file, using seeded defaults:', err);
+      await persistAll(this.tableDefs, this.data as unknown as Record<string, any[]>);
+      this.dirty = false;
+    } finally {
+      await release();
     }
+  }
 
-    const initialData = this.getInitialSeedData();
-    this.save(initialData);
-    return initialData;
+  public async shutdown(): Promise<void> {
+    await closePool();
+  }
+
+  public isDatabaseEnabled(): boolean {
+    return isDbEnabled();
   }
 
   private getInitialSeedData(): DatabaseSchema {
@@ -1409,24 +1415,9 @@ class Database {
     };
   }
 
-  private save(data?: DatabaseSchema) {
-    if (IS_READ_ONLY_FS) {
-      // In-memory only: no-op
-      return;
-    }
-
-    const toSave = data || this.data;
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      fs.writeFileSync(DB_FILE, JSON.stringify(toSave, null, 2), 'utf-8');
-      this.isPersisted = true;
-    } catch (err) {
-      console.warn('[DB] Could not write to disk, holding in memory:', err);
-      // Auto-detect read-only and switch mode
-      IS_READ_ONLY_FS = true;
-    }
+  /** Mark the snapshot as changed; the request pipeline flushes it. */
+  private save(_data?: DatabaseSchema) {
+    this.dirty = true;
   }
 
   // Get raw schema (safe reference copy)
