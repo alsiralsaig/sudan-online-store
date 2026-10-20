@@ -12,3 +12,6 @@ metadata.json
 .vercel
 api/index.ts
 package-lock.json
+
+# build output
+dist/

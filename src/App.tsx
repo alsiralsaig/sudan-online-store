@@ -51,6 +51,8 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const appParam = params.get('app');
+      // Shared content from another app always lands in the shopper catalog
+      if (params.get('share-target') === '1' || params.has('shared')) return 'client';
       if (appParam === 'super_admin' || appParam === 'saas') return 'super_admin';
       if (appParam === 'client' || window.location.hash === '#client') return 'client';
       if (appParam === 'merchant' || appParam === 'pos' || appParam === 'admin') return 'merchant';
@@ -186,6 +188,21 @@ export default function App() {
       setIsSyncing(false);
     }
   };
+
+  // Triggered by the Service Worker on Background Sync / Periodic Sync
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+
+    const onSwMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'SANAD_SYNC_REQUEST') {
+        handleSyncOffline();
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing]);
 
   // Toggle offline simulation
   const handleToggleSimulateOffline = () => {
