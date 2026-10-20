@@ -2468,6 +2468,17 @@ var Database = class {
 };
 var db = new Database();
 
+// src/server/ids.ts
+import { randomUUID } from "crypto";
+function newId(prefix) {
+  const ts = Date.now().toString(36);
+  return `${prefix}_${ts}_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+}
+function newCode(prefix, pad = 6) {
+  const rand = randomUUID().replace(/-/g, "").slice(0, pad).toUpperCase();
+  return `${prefix}-${rand}`;
+}
+
 // src/server/routes.ts
 var apiRouter = Router();
 var requireTenant = (req, res, next) => {
@@ -2545,7 +2556,7 @@ apiRouter.post("/branches", requireTenant, (req, res) => {
     return res.status(400).json({ error: "\u0627\u0633\u0645 \u0627\u0644\u0641\u0631\u0639 \u0648\u0627\u0644\u0631\u0645\u0632 \u0627\u0644\u062A\u0639\u0631\u064A\u0641\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
   }
   const newBranch = {
-    id: `branch_${Date.now()}`,
+    id: newId("branch"),
     tenantId: authReq.tenantId,
     name,
     code,
@@ -2589,7 +2600,7 @@ apiRouter.post("/employees", requireTenant, (req, res) => {
     return res.status(400).json({ error: "\u0627\u0644\u0627\u0633\u0645 \u0648\u0627\u0644\u0645\u0633\u0645\u0649 \u0627\u0644\u0648\u0638\u064A\u0641\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
   }
   const newEmployee = {
-    id: `emp_${Date.now()}`,
+    id: newId("emp"),
     tenantId: authReq.tenantId,
     branchId: branchId || void 0,
     name,
@@ -2627,10 +2638,10 @@ apiRouter.post("/products", requireTenant, (req, res) => {
     return res.status(400).json({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u062A\u062C \u0648\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u0628\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
   }
   const newProduct = {
-    id: `prod_${Date.now()}`,
+    id: newId("prod"),
     tenantId: authReq.tenantId,
     name,
-    sku: sku || `SKU-${Date.now().toString().slice(-6)}`,
+    sku: sku || newCode("SKU"),
     barcode: barcode || Math.floor(1e11 + Math.random() * 9e11).toString(),
     category: category || "\u0639\u0627\u0645",
     unit: unit || "\u062D\u0628\u0629",
@@ -2820,7 +2831,7 @@ apiRouter.post("/transfers/request", requireTenant, (req, res) => {
   const targetBranch = db.getSchema().branches.find((b) => b.id === targetBranchId);
   const transferNumber = `TRF-${(/* @__PURE__ */ new Date()).getFullYear()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
   const newTransfer = {
-    id: `trf_${Date.now()}`,
+    id: newId("trf"),
     tenantId: authReq.tenantId,
     transferNumber,
     sourceBranchId,
@@ -2957,7 +2968,7 @@ apiRouter.post("/pos/shifts/open", requireTenant, (req, res) => {
   }
   const branch = db.getSchema().branches.find((b) => b.id === branchId);
   const newShift = {
-    id: `shift_${Date.now()}`,
+    id: newId("shift"),
     tenantId: authReq.tenantId,
     branchId,
     branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
@@ -3137,7 +3148,7 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
     }
   }
   const sale = {
-    id: id || `sale_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: id || newId("sale"),
     tenantId: authReq.tenantId,
     branchId,
     branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
@@ -3165,7 +3176,7 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
   const itemsWithNotes = processedItems.filter((it) => it.notes && it.notes.trim().length > 0);
   if (itemsWithNotes.length > 0 || req.body.isQuickOrder || req.body.orderType) {
     const kTicket = {
-      id: `kds_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+      id: newId("kds"),
       saleId: sale.id,
       invoiceNumber: sale.invoiceNumber,
       tenantId: authReq.tenantId,
@@ -3174,7 +3185,7 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
       customerName: sale.customerName,
       orderType: req.body.orderType || (itemsWithNotes.length > 0 ? "quick_order" : "takeaway"),
       items: (itemsWithNotes.length > 0 ? itemsWithNotes : processedItems).map((it, idx) => ({
-        id: `kds_it_${Date.now()}_${idx}`,
+        id: newId(`kds_it_${idx}`),
         productId: it.productId,
         productName: it.productName,
         quantity: it.quantity,
@@ -3293,7 +3304,7 @@ apiRouter.post("/pos/sales/:id/refund", requireTenant, (req, res) => {
   }
   sale.status = isFullyRefunded ? "refunded" : "partially_refunded";
   const returnRec = {
-    id: `ret_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: newId("ret"),
     tenantId: authReq.tenantId,
     saleId: sale.id,
     invoiceNumber: sale.invoiceNumber,
@@ -3355,7 +3366,7 @@ apiRouter.post("/pos/customers", requireTenant, (req, res) => {
     return res.status(409).json({ error: "\u064A\u0648\u062C\u062F \u0639\u0645\u064A\u0644 \u0645\u0633\u062C\u0644 \u0645\u0633\u0628\u0642\u0627\u064B \u0628\u0646\u0641\u0633 \u0631\u0642\u0645 \u0627\u0644\u0647\u0627\u062A\u0641", customer: existing });
   }
   const customer = {
-    id: `cust_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: newId("cust"),
     tenantId: authReq.tenantId,
     name: name.trim(),
     phone: phone.trim(),
@@ -3469,7 +3480,7 @@ apiRouter.post("/sync/batch", requireTenant, (req, res) => {
     actorName: authReq.actorName,
     action: "SYNC_OFFLINE_SALES",
     entity: "SyncQueue",
-    entityId: `batch_${Date.now()}`,
+    entityId: newId("batch"),
     details: `\u0645\u0632\u0627\u0645\u0646\u0629 ${syncedIds.length} \u0641\u0648\u0627\u062A\u064A\u0631 \u0628\u064A\u0639 \u0645\u0646 \u0627\u0644\u0643\u0627\u0634\u064A\u0631 \u062F\u0648\u0646 \u0627\u062A\u0635\u0627\u0644.`
   });
   res.json({
@@ -3533,7 +3544,7 @@ apiRouter.post("/storefront/:slug/order", (req, res) => {
   });
   const orderNumber = `ORD-${(/* @__PURE__ */ new Date()).getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
   const newOrder = {
-    id: `ord_${Date.now()}`,
+    id: newId("ord"),
     tenantId: tenant.id,
     orderNumber,
     customerName,
@@ -3583,7 +3594,7 @@ apiRouter.put("/currencies/:code", requireTenant, (req, res) => {
     currency.rateToSdg = Number(rateToSdg);
     currency.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
     db.getSchema().currencyRateHistory.unshift({
-      id: `crh_${Date.now()}`,
+      id: newId("crh"),
       tenantId: authReq.tenantId,
       currencyCode: currency.code,
       oldRate,
@@ -3789,7 +3800,7 @@ apiRouter.post("/expenses", requireTenant, (req, res) => {
   }
   const branch = db.getSchema().branches.find((b) => b.id === branchId);
   const newExpense = {
-    id: `exp_${Date.now()}`,
+    id: newId("exp"),
     tenantId: authReq.tenantId,
     branchId,
     branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
@@ -3853,12 +3864,12 @@ apiRouter.post("/purchases", requireTenant, (req, res) => {
     };
   });
   const newPurchase = {
-    id: `purch_${Date.now()}`,
+    id: newId("purch"),
     tenantId: authReq.tenantId,
     branchId,
     branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0645\u062D\u062F\u062F",
     supplierName,
-    invoiceNumber: invoiceNumber || `PO-${Date.now().toString().slice(-6)}`,
+    invoiceNumber: invoiceNumber || newCode("PO"),
     currency: curr,
     exchangeRate: rate,
     items: processedItems,
@@ -3902,7 +3913,7 @@ apiRouter.post("/subscriptions/submit-payment", requireTenant, (req, res) => {
     return res.status(400).json({ error: "\u064A\u0631\u062C\u0649 \u0625\u062F\u062E\u0627\u0644 \u0627\u0644\u0628\u0627\u0642\u0629\u060C \u0627\u0644\u0645\u0628\u0644\u063A\u060C \u0648\u0631\u0642\u0645 \u0627\u0644\u0645\u0639\u0627\u0645\u0644\u0629 / \u0625\u0634\u0639\u0627\u0631 \u0628\u0646\u0643\u0643" });
   }
   const paymentRecord = {
-    id: `pay_${Date.now()}`,
+    id: newId("pay"),
     tenantId: authReq.tenantId,
     planId,
     amountSdg: Number(amountSdg),
@@ -4079,7 +4090,7 @@ apiRouter.post("/albandar/listings", (req, res) => {
     services: "\u062E\u062F\u0645\u0627\u062A \u0648\u0623\u0639\u0645\u0627\u0644"
   };
   const newListing = {
-    id: `alb_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: newId("alb"),
     title,
     description: description || "\u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u0645\u062A\u0648\u0641\u0631\u0629 \u0628\u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0627\u0644\u0645\u0628\u0627\u0634\u0631 \u0623\u0648 \u0639\u0628\u0631 \u0631\u0633\u0627\u0626\u0644 \u0627\u0644\u0648\u0627\u062A\u0633\u0627\u0628.",
     category: category || "groceries",
@@ -4128,7 +4139,7 @@ apiRouter.post("/albandar/publish-product", requireTenant, (req, res) => {
   };
   const chosenCat = category || "groceries";
   const newListing = {
-    id: `alb_prod_${product.id}_${Date.now()}`,
+    id: newId(`alb_prod_${product.id}`),
     title: product.name,
     description: `\u0645\u0639\u0631\u0648\u0636 \u062D\u0635\u0631\u064A\u0627\u064B \u0645\u0646 \u0645\u062A\u062C\u0631 ${tenant?.tradeName || tenant?.name} \u0627\u0644\u0645\u0648\u062B\u0642 \u0641\u064A \u0633\u0648\u0642 \u0627\u0644\u0628\u0646\u062F\u0631. \u0648\u062D\u062F\u0629 \u0627\u0644\u0642\u064A\u0627\u0633: ${product.unit}. \u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F: ${product.barcode || "N/A"}. \u0645\u062A\u0648\u0641\u0631 \u062A\u0633\u0644\u064A\u0645 \u0641\u0648\u0631\u064A \u0648\u062A\u0648\u0635\u064A\u0644 \u0644\u0643\u0627\u0641\u0629 \u0627\u0644\u0645\u062F\u0646.`,
     category: chosenCat,
@@ -4228,7 +4239,7 @@ apiRouter.post("/recurring-expenses", requireTenant, (req, res) => {
   }
   const branch = db.getSchema().branches.find((b) => b.id === branchId && b.tenantId === authReq.tenantId);
   const newRecurring = {
-    id: `recexp_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+    id: newId("recexp"),
     tenantId: authReq.tenantId,
     branchId: branchId || "branch_kht_main",
     branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
@@ -4329,7 +4340,7 @@ apiRouter.post("/promotions", requireTenant, (req, res) => {
   const freeProd = products.find((p) => p.id === freeProductId);
   const targetProd = products.find((p) => p.id === productId);
   const newPromo = {
-    id: `promo_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+    id: newId("promo"),
     tenantId: authReq.tenantId,
     title,
     description: description || "",
