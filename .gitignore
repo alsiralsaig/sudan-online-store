@@ -10,3 +10,4 @@ coverage/
 .aistudio/
 bun.lock
 metadata.json
+.vercel

@@ -1,20 +1,188 @@
+# 🏪 منصة سند - نظام سحابي متكامل للتجارة ونقاط البيع
+
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+  
+![Sanad Platform](https://img.shields.io/badge/Platform-Sanad_POS-059669?style=for-the-badge&logo=shopify&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![PWA](https://img.shields.io/badge/PWA-Enabled-5A0FC8?style=for-the-badge)
+
+**نظام سحابي متكامل متعدد المتاجر والفروع مخصص للأعمال والمتاجر في السودان**
+
+[🚀 التطبيق المباشر](https://sudan-online-store.vercel.app) • [📱 تطبيق الجمهور](https://sudan-online-store.vercel.app/?app=client) • [💼 لوحة التاجر](https://sudan-online-store.vercel.app/?app=merchant) • [⚙️ الإدارة المركزية](https://sudan-online-store.vercel.app/?app=super_admin)
+
 </div>
 
-# Run and deploy your AI Studio app
+---
 
-This contains everything you need to run your app locally.
+## ✨ المميزات الرئيسية
 
-View your app in AI Studio: https://ai.studio/apps/8e61d3a5-1a16-4ac2-b3ff-b8bc2f243b9c
+### 🎯 ثلاث تطبيقات في منصة واحدة
 
-## Run Locally
+| التطبيق | الوصف | الرابط |
+|---------|--------|--------|
+| **🛒 تطبيق الجمهور** | Marketplace متكامل مثل البندر - تصفح، إعلانات، طلبات | `/?app=client` |
+| **💼 تطبيق التاجر (POS)** | نقطة بيع، مخزون، فواتير، تقارير | `/?app=merchant` |
+| **⚙️ الإدارة المركزية** | SaaS Admin - متاجر، اشتراكات، موافقات | `/?app=super_admin` |
 
-**Prerequisites:**  Node.js
+### 🌟 مميزات نظام POS (نقطة البيع)
 
+- ✅ **بيع دون اتصال** - يعمل Offline مع IndexedDB
+- ✅ **ماسح باركود** - كاميرا + Hardware Scanner
+- ✅ **فواتير ضريبية** - ZATCA QR Code معتمد
+- ✅ **متعدد العملات** - SDG, USD, SAR, TRY, EGP, AED, EUR, QAR
+- ✅ **إدارة المخزون** - جرد ذكي، تنبيهات، تحويلات بين الفروع
+- ✅ **نظام الورديات** - كاشير، محاسب، مدير فرع
+- ✅ **تقارير شاملة** - مبيعات، مصروفات، مشتريات
+- ✅ **طلبات المتجر** - استقبال وإدارة الطلبات الإلكترونية
+- ✅ **نظام الولاء** - نقاط عملاء وخصومات
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 🏪 مميزات Marketplace (تطبيق الجمهور)
+
+- 📢 **إعلانات مميزة** - VIP، نجمة، معرض سيارات
+- 🛍️ **أقسام متعددة** - هواتف، عقارات، إلكترونيات، مركبات، خدمات
+-  **بحث متقدم** - فلاتر (السعر، الولاية، الأولوية)
+- ❤️ **قائمة الرغبات** - Wishlist
+- 💬 **رسائل** - تواصل بين البائع والمشتري
+- ➕ **زر إضافة مركزي** - إضافة إعلان، طلب، متجر
+
+---
+
+## 🚀 التثبيت والتشغيل
+
+### المتطلبات
+- Node.js 18+ أو Bun
+- npm أو bun
+
+### الخطوات
+
+```bash
+# 1. استنساخ المستودع
+git clone https://github.com/alsiralsaig/sudan-online-store.git
+cd sudan-online-store
+
+# 2. تثبيت المكتبات
+npm install
+
+# 3. تشغيل التطبيق
+npm run dev
+```
+
+### البناء للنشر
+
+```bash
+npm run build
+npm run start
+```
+
+---
+
+## 📱 تثبيت كتطبيق PWA
+
+التطبيق يدعم التثبيت على:
+-  Android (Chrome)
+-  iOS (Safari)
+- 💻 Desktop (Chrome, Edge)
+
+**خطوات التثبيت:**
+1. افتح التطبيق في المتصفح
+2. اضغط على "تثبيت التطبيق" أو "Add to Home Screen"
+3. اختر التطبيق المناسب (جمهور/تاجر/إدارة)
+
+---
+
+## 🏗️ البنية التقنية
+
+### Frontend
+- **React 19** + **TypeScript**
+- **Tailwind CSS 4** - تصميم حديث
+- **Vite 8** - Build tool سريع
+- **Lucide React** - أيقونات
+- **Recharts** - رسوم بيانية
+
+### Backend
+- **Express.js** - API Server
+- **File-based DB** - JSON Database (قابل للاستبدال بـ PostgreSQL)
+- **IndexedDB** - تخزين Offline
+
+### PWA
+- **Service Worker** - Caching + Offline
+- **Web App Manifest** - 3 manifests منفصلة
+- **Push Notifications** - جاهزة
+
+---
+
+## 📊 قاعدة البيانات
+
+النظام يستخدم **JSON Database** مع البيانات التجريبية التالية:
+
+### المنشآت (Tenants)
+- **شركة الرواد للتجارة** - الخرطوم (باقة Growth)
+- **بوتيك النيل** - بورتسودان (باقة Starter)
+
+### الفروع
+- فرع الخرطوم الرئيسي
+- فرع ود مدني
+- فرع بورتسودان
+
+### الموظفون (5 أدوار)
+- 👑 **المالك** - أحمد الطيب (صلاحيات كاملة)
+- 👔 **مدير الفرع** - عثمان عبد الرحيم
+- 💰 **كاشير** - محمد عبد الله
+- 📦 **مسؤول المخزن** - إبراهيم علي
+-  **محاسب** - سارة مصطفى
+
+### المنتجات (8 منتجات)
+- سكر كنانة، زيت صباح، دقيق سيقا، شاي الغزالتين
+- حليب كابو، صابون البدر، بن حبشي، أرز مصري
+
+---
+
+## 🎨 الأيقونات والصور
+
+جميع التطبيقات تستخدم **نفس الأيقونة** (خلفية خضراء داكنة #052e1a):
+- `/public/icons/` - أيقونات PWA متعددة الأحجام
+- `/src/assets/images/` - صور المنتجات والإعلانات
+
+---
+
+## 🔧 التخصيص
+
+### تغيير الألوان
+- اللون الرئيسي: `#059669` (أخضر)
+- لون الإدارة: `#5B21B6` (بنفسجي)
+- لون الجمهور: `#D97706` (برتقالي)
+
+### إضافة منتجات
+1. افتح لوحة الإدارة
+2. اختر "إدارة المخزون"
+3. اضغط "إضافة منتج جديد"
+
+### إنشاء متجر جديد
+1. افتح الإدارة المركزية `/?app=super_admin`
+2. اضغط "إضافة تاجر جديد"
+3. وافق على الطلب وأرسل كود الدخول
+
+---
+
+## 📞 الدعم والتواصل
+
+- 📧 **البريد:** info@sanad.sd
+- 📱 **الهاتف:** +249 900 000 000
+- 📍 **الموقع:** الخرطوم، السودان
+
+---
+
+## 📄 الترخيص
+
+هذا المشروع مملوك لشركة **السند للتقنية** - جميع الحقوق محفوظة © 2026
+
+---
+
+<div align="center">
+  
+**صُنع بـ ❤️ في السودان** 🇸🇩
+
+[⬆ العودة للأعلى](#-منصة-سند---نظام-سحابي-متكامل-للتجارة-ونقاط-البيع)
+
+</div>
