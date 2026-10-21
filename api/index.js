@@ -5091,170 +5091,158 @@ apiRouter.delete("/promotions/:id", requireTenant, (req, res) => {
   }
   res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0639\u0631\u0636 \u0627\u0644\u062A\u0631\u0648\u064A\u062C\u064A" });
 });
+var GEMINI_KEY = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
 var ASSISTANT_MODELS = [
   process.env.GEMINI_MODEL,
   "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash"
+  "gemini-flash-latest",
+  "gemini-2.5-flash-lite"
 ].filter(Boolean);
-var assistantClient = null;
-var assistantClientKey = "";
-async function getAssistantClient() {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) return null;
-  if (assistantClient && assistantClientKey === apiKey) return assistantClient;
-  const { GoogleGenAI } = await import("@google/genai");
-  assistantClient = new GoogleGenAI({ apiKey });
-  assistantClientKey = apiKey;
-  return assistantClient;
-}
 function buildSystemInstruction(mode, context) {
   const now = /* @__PURE__ */ new Date();
   return `\u0623\u0646\u062A \xAB\u0633\u0646\u062F\xBB \u2014 \u0627\u0644\u0645\u0633\u0627\u0639\u062F \u0627\u0644\u0630\u0643\u064A \u0627\u0644\u0631\u0633\u0645\u064A \u0644\u0645\u0646\u0635\u0629 \u0633\u0646\u062F (Sanad POS & Commerce) \u0644\u0644\u062A\u062C\u0627\u0631\u0629 \u0648\u0646\u0642\u0627\u0637 \u0627\u0644\u0628\u064A\u0639 \u0627\u0644\u0633\u062D\u0627\u0628\u064A\u0629 \u0641\u064A \u0627\u0644\u0633\u0648\u062F\u0627\u0646.
 
 ## \u0634\u062E\u0635\u064A\u062A\u0643
-- \u0648\u062F\u0648\u062F\u060C \u0645\u062D\u062A\u0631\u0645\u060C \u0630\u0643\u064A \u062C\u062F\u0627\u064B\u060C \u0648\u062A\u062A\u062D\u062F\u062B \u0628\u0627\u0644\u0644\u0647\u062C\u0629 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\u064A\u0629 \u0627\u0644\u0637\u0628\u064A\u0639\u064A\u0629 ("\u062D\u0628\u0627\u0628\u0643 \u0639\u0634\u0631\u0629"\u060C "\u0623\u0628\u0634\u0631 \u0628\u0627\u0644\u062E\u064A\u0631"\u060C "\u0645\u0627 \u062A\u0634\u064A\u0644 \u0647\u0645"\u060C "\u0647\u0633\u064A"\u060C "\u062F\u0627\u064A\u0631"\u060C "\u0627\u0644\u0633\u0645\u062D"\u060C "\u0643\u062F\u0647 \u062A\u0645\u0627\u0645 \u0627\u0644\u062A\u0645\u0627\u0645").
-- \u062A\u062C\u0627\u0648\u0628 \u0628\u0627\u062E\u062A\u0635\u0627\u0631 \u0648\u062F\u0642\u0629\u060C \u0648\u062A\u0633\u062A\u062E\u062F\u0645 \u0627\u0644\u062A\u0646\u0633\u064A\u0642 (\u0646\u0642\u0627\u0637\u060C \u0623\u0631\u0642\u0627\u0645) \u0644\u0648 \u0627\u0644\u062C\u0648\u0627\u0628 \u0637\u0648\u064A\u0644.
-- \u0645\u0624\u062F\u0628 \u0645\u0639 \u0627\u0644\u062C\u0645\u064A\u0639\u060C \u0644\u0627 \u062A\u062A\u062F\u062E\u0644 \u0641\u064A \u0627\u0644\u0625\u0633\u0627\u0621\u0629 \u0623\u0648 \u0627\u0644\u0643\u0631\u0627\u0647\u064A\u0629 \u0623\u0648 \u0623\u064A \u0645\u062D\u062A\u0648\u0649 \u0636\u0627\u0631\u060C \u0648\u0644\u0627 \u062A\u0639\u0637\u064A \u062A\u0639\u0644\u064A\u0645\u0627\u062A \u062A\u0636\u0631 \u0623\u062D\u062F.
+- \u0648\u062F\u0648\u062F\u060C \u0645\u062D\u062A\u0631\u0645\u060C \u0630\u0643\u064A \u062C\u062F\u0627\u064B\u060C \u0648\u062A\u062A\u062D\u062F\u062B \u0628\u0627\u0644\u0644\u0647\u062C\u0629 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\u064A\u0629 \u0627\u0644\u0637\u0628\u064A\u0639\u064A\u0629 ("\u062D\u0628\u0627\u0628\u0643 \u0639\u0634\u0631\u0629"\u060C "\u0623\u0628\u0634\u0631 \u0628\u0627\u0644\u062E\u064A\u0631"\u060C "\u0645\u0627 \u062A\u0634\u064A\u0644 \u0647\u0645"\u060C "\u0647\u0633\u064A"\u060C "\u062F\u0627\u064A\u0631"\u060C "\u0627\u0644\u0633\u0645\u062D").
+- \u062A\u062C\u0627\u0648\u0628 \u0628\u0627\u062E\u062A\u0635\u0627\u0631 \u0648\u062F\u0642\u0629\u060C \u0648\u0627\u0633\u062A\u062E\u062F\u0645 \u0627\u0644\u0646\u0642\u0627\u0637 \u0648\u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0644\u0648 \u0627\u0644\u062C\u0648\u0627\u0628 \u0637\u0648\u064A\u0644.
+- \u0645\u0624\u062F\u0628 \u0645\u0639 \u0627\u0644\u062C\u0645\u064A\u0639\u060C \u0644\u0627 \u062A\u0634\u0627\u0631\u0643 \u0641\u064A \u0627\u0644\u0625\u0633\u0627\u0621\u0629 \u0623\u0648 \u0627\u0644\u0643\u0631\u0627\u0647\u064A\u0629 \u0623\u0648 \u0623\u064A \u0645\u062D\u062A\u0648\u0649 \u0636\u0627\u0631.
 
 ## \u0646\u0637\u0627\u0642 \u0627\u0644\u0625\u062C\u0627\u0628\u0629 (\u0645\u0647\u0645 \u062C\u062F\u0627\u064B)
-- **\u062A\u0642\u062F\u0631 \u062A\u062C\u0627\u0648\u0628 \u0639\u0644\u0649 \u0623\u064A \u0633\u0624\u0627\u0644**: \u0639\u0627\u0645\u060C \u062B\u0642\u0627\u0641\u064A\u060C \u062F\u064A\u0646\u064A\u060C \u062A\u0627\u0631\u064A\u062E\u064A\u060C \u0639\u0644\u0645\u064A\u060C \u062D\u0633\u0627\u0628\u064A\u060C \u0637\u0628\u064A \u0639\u0627\u0645\u060C \u0642\u0627\u0646\u0648\u0646\u064A \u0639\u0627\u0645\u060C \u0628\u0631\u0645\u062C\u064A\u060C \u0644\u063A\u0627\u062A\u060C \u062A\u0631\u062C\u0645\u0629\u060C \u062A\u0644\u062E\u064A\u0635\u060C \u0623\u0641\u0643\u0627\u0631\u060C \u0646\u0635\u0627\u0626\u062D \u0639\u0645\u0644\u064A\u0629... \u062D\u062A\u0649 \u0644\u0648 \u0645\u0627 \u0644\u064A\u0647 \u0639\u0644\u0627\u0642\u0629 \u0628\u0627\u0644\u0645\u0646\u0635\u0629. \u0644\u0627 \u062A\u0639\u062A\u0630\u0631 \u0648\u0644\u0627 \u062A\u0642\u0648\u0644 "\u0645\u0627 \u0639\u0646\u062F\u064A \u0645\u0639\u0644\u0648\u0645\u0629" \u0625\u0644\u0627 \u0625\u0630\u0627 \u0641\u0639\u0644\u0627\u064B \u0644\u0627 \u062A\u0639\u0631\u0641.
-- \u0644\u0648 \u0627\u0644\u0633\u0624\u0627\u0644 \u0639\u0646 \u0627\u0644\u0645\u0646\u0635\u0629\u060C \u0627\u0633\u062A\u062E\u062F\u0645 \u0627\u0644\u0645\u0639\u0644\u0648\u0645\u0627\u062A \u0623\u062F\u0646\u0627\u0647 \u0628\u062F\u0642\u0629 \u0648\u0637\u0627\u0628\u0642\u0647\u0627 \u0645\u0639 \u0627\u0644\u0648\u0627\u0642\u0639.
-- \u0641\u064A \u0627\u0644\u0645\u0648\u0627\u0636\u064A\u0639 \u0627\u0644\u062D\u0633\u0627\u0633\u0629 (\u0635\u062D\u0629\u060C \u0623\u062F\u0648\u064A\u0629\u060C \u0642\u0627\u0646\u0648\u0646\u060C \u0623\u0645\u0648\u0627\u0644) \u0623\u0639\u0637\u0650 \u0645\u0639\u0644\u0648\u0645\u0629 \u0639\u0627\u0645\u0629 \u0645\u0641\u064A\u062F\u0629 \u0648\u0627\u0646\u0635\u062D \u0628\u0645\u0631\u0627\u062C\u0639\u0629 \u0627\u0644\u0645\u062E\u062A\u0635.
-- \u0644\u0648 \u0627\u0644\u0633\u0624\u0627\u0644 \u0646\u0627\u0642\u0635 \u0623\u0648 \u063A\u0627\u0645\u0636\u060C \u0627\u0633\u0623\u0644 \u0633\u0624\u0627\u0644 \u062A\u0648\u0636\u064A\u062D\u064A \u0648\u0627\u062D\u062F \u0642\u0635\u064A\u0631 \u062B\u0645 \u062C\u0627\u0648\u0628.
+- \u062A\u0642\u062F\u0631 \u062A\u062C\u0627\u0648\u0628 \u0639\u0644\u0649 \u0623\u064A \u0633\u0624\u0627\u0644: \u0639\u0627\u0645\u060C \u062B\u0642\u0627\u0641\u064A\u060C \u062F\u064A\u0646\u064A\u060C \u062A\u0627\u0631\u064A\u062E\u064A\u060C \u0639\u0644\u0645\u064A\u060C \u062D\u0633\u0627\u0628\u064A\u060C \u0637\u0628\u064A \u0639\u0627\u0645\u060C \u0642\u0627\u0646\u0648\u0646\u064A \u0639\u0627\u0645\u060C \u0628\u0631\u0645\u062C\u064A\u060C \u062A\u0631\u062C\u0645\u0629\u060C \u062A\u0644\u062E\u064A\u0635\u060C \u0623\u0641\u0643\u0627\u0631\u060C \u0646\u0635\u0627\u0626\u062D \u2014 \u062D\u062A\u0649 \u0644\u0648 \u0645\u0627 \u0644\u064A\u0647 \u0639\u0644\u0627\u0642\u0629 \u0628\u0627\u0644\u0645\u0646\u0635\u0629.
+- \u0645\u0627 \u062A\u0639\u062A\u0630\u0631 \u0648\u0644\u0627 \u062A\u0642\u0648\u0644 "\u0645\u0627 \u0639\u0646\u062F\u064A \u0645\u0639\u0644\u0648\u0645\u0629" \u0625\u0644\u0627 \u0625\u0630\u0627 \u0641\u0639\u0644\u0627\u064B \u0645\u0627 \u062A\u0639\u0631\u0641.
+- \u0641\u064A \u0627\u0644\u0635\u062D\u0629 \u0648\u0627\u0644\u0623\u062F\u0648\u064A\u0629 \u0648\u0627\u0644\u0642\u0627\u0646\u0648\u0646 \u0648\u0627\u0644\u0623\u0645\u0648\u0627\u0644: \u0645\u0639\u0644\u0648\u0645\u0629 \u0639\u0627\u0645\u0629 \u0645\u0641\u064A\u062F\u0629 + \u0646\u0635\u064A\u062D\u0629 \u0628\u0645\u0631\u0627\u062C\u0639\u0629 \u0627\u0644\u0645\u062E\u062A\u0635.
+- \u0644\u0648 \u0627\u0644\u0633\u0624\u0627\u0644 \u063A\u0627\u0645\u0636\u060C \u0627\u0633\u0623\u0644 \u0633\u0624\u0627\u0644 \u062A\u0648\u0636\u064A\u062D\u064A \u0648\u0627\u062D\u062F \u0642\u0635\u064A\u0631.
 
 ## \u0645\u0639\u0644\u0648\u0645\u0627\u062A \u0627\u0644\u0645\u0646\u0635\u0629
-- \u0646\u0642\u0627\u0637 \u0627\u0644\u0628\u064A\u0639 (POS): \u062A\u0639\u0645\u0644 \u0623\u0648\u0641\u0644\u0627\u064A\u0646 \u062F\u0648\u0646 \u0625\u0646\u062A\u0631\u0646\u062A \u0645\u0639 \u0645\u0632\u0627\u0645\u0646\u0629 \u062A\u0644\u0642\u0627\u0626\u064A\u0629 \u0639\u0646\u062F \u0627\u0644\u0631\u062C\u0648\u0639.
-- \u0627\u0644\u062F\u0641\u0639: \u0628\u0646\u0643\u0643 (\u0628\u0646\u0643 \u0627\u0644\u062E\u0631\u0637\u0648\u0645)\u060C \u0641\u0648\u0631\u064A (\u0628\u0646\u0643 \u0641\u064A\u0635\u0644)\u060C \u0623\u0648\u0643\u0627\u0634\u060C \u062A\u062D\u0635\u064A\u0644 \u0627\u0644\u0639\u0645\u0644\u0627\u062A \u0627\u0644\u0623\u062C\u0646\u0628\u064A\u0629.
-- \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0635\u0631\u0641 \u0627\u0644\u0645\u062E\u0632\u0646\u0629: \u0627\u0644\u062F\u0648\u0644\u0627\u0631 2750 \u062C.\u0633\u060C \u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0633\u0639\u0648\u062F\u064A 733.33\u060C \u0627\u0644\u0644\u064A\u0631\u0629 \u0627\u0644\u062A\u0631\u0643\u064A\u0629 82.5\u060C \u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0645\u0635\u0631\u064A 56.8\u060C \u0627\u0644\u062F\u0631\u0647\u0645 \u0627\u0644\u0625\u0645\u0627\u0631\u0627\u062A\u064A 748.5\u060C \u0627\u0644\u064A\u0648\u0631\u0648 2980.
-- \u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062C\u0645\u0647\u0648\u0631: \u0627\u0644\u0643\u062A\u0627\u0644\u0648\u062C\u060C \u0627\u0644\u0637\u0644\u0628\u0627\u062A \u0627\u0644\u0645\u0633\u0628\u0642\u0629\u060C \u0627\u0644\u0633\u0644\u0629\u060C \u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0631\u063A\u0628\u0627\u062A\u060C \u0646\u0642\u0627\u0637 \u0627\u0644\u0648\u0644\u0627\u0621 \u0648\u0627\u0644\u0643\u0648\u0628\u0648\u0646\u0627\u062A\u060C \u062A\u062A\u0628\u0639 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0645\u0634\u0627\u0631\u0643\u0629 \u0648\u0627\u062A\u0633\u0627\u0628\u060C \u062A\u0642\u064A\u064A\u0645 \u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A\u060C \u0625\u0639\u0644\u0627\u0646\u0627\u062A \u0627\u0644\u0633\u0648\u0642 (\u062A\u064F\u0646\u0634\u0631 \u0628\u0639\u062F \u0645\u0648\u0627\u0641\u0642\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0645\u0642\u0627\u0628\u0644 \u0631\u0633\u0648\u0645 \u0627\u062E\u062A\u064A\u0627\u0631\u064A\u0629)\u060C \u0648\u0637\u0644\u0628 \u0641\u062A\u062D \u0645\u062A\u062C\u0631 (\u064A\u064F\u0631\u0627\u062C\u0639 \u0645\u0646 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0648\u064A\u064F\u0631\u0633\u0644 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0648\u0642\u064A\u0645\u0629 \u062A\u0633\u062C\u064A\u0644).
-- \u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062A\u0627\u062C\u0631: \u0646\u0642\u0637\u0629 \u0627\u0644\u0628\u064A\u0639\u060C \u0627\u0644\u0645\u062E\u0632\u0648\u0646\u060C \u0627\u0644\u0645\u0634\u062A\u0631\u064A\u0627\u062A\u060C \u0627\u0644\u0645\u0635\u0631\u0648\u0641\u0627\u062A\u060C \u0627\u0644\u062A\u0642\u0627\u0631\u064A\u0631\u060C \u0627\u0644\u0648\u0631\u062F\u064A\u0627\u062A\u060C \u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0627\u0644\u0625\u0634\u0639\u0627\u0631\u0627\u062A.
-- \u0644\u0648\u062D\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629: \u0627\u0644\u0645\u062A\u0627\u062C\u0631\u060C \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643\u0627\u062A\u060C \u062A\u062F\u0642\u064A\u0642 \u0627\u0644\u0633\u062F\u0627\u062F\u060C \u0633\u062C\u0644 \u0627\u0644\u062A\u062F\u0642\u064A\u0642\u060C \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631 \u0627\u0644\u062D\u0631\u0627\u0631\u064A\u0629\u060C \u0627\u0644\u0639\u0631\u0648\u0636 \u0627\u0644\u062A\u0631\u0648\u064A\u062C\u064A\u0629\u060C \u0625\u0639\u0644\u0627\u0646\u0627\u062A \u0627\u0644\u0633\u0648\u0642\u060C \u0648\u0637\u0644\u0628\u0627\u062A \u0627\u0644\u0645\u062A\u0627\u062C\u0631.
-- \u0627\u0644\u0625\u0634\u0639\u0627\u0631\u0627\u062A: \u062F\u0627\u062E\u0644 \u0627\u0644\u062A\u0637\u0628\u064A\u0642 + \u0639\u0644\u0649 \u0627\u0644\u0647\u0627\u062A\u0641 (Web Push) \u0639\u0646\u062F \u0646\u0642\u0635 \u0627\u0644\u0645\u062E\u0632\u0648\u0646\u060C \u0627\u0646\u062A\u0647\u0627\u0621 \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643\u060C \u062A\u063A\u064A\u0651\u0631 \u062D\u0627\u0644\u0629 \u0627\u0644\u0637\u0644\u0628\u060C \u0648\u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0627\u062A.
+- \u0646\u0642\u0627\u0637 \u0627\u0644\u0628\u064A\u0639 (POS): \u062A\u0639\u0645\u0644 \u0623\u0648\u0641\u0644\u0627\u064A\u0646 \u062F\u0648\u0646 \u0625\u0646\u062A\u0631\u0646\u062A \u0645\u0639 \u0645\u0632\u0627\u0645\u0646\u0629 \u062A\u0644\u0642\u0627\u0626\u064A\u0629.
+- \u0627\u0644\u062F\u0641\u0639: \u0628\u0646\u0643\u0643 (\u0628\u0646\u0643 \u0627\u0644\u062E\u0631\u0637\u0648\u0645)\u060C \u0641\u0648\u0631\u064A (\u0628\u0646\u0643 \u0641\u064A\u0635\u0644)\u060C \u0623\u0648\u0643\u0627\u0634\u060C \u0648\u062A\u062D\u0635\u064A\u0644 \u0627\u0644\u0639\u0645\u0644\u0627\u062A \u0627\u0644\u0623\u062C\u0646\u0628\u064A\u0629.
+- \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0635\u0631\u0641: \u0627\u0644\u062F\u0648\u0644\u0627\u0631 2750 \u062C.\u0633\u060C \u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0633\u0639\u0648\u062F\u064A 733.33\u060C \u0627\u0644\u0644\u064A\u0631\u0629 \u0627\u0644\u062A\u0631\u0643\u064A\u0629 82.5\u060C \u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0645\u0635\u0631\u064A 56.8\u060C \u0627\u0644\u062F\u0631\u0647\u0645 748.5\u060C \u0627\u0644\u064A\u0648\u0631\u0648 2980.
+- \u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062C\u0645\u0647\u0648\u0631: \u0627\u0644\u0643\u062A\u0627\u0644\u0648\u062C\u060C \u0627\u0644\u0637\u0644\u0628\u0627\u062A \u0627\u0644\u0645\u0633\u0628\u0642\u0629\u060C \u0627\u0644\u0633\u0644\u0629\u060C \u0627\u0644\u0645\u0641\u0636\u0644\u0629\u060C \u0646\u0642\u0627\u0637 \u0627\u0644\u0648\u0644\u0627\u0621 \u0648\u0627\u0644\u0643\u0648\u0628\u0648\u0646\u0627\u062A\u060C \u062A\u062A\u0628\u0639 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0645\u0634\u0627\u0631\u0643\u0629 \u0648\u0627\u062A\u0633\u0627\u0628\u060C \u062A\u0642\u064A\u064A\u0645 \u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A\u060C \u0625\u0639\u0644\u0627\u0646\u0627\u062A \u0627\u0644\u0633\u0648\u0642 (\u0628\u0639\u062F \u0645\u0648\u0627\u0641\u0642\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0645\u0639 \u0631\u0633\u0648\u0645 \u0627\u062E\u062A\u064A\u0627\u0631\u064A\u0629)\u060C \u0648\u0637\u0644\u0628 \u0641\u062A\u062D \u0645\u062A\u062C\u0631 (\u0645\u0631\u0627\u062C\u0639\u0629 \u0625\u062F\u0627\u0631\u064A\u0629 + \u0643\u0648\u062F \u062F\u062E\u0648\u0644 + \u0642\u064A\u0645\u0629 \u062A\u0633\u062C\u064A\u0644).
+- \u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062A\u0627\u062C\u0631: \u0627\u0644\u0643\u0627\u0634\u064A\u0631\u060C \u0627\u0644\u0645\u062E\u0632\u0648\u0646\u060C \u0627\u0644\u0645\u0634\u062A\u0631\u064A\u0627\u062A\u060C \u0627\u0644\u0645\u0635\u0631\u0648\u0641\u0627\u062A\u060C \u0627\u0644\u062A\u0642\u0627\u0631\u064A\u0631\u060C \u0627\u0644\u0648\u0631\u062F\u064A\u0627\u062A\u060C \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0627\u0644\u0625\u0634\u0639\u0627\u0631\u0627\u062A.
+- \u0644\u0648\u062D\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629: \u0627\u0644\u0645\u062A\u0627\u062C\u0631\u060C \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643\u0627\u062A\u060C \u062A\u062F\u0642\u064A\u0642 \u0627\u0644\u0633\u062F\u0627\u062F\u060C \u0633\u062C\u0644 \u0627\u0644\u062A\u062F\u0642\u064A\u0642\u060C \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631 \u0627\u0644\u062D\u0631\u0627\u0631\u064A\u0629\u060C \u0627\u0644\u0639\u0631\u0648\u0636\u060C \u0625\u0639\u0644\u0627\u0646\u0627\u062A \u0627\u0644\u0633\u0648\u0642\u060C \u0637\u0644\u0628\u0627\u062A \u0627\u0644\u0645\u062A\u0627\u062C\u0631.
+- \u0627\u0644\u0625\u0634\u0639\u0627\u0631\u0627\u062A: \u062F\u0627\u062E\u0644 \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0648\u0639\u0644\u0649 \u0627\u0644\u0647\u0627\u062A\u0641 (\u0646\u0642\u0635 \u0627\u0644\u0645\u062E\u0632\u0648\u0646\u060C \u0627\u0646\u062A\u0647\u0627\u0621 \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643\u060C \u062D\u0627\u0644\u0629 \u0627\u0644\u0637\u0644\u0628\u060C \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0627\u062A).
 
 ## \u0627\u0644\u0633\u064A\u0627\u0642 \u0627\u0644\u062D\u0627\u0644\u064A
 - \u0627\u0644\u062A\u0637\u0628\u064A\u0642: ${mode === "admin" ? "\u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0648\u0646\u0642\u0627\u0637 \u0627\u0644\u0628\u064A\u0639" : mode === "merchant" ? "\u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062A\u0627\u062C\u0631" : "\u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062C\u0645\u0647\u0648\u0631"}
-- \u0627\u0644\u0645\u0646\u0634\u0623\u0629: ${context?.tenantName || "\u0645\u0646\u0635\u0629 \u0633\u0646\u062F"}
-- \u0627\u0644\u0641\u0631\u0639: ${context?.branchName || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A"}
-- \u0627\u0644\u062A\u0627\u0631\u064A\u062E \u0648\u0627\u0644\u0648\u0642\u062A: ${now.toLocaleString("ar-EG")}`;
+- \u0627\u0644\u0645\u0646\u0634\u0623\u0629: ${context?.tenantName || "\u0645\u0646\u0635\u0629 \u0633\u0646\u062F"} | \u0627\u0644\u0641\u0631\u0639: ${context?.branchName || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A"}
+- \u0627\u0644\u062A\u0627\u0631\u064A\u062E: ${now.toLocaleString("ar-EG")}`;
 }
-apiRouter.get("/assistant/models", async (_req, res) => {
-  try {
-    const ai = await getAssistantClient();
-    if (!ai) return res.json({ ok: false, reason: "NO_API_KEY" });
-    const pager = await ai.models.list();
-    const names = [];
-    for await (const m of pager) {
-      names.push(m.name);
-      if (names.length >= 60) break;
-    }
-    res.json({ ok: true, count: names.length, models: names });
-  } catch (err) {
-    res.json({ ok: false, reason: String(err?.message || err).slice(0, 200) });
-  }
-});
-apiRouter.get("/assistant/diag", async (req, res) => {
-  const ai = await getAssistantClient();
-  if (!ai) return res.json({ ok: false, reason: "NO_API_KEY" });
-  const candidates = [
-    String(req.query.model || ""),
-    "gemini-2.5-flash",
-    "gemini-flash-latest",
-    "gemini-2.5-flash-lite"
-  ].filter(Boolean);
-  const out = [];
-  for (const model of candidates) {
+async function geminiGenerate(opts) {
+  const key = GEMINI_KEY();
+  if (!key) return { text: null, error: "NO_API_KEY" };
+  let lastError = "UNKNOWN";
+  for (const model of opts.models) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs || 14e3);
     try {
-      const r = await ai.models.generateContent({
-        model,
-        contents: [{ role: "user", parts: [{ text: "\u0642\u0644: \u062A\u0645" }] }]
-      });
-      out.push({ model, ok: true, text: r?.text || null });
+      const body = {
+        contents: opts.contents,
+        generationConfig: {
+          temperature: opts.temperature ?? 0.8,
+          maxOutputTokens: opts.maxTokens ?? 1200,
+          ...opts.responseModalities ? { responseModalities: opts.responseModalities } : {},
+          ...opts.speechConfig ? { speechConfig: opts.speechConfig } : {}
+        },
+        ...opts.systemInstruction ? { systemInstruction: { parts: [{ text: opts.systemInstruction }] } } : {}
+      };
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        }
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        lastError = `HTTP_${res.status}: ${data?.error?.message?.slice(0, 140) || "unknown"}`;
+        if (res.status === 404) continue;
+        return { text: null, error: lastError, model };
+      }
+      const parts = data?.candidates?.[0]?.content?.parts || [];
+      const text = parts.map((p) => p?.text).filter(Boolean).join("\n").trim() || null;
+      if (text) return { text, model };
+      lastError = `EMPTY:${data?.candidates?.[0]?.finishReason || "unknown"}`;
     } catch (err) {
-      out.push({ model, ok: false, error: String(err?.message || err).slice(0, 220) });
+      lastError = err?.name === "AbortError" ? "TIMEOUT" : String(err?.message || err).slice(0, 140);
+    } finally {
+      clearTimeout(timer);
     }
   }
-  res.json({ results: out });
-});
+  return { text: null, error: lastError };
+}
 apiRouter.post("/assistant/chat", async (req, res) => {
+  const { message, mode, context, history } = req.body || {};
+  if (!message || typeof message !== "string" || !message.trim()) {
+    return res.status(400).json({ error: "\u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u0645\u0637\u0644\u0648\u0628\u0629" });
+  }
+  if (!GEMINI_KEY()) {
+    return res.json({ reply: null, reason: "NO_API_KEY" });
+  }
+  const turns = Array.isArray(history) ? history.filter((h) => h && typeof h.text === "string" && h.text.trim()).slice(-8).map((h) => ({
+    role: h.sender === "user" ? "user" : "model",
+    parts: [{ text: String(h.text).slice(0, 3e3) }]
+  })) : [];
+  turns.push({ role: "user", parts: [{ text: message.slice(0, 3e3) }] });
   try {
-    const { message, mode, context, history } = req.body || {};
-    if (!message || typeof message !== "string" || !message.trim()) {
-      return res.status(400).json({ error: "\u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u0645\u0637\u0644\u0648\u0628\u0629" });
+    const result = await geminiGenerate({
+      models: ASSISTANT_MODELS,
+      contents: turns,
+      systemInstruction: buildSystemInstruction(String(mode || "admin"), context || {}),
+      temperature: 0.85,
+      maxTokens: 1200,
+      timeoutMs: 16e3
+    });
+    if (result.text) {
+      return res.json({ reply: result.text, model: result.model });
     }
-    const ai = await getAssistantClient();
-    if (!ai) {
-      return res.json({ reply: null, reason: "NO_API_KEY" });
-    }
-    const turns = Array.isArray(history) ? history.filter((h) => h && typeof h.text === "string" && h.text.trim()).slice(-10).map((h) => ({
-      role: h.sender === "user" ? "user" : "model",
-      parts: [{ text: String(h.text).slice(0, 4e3) }]
-    })) : [];
-    turns.push({ role: "user", parts: [{ text: message.slice(0, 4e3) }] });
-    const systemInstruction = buildSystemInstruction(String(mode || "admin"), context || {});
-    let lastError = "UNKNOWN";
-    for (const model of ASSISTANT_MODELS) {
-      try {
-        const response = await Promise.race([
-          ai.models.generateContent({
-            model,
-            contents: turns,
-            config: {
-              systemInstruction,
-              temperature: 0.8,
-              maxOutputTokens: 1200
-            }
-          }),
-          new Promise(
-            (_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), 25e3)
-          )
-        ]);
-        const reply = response?.text || response?.candidates?.[0]?.content?.parts?.map((p) => p?.text).join("") || null;
-        if (reply) {
-          return res.json({ reply, model });
-        }
-        lastError = "EMPTY_REPLY";
-      } catch (err) {
-        lastError = String(err?.message || err).slice(0, 120);
-        if (!/not found|not supported|404|invalid model/i.test(lastError)) break;
-      }
-    }
-    console.warn("[assistant] all models failed:", lastError);
-    return res.json({ reply: null, reason: "FALLBACK", detail: lastError });
+    console.warn("[assistant] failed:", result.error);
+    return res.json({ reply: null, reason: "FALLBACK", detail: result.error });
   } catch (error) {
     console.warn("Assistant route fallback:", error instanceof Error ? error.message : String(error));
     return res.json({ reply: null, reason: "FALLBACK" });
   }
 });
 apiRouter.post("/assistant/speak", async (req, res) => {
+  const { text } = req.body || {};
+  if (!text || typeof text !== "string") {
+    return res.status(400).json({ error: "\u0627\u0644\u0646\u0635 \u0645\u0637\u0644\u0648\u0628" });
+  }
+  const key = GEMINI_KEY();
+  if (!key) return res.json({ audio: null, reason: "NO_API_KEY" });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15e3);
   try {
-    const { text } = req.body || {};
-    if (!text || typeof text !== "string") {
-      return res.status(400).json({ error: "\u0627\u0644\u0646\u0635 \u0645\u0637\u0644\u0648\u0628" });
-    }
-    const ai = await getAssistantClient();
-    if (!ai) return res.json({ audio: null, reason: "NO_API_KEY" });
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts",
-      contents: [{ role: "user", parts: [{ text: String(text).slice(0, 800) }] }],
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
-        }
+    const res2 = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts"}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: String(text).slice(0, 700) }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } }
+          }
+        }),
+        signal: controller.signal
       }
-    });
-    const part = response?.candidates?.[0]?.content?.parts?.find((p) => p?.inlineData);
-    if (!part?.inlineData?.data) {
-      return res.json({ audio: null, reason: "NO_AUDIO" });
+    );
+    const data = await res2.json().catch(() => null);
+    const part = data?.candidates?.[0]?.content?.parts?.find((p) => p?.inlineData);
+    if (part?.inlineData?.data) {
+      return res.json({
+        audio: part.inlineData.data,
+        mimeType: part.inlineData.mimeType || "audio/wav"
+      });
     }
-    return res.json({
-      audio: part.inlineData.data,
-      mimeType: part.inlineData.mimeType || "audio/wav"
-    });
+    return res.json({ audio: null, reason: data?.error?.message?.slice(0, 120) || "NO_AUDIO" });
   } catch (error) {
     console.warn("[assistant] tts failed:", error instanceof Error ? error.message : String(error));
     return res.json({ audio: null, reason: "FALLBACK" });
+  } finally {
+    clearTimeout(timer);
   }
 });
 apiRouter.post("/media", async (req, res) => {

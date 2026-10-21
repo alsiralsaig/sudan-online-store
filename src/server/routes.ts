@@ -2524,211 +2524,216 @@ apiRouter.delete('/promotions/:id', requireTenant, (req, res) => {
 
 // ---------------------------------------------------------------------------
 // AI Assistant — Sudanese-dialect assistant that can answer anything
+// Talks to the Gemini REST API directly (predictable timeouts + real errors).
 // ---------------------------------------------------------------------------
 
-/** Models tried in order; override with GEMINI_MODEL when needed. */
+const GEMINI_KEY = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+
+/** Models tried in order; override with GEMINI_MODEL. */
 const ASSISTANT_MODELS = [
   process.env.GEMINI_MODEL,
   'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
+  'gemini-flash-latest',
+  'gemini-2.5-flash-lite',
 ].filter(Boolean) as string[];
-
-let assistantClient: any = null;
-let assistantClientKey = '';
-
-async function getAssistantClient(): Promise<any | null> {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey) return null;
-  if (assistantClient && assistantClientKey === apiKey) return assistantClient;
-
-  const { GoogleGenAI } = await import('@google/genai');
-  assistantClient = new GoogleGenAI({ apiKey });
-  assistantClientKey = apiKey;
-  return assistantClient;
-}
 
 function buildSystemInstruction(mode: string, context: any): string {
   const now = new Date();
   return `أنت «سند» — المساعد الذكي الرسمي لمنصة سند (Sanad POS & Commerce) للتجارة ونقاط البيع السحابية في السودان.
 
 ## شخصيتك
-- ودود، محترم، ذكي جداً، وتتحدث باللهجة السودانية الطبيعية ("حبابك عشرة"، "أبشر بالخير"، "ما تشيل هم"، "هسي"، "داير"، "السمح"، "كده تمام التمام").
-- تجاوب باختصار ودقة، وتستخدم التنسيق (نقاط، أرقام) لو الجواب طويل.
-- مؤدب مع الجميع، لا تتدخل في الإساءة أو الكراهية أو أي محتوى ضار، ولا تعطي تعليمات تضر أحد.
+- ودود، محترم، ذكي جداً، وتتحدث باللهجة السودانية الطبيعية ("حبابك عشرة"، "أبشر بالخير"، "ما تشيل هم"، "هسي"، "داير"، "السمح").
+- تجاوب باختصار ودقة، واستخدم النقاط والأرقام لو الجواب طويل.
+- مؤدب مع الجميع، لا تشارك في الإساءة أو الكراهية أو أي محتوى ضار.
 
 ## نطاق الإجابة (مهم جداً)
-- **تقدر تجاوب على أي سؤال**: عام، ثقافي، ديني، تاريخي، علمي، حسابي، طبي عام، قانوني عام، برمجي، لغات، ترجمة، تلخيص، أفكار، نصائح عملية... حتى لو ما ليه علاقة بالمنصة. لا تعتذر ولا تقول "ما عندي معلومة" إلا إذا فعلاً لا تعرف.
-- لو السؤال عن المنصة، استخدم المعلومات أدناه بدقة وطابقها مع الواقع.
-- في المواضيع الحساسة (صحة، أدوية، قانون، أموال) أعطِ معلومة عامة مفيدة وانصح بمراجعة المختص.
-- لو السؤال ناقص أو غامض، اسأل سؤال توضيحي واحد قصير ثم جاوب.
+- تقدر تجاوب على أي سؤال: عام، ثقافي، ديني، تاريخي، علمي، حسابي، طبي عام، قانوني عام، برمجي، ترجمة، تلخيص، أفكار، نصائح — حتى لو ما ليه علاقة بالمنصة.
+- ما تعتذر ولا تقول "ما عندي معلومة" إلا إذا فعلاً ما تعرف.
+- في الصحة والأدوية والقانون والأموال: معلومة عامة مفيدة + نصيحة بمراجعة المختص.
+- لو السؤال غامض، اسأل سؤال توضيحي واحد قصير.
 
 ## معلومات المنصة
-- نقاط البيع (POS): تعمل أوفلاين دون إنترنت مع مزامنة تلقائية عند الرجوع.
-- الدفع: بنكك (بنك الخرطوم)، فوري (بنك فيصل)، أوكاش، تحصيل العملات الأجنبية.
-- أسعار الصرف المخزنة: الدولار 2750 ج.س، الريال السعودي 733.33، الليرة التركية 82.5، الجنيه المصري 56.8، الدرهم الإماراتي 748.5، اليورو 2980.
-- تطبيق الجمهور: الكتالوج، الطلبات المسبقة، السلة، قائمة الرغبات، نقاط الولاء والكوبونات، تتبع الطلبات، مشاركة واتساب، تقييم المنتجات، إعلانات السوق (تُنشر بعد موافقة الإدارة مقابل رسوم اختيارية)، وطلب فتح متجر (يُراجع من الإدارة ويُرسل كود دخول وقيمة تسجيل).
-- تطبيق التاجر: نقطة البيع، المخزون، المشتريات، المصروفات، التقارير، الورديات، إدارة الطلبات، والإشعارات.
-- لوحة الإدارة: المتاجر، الاشتراكات، تدقيق السداد، سجل التدقيق، الفواتير الحرارية، العروض الترويجية، إعلانات السوق، وطلبات المتاجر.
-- الإشعارات: داخل التطبيق + على الهاتف (Web Push) عند نقص المخزون، انتهاء الاشتراك، تغيّر حالة الطلب، والمراجعات.
+- نقاط البيع (POS): تعمل أوفلاين دون إنترنت مع مزامنة تلقائية.
+- الدفع: بنكك (بنك الخرطوم)، فوري (بنك فيصل)، أوكاش، وتحصيل العملات الأجنبية.
+- أسعار الصرف: الدولار 2750 ج.س، الريال السعودي 733.33، الليرة التركية 82.5، الجنيه المصري 56.8، الدرهم 748.5، اليورو 2980.
+- تطبيق الجمهور: الكتالوج، الطلبات المسبقة، السلة، المفضلة، نقاط الولاء والكوبونات، تتبع الطلبات، مشاركة واتساب، تقييم المنتجات، إعلانات السوق (بعد موافقة الإدارة مع رسوم اختيارية)، وطلب فتح متجر (مراجعة إدارية + كود دخول + قيمة تسجيل).
+- تطبيق التاجر: الكاشير، المخزون، المشتريات، المصروفات، التقارير، الورديات، الطلبات، والإشعارات.
+- لوحة الإدارة: المتاجر، الاشتراكات، تدقيق السداد، سجل التدقيق، الفواتير الحرارية، العروض، إعلانات السوق، طلبات المتاجر.
+- الإشعارات: داخل التطبيق وعلى الهاتف (نقص المخزون، انتهاء الاشتراك، حالة الطلب، المراجعات).
 
 ## السياق الحالي
 - التطبيق: ${mode === 'admin' ? 'الإدارة ونقاط البيع' : mode === 'merchant' ? 'تطبيق التاجر' : 'تطبيق الجمهور'}
-- المنشأة: ${context?.tenantName || 'منصة سند'}
-- الفرع: ${context?.branchName || 'الفرع الرئيسي'}
-- التاريخ والوقت: ${now.toLocaleString('ar-EG')}`;
+- المنشأة: ${context?.tenantName || 'منصة سند'} | الفرع: ${context?.branchName || 'الفرع الرئيسي'}
+- التاريخ: ${now.toLocaleString('ar-EG')}`;
 }
 
-/** Diagnostic: which models this API key can actually use. */
-apiRouter.get('/assistant/models', async (_req, res) => {
-  try {
-    const ai = await getAssistantClient();
-    if (!ai) return res.json({ ok: false, reason: 'NO_API_KEY' });
-    const pager: any = await ai.models.list();
-    const names: string[] = [];
-    for await (const m of pager) {
-      names.push(m.name);
-      if (names.length >= 60) break;
-    }
-    res.json({ ok: true, count: names.length, models: names });
-  } catch (err: any) {
-    res.json({ ok: false, reason: String(err?.message || err).slice(0, 200) });
-  }
-});
+interface GeminiResult {
+  text: string | null;
+  error?: string;
+  model?: string;
+}
 
-/** Diagnostic: try each candidate model and report the real error. */
-apiRouter.get('/assistant/diag', async (req, res) => {
-  const ai = await getAssistantClient();
-  if (!ai) return res.json({ ok: false, reason: 'NO_API_KEY' });
+/** One Gemini call over REST with a hard timeout. */
+async function geminiGenerate(opts: {
+  models: string[];
+  contents: any[];
+  systemInstruction?: string;
+  temperature?: number;
+  maxTokens?: number;
+  timeoutMs?: number;
+  responseModalities?: string[];
+  speechConfig?: any;
+}): Promise<GeminiResult> {
+  const key = GEMINI_KEY();
+  if (!key) return { text: null, error: 'NO_API_KEY' };
 
-  const candidates = [
-    String(req.query.model || ''),
-    'gemini-2.5-flash',
-    'gemini-flash-latest',
-    'gemini-2.5-flash-lite',
-  ].filter(Boolean);
+  let lastError = 'UNKNOWN';
 
-  const out: any[] = [];
-  for (const model of candidates) {
+  for (const model of opts.models) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs || 14000);
+
     try {
-      const r: any = await ai.models.generateContent({
-        model,
-        contents: [{ role: 'user', parts: [{ text: 'قل: تم' }] }],
-      });
-      out.push({ model, ok: true, text: r?.text || null });
+      const body: any = {
+        contents: opts.contents,
+        generationConfig: {
+          temperature: opts.temperature ?? 0.8,
+          maxOutputTokens: opts.maxTokens ?? 1200,
+          ...(opts.responseModalities ? { responseModalities: opts.responseModalities } : {}),
+          ...(opts.speechConfig ? { speechConfig: opts.speechConfig } : {}),
+        },
+        ...(opts.systemInstruction
+          ? { systemInstruction: { parts: [{ text: opts.systemInstruction }] } }
+          : {}),
+      };
+
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        }
+      );
+
+      const data: any = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        lastError = `HTTP_${res.status}: ${data?.error?.message?.slice(0, 140) || 'unknown'}`;
+        // Only a missing model justifies trying the next one
+        if (res.status === 404) continue;
+        return { text: null, error: lastError, model };
+      }
+
+      const parts = data?.candidates?.[0]?.content?.parts || [];
+      const text =
+        parts.map((p: any) => p?.text).filter(Boolean).join('\n').trim() ||
+        null;
+
+      if (text) return { text, model };
+
+      lastError = `EMPTY:${data?.candidates?.[0]?.finishReason || 'unknown'}`;
     } catch (err: any) {
-      out.push({ model, ok: false, error: String(err?.message || err).slice(0, 220) });
+      lastError = err?.name === 'AbortError' ? 'TIMEOUT' : String(err?.message || err).slice(0, 140);
+    } finally {
+      clearTimeout(timer);
     }
   }
-  res.json({ results: out });
-});
+
+  return { text: null, error: lastError };
+}
 
 apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
+  const { message, mode, context, history } = req.body || {};
+  if (!message || typeof message !== 'string' || !message.trim()) {
+    return res.status(400).json({ error: 'الرسالة مطلوبة' });
+  }
+  if (!GEMINI_KEY()) {
+    return res.json({ reply: null, reason: 'NO_API_KEY' });
+  }
+
+  // Last turns give the assistant memory inside the conversation
+  const turns: any[] = Array.isArray(history)
+    ? history
+        .filter((h: any) => h && typeof h.text === 'string' && h.text.trim())
+        .slice(-8)
+        .map((h: any) => ({
+          role: h.sender === 'user' ? 'user' : 'model',
+          parts: [{ text: String(h.text).slice(0, 3000) }],
+        }))
+    : [];
+
+  turns.push({ role: 'user', parts: [{ text: message.slice(0, 3000) }] });
+
   try {
-    const { message, mode, context, history } = req.body || {};
-    if (!message || typeof message !== 'string' || !message.trim()) {
-      return res.status(400).json({ error: 'الرسالة مطلوبة' });
+    const result = await geminiGenerate({
+      models: ASSISTANT_MODELS,
+      contents: turns,
+      systemInstruction: buildSystemInstruction(String(mode || 'admin'), context || {}),
+      temperature: 0.85,
+      maxTokens: 1200,
+      timeoutMs: 16000,
+    });
+
+    if (result.text) {
+      return res.json({ reply: result.text, model: result.model });
     }
 
-    const ai = await getAssistantClient();
-    if (!ai) {
-      return res.json({ reply: null, reason: 'NO_API_KEY' });
-    }
-
-    // Convert the running conversation into Gemini "contents"
-    const turns = Array.isArray(history)
-      ? history
-          .filter((h: any) => h && typeof h.text === 'string' && h.text.trim())
-          .slice(-10)
-          .map((h: any) => ({
-            role: h.sender === 'user' ? 'user' : 'model',
-            parts: [{ text: String(h.text).slice(0, 4000) }],
-          }))
-      : [];
-
-    turns.push({ role: 'user', parts: [{ text: message.slice(0, 4000) }] });
-
-    const systemInstruction = buildSystemInstruction(String(mode || 'admin'), context || {});
-
-    let lastError = 'UNKNOWN';
-    for (const model of ASSISTANT_MODELS) {
-      try {
-        const response: any = await Promise.race([
-          ai.models.generateContent({
-            model,
-            contents: turns,
-            config: {
-              systemInstruction,
-              temperature: 0.8,
-              maxOutputTokens: 1200,
-            },
-          }),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('TIMEOUT')), 25000)
-          ),
-        ]);
-
-        const reply =
-          response?.text ||
-          response?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).join('') ||
-          null;
-
-        if (reply) {
-          return res.json({ reply, model });
-        }
-        lastError = 'EMPTY_REPLY';
-      } catch (err: any) {
-        lastError = String(err?.message || err).slice(0, 120);
-        // A bad model name is the only reason to try the next one
-        if (!/not found|not supported|404|invalid model/i.test(lastError)) break;
-      }
-    }
-
-    console.warn('[assistant] all models failed:', lastError);
-    return res.json({ reply: null, reason: 'FALLBACK', detail: lastError });
+    console.warn('[assistant] failed:', result.error);
+    return res.json({ reply: null, reason: 'FALLBACK', detail: result.error });
   } catch (error) {
     console.warn('Assistant route fallback:', error instanceof Error ? error.message : String(error));
     return res.json({ reply: null, reason: 'FALLBACK' });
   }
 });
 
-/**
- * Text-to-speech for answers, so the assistant can talk back.
- * Uses Gemini TTS when available; the browser voice is the fallback.
- */
+/** Natural Arabic text-to-speech for answers. */
 apiRouter.post('/assistant/speak', async (req: Request, res: Response) => {
+  const { text } = req.body || {};
+  if (!text || typeof text !== 'string') {
+    return res.status(400).json({ error: 'النص مطلوب' });
+  }
+
+  const key = GEMINI_KEY();
+  if (!key) return res.json({ audio: null, reason: 'NO_API_KEY' });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
   try {
-    const { text } = req.body || {};
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'النص مطلوب' });
+    const res2 = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts'}:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: String(text).slice(0, 700) }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+          },
+        }),
+        signal: controller.signal,
+      }
+    );
+
+    const data: any = await res2.json().catch(() => null);
+    const part = data?.candidates?.[0]?.content?.parts?.find((p: any) => p?.inlineData);
+
+    if (part?.inlineData?.data) {
+      return res.json({
+        audio: part.inlineData.data,
+        mimeType: part.inlineData.mimeType || 'audio/wav',
+      });
     }
 
-    const ai = await getAssistantClient();
-    if (!ai) return res.json({ audio: null, reason: 'NO_API_KEY' });
-
-    const response: any = await ai.models.generateContent({
-      model: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
-      contents: [{ role: 'user', parts: [{ text: String(text).slice(0, 800) }] }],
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-        },
-      },
-    });
-
-    const part = response?.candidates?.[0]?.content?.parts?.find((p: any) => p?.inlineData);
-    if (!part?.inlineData?.data) {
-      return res.json({ audio: null, reason: 'NO_AUDIO' });
-    }
-
-    return res.json({
-      audio: part.inlineData.data,
-      mimeType: part.inlineData.mimeType || 'audio/wav',
-    });
+    return res.json({ audio: null, reason: data?.error?.message?.slice(0, 120) || 'NO_AUDIO' });
   } catch (error) {
     console.warn('[assistant] tts failed:', error instanceof Error ? error.message : String(error));
     return res.json({ audio: null, reason: 'FALLBACK' });
+  } finally {
+    clearTimeout(timer);
   }
 });
 
