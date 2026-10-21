@@ -373,10 +373,26 @@ export interface CurrencyConfig {
   code: string; // 'SDG' | 'USD' | 'SAR' | 'AED' | 'EUR' | 'QAR'
   name: string;
   symbol: string;
-  rateToSdg: number; // 1 Foreign = rateToSdg SDG
+  /** Live parallel-market rate: 1 foreign unit = rateToSdg SDG. */
+  rateToSdg: number;
   isBase: boolean;
   isActive: boolean;
   lastUpdated: string;
+  /** Official bank rate, kept for reference only. */
+  officialRate?: number;
+  /** Parallel-market rate, shown to the user as the real trading price. */
+  parallelRate?: number;
+  /** 'parallel' | 'manual' — where rateToSdg came from. */
+  rateSource?: 'parallel' | 'manual';
+}
+
+/** Snapshot of the parallel-market table pulled from the public sources. */
+export interface CurrencyRatesSnapshot {
+  rates: Array<{ code: string; official: number | null; parallel: number | null }>;
+  source: string;
+  sourceUrl: string;
+  fetchedAt: string;
+  stale?: boolean;
 }
 
 export interface CurrencyRateHistory {

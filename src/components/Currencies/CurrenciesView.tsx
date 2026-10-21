@@ -8,6 +8,10 @@ import {
   TrendingUp,
   X,
   Edit2,
+  RefreshCw,
+  ExternalLink,
+  AlertTriangle,
+  Sparkles,
 } from 'lucide-react';
 import type { CurrencyConfig, CurrencyRateHistory } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
@@ -22,6 +26,14 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
   const [editingCurrency, setEditingCurrency] = useState<CurrencyConfig | null>(null);
   const [newRate, setNewRate] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [ratesMeta, setRatesMeta] = useState<{
+    snapshot: any;
+    stale: boolean;
+    sources?: any;
+    refreshEveryHours?: number;
+  } | null>(null);
+  const [refreshingRates, setRefreshingRates] = useState(false);
+  const [ratesError, setRatesError] = useState('');
 
   // Quick Currency Converter calculator
   const [calcAmount, setCalcAmount] = useState<string>('100');
@@ -36,8 +48,34 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
     }
   };
 
+  const loadLiveRates = async () => {
+    try {
+      const res = await api.getParallelRates();
+      setRatesMeta(res);
+      setRatesError('');
+    } catch (err) {
+      setRatesError((err as Error).message || 'تعذر تحميل أسعار السوق الموازي.');
+    }
+  };
+
+  const refreshNow = async () => {
+    setRefreshingRates(true);
+    setRatesError('');
+    try {
+      await api.refreshParallelRates();
+      await loadLiveRates();
+      onRefresh();
+      loadHistory();
+    } catch (err) {
+      setRatesError((err as Error).message || 'تعذر التحديث من المصدر الآن.');
+    } finally {
+      setRefreshingRates(false);
+    }
+  };
+
   useEffect(() => {
     loadHistory();
+    loadLiveRates();
   }, []);
 
   const handleUpdateRate = async (e: React.FormEvent) => {
@@ -79,6 +117,64 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Currencies Cards (2 cols) */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Parallel-market banner: the real trading price in Sudan */}
+          <div
+            className={`rounded-xl border p-3.5 ${
+              ratesMeta?.stale ? 'bg-amber-50 border-amber-300' : 'bg-emerald-50/70 border-emerald-300'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                  الأسعار من السوق الموازي (السعر الفعلي للتداول)
+                </p>
+                {ratesMeta?.snapshot ? (
+                  <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                    المصدر: <span className="font-bold">{ratesMeta.snapshot.source}</span> ·{' '}
+                    آخر تحديث:{' '}
+                    <span className="font-mono">
+                      {new Date(ratesMeta.snapshot.fetchedAt).toLocaleString('ar-SD')}
+                    </span>
+                    {ratesMeta.sources?.primary?.url && (
+                      <a
+                        href={ratesMeta.snapshot.sourceUrl || ratesMeta.sources.primary.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-0.5 text-emerald-700 font-bold underline ms-1"
+                      >
+                        عرض المصدر <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-600 mt-1">
+                    جاري جلب الأسعار من المصدر…
+                  </p>
+                )}
+                {ratesMeta?.stale && (
+                  <p className="text-[11px] text-amber-800 mt-1 flex items-center gap-1 font-bold">
+                    <AlertTriangle className="w-3 h-3" /> الأرقام قديمة — اضغط «تحديث الآن» قبل استخدامها.
+                  </p>
+                )}
+                {ratesError && (
+                  <p className="text-[11px] text-rose-700 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" /> {ratesError}
+                  </p>
+                )}
+              </div>
+
+              <button
+                onClick={refreshNow}
+                disabled={refreshingRates}
+                className="shrink-0 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[11px] font-bold flex items-center gap-1.5 disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshingRates ? 'animate-spin' : ''}`} />
+                {refreshingRates ? 'جاري التحديث…' : 'تحديث الآن'}
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
             {currencies.map((curr) => (
               <div
@@ -112,15 +208,29 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
 
                 <div className="space-y-1">
                   <span className="text-xs text-slate-600 block">{curr.name}</span>
-                  <div className="text-base font-bold font-mono text-slate-900 tabular-nums">
-                    {curr.isBase ? (
-                      '1.00 ج.س'
-                    ) : (
-                      <>
-                        {curr.rateToSdg.toLocaleString()} <span className="text-xs font-sans text-slate-500">ج.س</span>
-                      </>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-base font-bold font-mono text-slate-900 tabular-nums">
+                      {curr.isBase ? '1.00' : curr.rateToSdg.toLocaleString()}
+                    </span>
+                    <span className="text-xs font-sans text-slate-500">ج.س</span>
+                    {!curr.isBase && curr.rateSource === 'parallel' && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                        موازي
+                      </span>
                     )}
                   </div>
+
+                  {!curr.isBase && curr.officialRate ? (
+                    <span className="text-[10px] text-slate-500 block">
+                      البنك: <span className="font-mono">{curr.officialRate.toLocaleString()}</span> ج.س
+                      {curr.parallelRate && curr.officialRate > 0 && (
+                        <span className="text-amber-700 font-bold ms-1">
+                          (الفرق {Math.round(((curr.parallelRate / curr.officialRate) - 1) * 100)}%)
+                        </span>
+                      )}
+                    </span>
+                  ) : null}
+
                   <span className="text-[10px] text-slate-400 block font-mono">
                     آخر تحديث: {new Date(curr.lastUpdated).toLocaleDateString('ar-SD')}
                   </span>

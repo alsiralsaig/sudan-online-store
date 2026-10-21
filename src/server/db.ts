@@ -14,6 +14,7 @@ import {
   type Baseline,
 } from './repository.ts';
 import type {
+  CurrencyRatesSnapshot,
   Tenant,
   SubscriptionPlan,
   SubscriptionPayment,
@@ -65,6 +66,8 @@ export interface DatabaseSchema {
   customers: Customer[];
   currencies: CurrencyConfig[];
   currencyRateHistory: CurrencyRateHistory[];
+  /** Last successful pull of the parallel-market table. */
+  currencyRatesSnapshot: CurrencyRatesSnapshot | null;
   storefrontOrders: StorefrontOrder[];
   expenses: Expense[];
   purchases: Purchase[];
@@ -2138,6 +2141,7 @@ class Database {
       customers: INITIAL_CUSTOMERS,
       currencies: INITIAL_CURRENCIES,
       currencyRateHistory: [],
+      currencyRatesSnapshot: null,
       storefrontOrders: INITIAL_STORE_ORDERS,
       expenses: INITIAL_EXPENSES,
       purchases: INITIAL_PURCHASES,
@@ -2170,6 +2174,73 @@ class Database {
 
   public commit() {
     this.save();
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  Parallel-market currency rates                                     */
+  /* ------------------------------------------------------------------ */
+
+  public getRatesSnapshot(): CurrencyRatesSnapshot | null {
+    return this.data.currencyRatesSnapshot || null;
+  }
+
+  public saveRatesSnapshot(snapshot: CurrencyRatesSnapshot): void {
+    this.data.currencyRatesSnapshot = snapshot;
+    this.commit();
+  }
+
+  /**
+   * Applies a fresh parallel-market snapshot to every configured currency.
+   * The parallel number becomes the trading rate; the bank number is kept
+   * alongside it for display. History rows are written so the audit trail
+   * still shows who/what moved the rate.
+   */
+  public applyLiveRates(
+    snapshot: CurrencyRatesSnapshot,
+    actorName = 'تحديث تلقائي — السوق الموازي'
+  ): { updated: number; skipped: string[] } {
+    let updated = 0;
+    const skipped: string[] = [];
+    const now = new Date().toISOString();
+
+    for (const currency of this.data.currencies) {
+      if (currency.isBase) continue;
+      const live = snapshot.rates.find((r) => r.code === currency.code);
+      if (!live) {
+        skipped.push(currency.code);
+        continue;
+      }
+
+      const trading = live.parallel ?? live.official;
+      if (!trading || trading <= 0) {
+        skipped.push(currency.code);
+        continue;
+      }
+
+      const oldRate = currency.rateToSdg;
+      currency.rateToSdg = Math.round(trading * 100) / 100;
+      if (live.official) currency.officialRate = live.official;
+      if (live.parallel) currency.parallelRate = live.parallel;
+      currency.rateSource = 'parallel';
+      currency.lastUpdated = now;
+
+      if (oldRate !== currency.rateToSdg) {
+        this.data.currencyRateHistory.unshift({
+          id: newId('crh'),
+          tenantId: 'platform',
+          currencyCode: currency.code,
+          oldRate,
+          newRate: currency.rateToSdg,
+          updatedBy: actorName,
+          timestamp: now,
+        });
+        updated += 1;
+      }
+    }
+
+    this.data.currencyRatesSnapshot = snapshot;
+    this.commit();
+    return { updated, skipped };
   }
 
   // Tenant helper

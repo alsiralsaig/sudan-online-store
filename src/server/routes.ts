@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
+import { fetchLiveRates, ageHours, isStale, RATES_SOURCE } from './rates.ts';
 import { newId, newCode } from './ids.ts';
 import { saveMedia, getMedia, deleteMedia, HttpError, MAX_RAW_BYTES } from './media.ts';
 import type {
@@ -1485,9 +1486,83 @@ apiRouter.put('/storefront-orders/:id/status', requireTenant, (req, res) => {
 /* =========================================================================
    10. MULTI-CURRENCY PRICING
    ========================================================================= */
+/* ------------------------------------------------------------------ */
+/*  Parallel-market rates (real trading prices in Sudan)               */
+/* ------------------------------------------------------------------ */
+
+const RATES_REFRESH_HOURS = 6;
+
+/** Pulls fresh numbers and applies them; returns what happened. */
+const refreshLiveRates = async (actorName?: string) => {
+  const snapshot = await fetchLiveRates();
+  if (!snapshot) {
+    const last = db.getRatesSnapshot();
+    return {
+      refreshed: false,
+      reason: 'SOURCE_UNAVAILABLE',
+      snapshot: last,
+      stale: last ? isStale(last.fetchedAt) : true,
+    };
+  }
+  const { updated, skipped } = db.applyLiveRates(snapshot, actorName);
+  return { refreshed: true, updated, skipped, snapshot: db.getRatesSnapshot(), stale: false };
+};
+
+const needsRefresh = (): boolean => {
+  const snap = db.getRatesSnapshot();
+  if (!snap?.fetchedAt) return true;
+  const hours = ageHours(snap.fetchedAt);
+  return hours === null || hours >= RATES_REFRESH_HOURS;
+};
+
+/** Yesterday's parallel prices — what the dashboard shows. */
+apiRouter.get('/currency/parallel-rates', async (_req, res) => {
+  if (needsRefresh()) {
+    try {
+      await refreshLiveRates();
+    } catch {
+      /* keep whatever we have */
+    }
+  }
+  const snap = db.getRatesSnapshot();
+  res.json({
+    snapshot: snap,
+    stale: snap ? isStale(snap.fetchedAt) : true,
+    sources: RATES_SOURCE,
+    refreshEveryHours: RATES_REFRESH_HOURS,
+  });
+});
+
+/** "تحديث الآن" button. */
+apiRouter.post('/admin/currency/refresh', async (req, res) => {
+  const result = await refreshLiveRates('تحديث يدوي من لوحة الإدارة');
+  if (!result.refreshed) {
+    return res.status(502).json({
+      error: 'SOURCE_UNAVAILABLE',
+      message: 'تعذر الوصول لمصدر الأسعار الآن — تم الاحتفاظ بآخر أسعار معروفة.',
+      snapshot: result.snapshot,
+    });
+  }
+  res.json({ success: true, ...result });
+});
+
+/** Daily cron: keeps the numbers fresh even if nobody opens the page. */
+apiRouter.get('/cron/currency-rates', async (_req, res) => {
+  const result = await refreshLiveRates('تحديث يومي تلقائي');
+  res.json({ ok: result.refreshed, updated: (result as any).updated ?? 0, snapshot: result.snapshot });
+});
+
 apiRouter.get('/currencies', requireTenant, (req, res) => {
   const currencies = db.getSchema().currencies;
-  res.json({ currencies });
+  const snapshot = db.getRatesSnapshot();
+  res.json({
+    currencies,
+    rates: {
+      snapshot,
+      stale: snapshot ? isStale(snapshot.fetchedAt) : true,
+      sources: RATES_SOURCE,
+    },
+  });
 });
 
 apiRouter.put('/currencies/:code', requireTenant, (req, res) => {

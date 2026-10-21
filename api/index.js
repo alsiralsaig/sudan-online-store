@@ -2317,6 +2317,7 @@ var Database = class {
       customers: INITIAL_CUSTOMERS,
       currencies: INITIAL_CURRENCIES,
       currencyRateHistory: [],
+      currencyRatesSnapshot: null,
       storefrontOrders: INITIAL_STORE_ORDERS,
       expenses: INITIAL_EXPENSES,
       purchases: INITIAL_PURCHASES,
@@ -2346,6 +2347,61 @@ var Database = class {
   }
   commit() {
     this.save();
+  }
+  /* ------------------------------------------------------------------ */
+  /*  Parallel-market currency rates                                     */
+  /* ------------------------------------------------------------------ */
+  getRatesSnapshot() {
+    return this.data.currencyRatesSnapshot || null;
+  }
+  saveRatesSnapshot(snapshot) {
+    this.data.currencyRatesSnapshot = snapshot;
+    this.commit();
+  }
+  /**
+   * Applies a fresh parallel-market snapshot to every configured currency.
+   * The parallel number becomes the trading rate; the bank number is kept
+   * alongside it for display. History rows are written so the audit trail
+   * still shows who/what moved the rate.
+   */
+  applyLiveRates(snapshot, actorName = "\u062A\u062D\u062F\u064A\u062B \u062A\u0644\u0642\u0627\u0626\u064A \u2014 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A") {
+    let updated = 0;
+    const skipped = [];
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    for (const currency of this.data.currencies) {
+      if (currency.isBase) continue;
+      const live = snapshot.rates.find((r) => r.code === currency.code);
+      if (!live) {
+        skipped.push(currency.code);
+        continue;
+      }
+      const trading = live.parallel ?? live.official;
+      if (!trading || trading <= 0) {
+        skipped.push(currency.code);
+        continue;
+      }
+      const oldRate = currency.rateToSdg;
+      currency.rateToSdg = Math.round(trading * 100) / 100;
+      if (live.official) currency.officialRate = live.official;
+      if (live.parallel) currency.parallelRate = live.parallel;
+      currency.rateSource = "parallel";
+      currency.lastUpdated = now;
+      if (oldRate !== currency.rateToSdg) {
+        this.data.currencyRateHistory.unshift({
+          id: newId("crh"),
+          tenantId: "platform",
+          currencyCode: currency.code,
+          oldRate,
+          newRate: currency.rateToSdg,
+          updatedBy: actorName,
+          timestamp: now
+        });
+        updated += 1;
+      }
+    }
+    this.data.currencyRatesSnapshot = snapshot;
+    this.commit();
+    return { updated, skipped };
   }
   // Tenant helper
   getTenant(tenantId) {
@@ -3027,6 +3083,148 @@ var Database = class {
   }
 };
 var db = new Database();
+
+// src/server/rates.ts
+var SOURCE_URL = "https://www.alsoug.com/currency";
+var SOURCE_NAME = "\u0633\u0648\u0642 \u0627\u0644\u0633\u0648\u062F\u0627\u0646 (alsoug.com)";
+var CODE_BY_LABEL = [
+  { match: /دولار\s*الامريكي|دولار\s*الأمريكي|USD/i, code: "USD" },
+  { match: /درهم\s*الاماراتي|درهم\s*الإماراتي|AED/i, code: "AED" },
+  { match: /يورو|EUR/i, code: "EUR" },
+  { match: /ريال\s*السعودي|SAR/i, code: "SAR" },
+  { match: /جنيه\s*المصري|EGP/i, code: "EGP" },
+  { match: /ريال\s*القطري|QAR/i, code: "QAR" },
+  { match: /جنيه\s*الاسترليني|GBP/i, code: "GBP" }
+];
+var toNumber = (raw) => {
+  let s = String(raw || "").trim();
+  if (!s) return null;
+  if (/,\d{1,2}$/.test(s) && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else {
+    s = s.replace(/,/g, "");
+  }
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+var extractTableRows = (html) => {
+  const rows = [];
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m;
+  while (m = rowRe.exec(html)) {
+    const cells = [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(
+      (c) => c[1].replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").trim()
+    );
+    if (cells.length >= 2) rows.push(cells.join("|"));
+  }
+  return rows;
+};
+var parseAlsougRates = (html) => {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const row of extractTableRows(html)) {
+    const cells = row.split("|");
+    const label = cells[0] || "";
+    const hit = CODE_BY_LABEL.find((c) => c.match.test(label));
+    if (!hit || seen.has(hit.code)) continue;
+    const numbers = cells.slice(1).map((c) => (c.match(/[\d][\d.,]*/g) || []).map(toNumber).filter((n) => n !== null)).filter((arr) => arr.length > 0);
+    const official = numbers[0]?.[0] ?? null;
+    const parallel = numbers[1]?.[0] ?? null;
+    const ok = (n) => n !== null && n >= 1 && n < 1e6 ? n : null;
+    if (ok(official) === null && ok(parallel) === null) continue;
+    out.push({ code: hit.code, official: ok(official), parallel: ok(parallel) });
+    seen.add(hit.code);
+  }
+  return out;
+};
+var BROWSER_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "ar,en-US;q=0.7,en;q=0.6",
+  Referer: "https://www.google.com/",
+  "Cache-Control": "no-cache"
+};
+var SUDANAKHBAR_HOME = "https://www.sudanakhbar.com/business-news/currency-rates-prices";
+var fetchSudanAkhbarRates = async () => {
+  try {
+    const c1 = new AbortController();
+    const t1 = setTimeout(() => c1.abort(), 8e3);
+    const listing = await fetch(SUDANAKHBAR_HOME, { signal: c1.signal, headers: BROWSER_HEADERS });
+    clearTimeout(t1);
+    if (!listing.ok) return [];
+    const html = await listing.text();
+    const linkRe = /href="(https:\/\/www\.sudanakhbar\.com\/\d{6,})"[^>]*>([^<]{10,160})</g;
+    let best = null;
+    let m;
+    while (m = linkRe.exec(html)) {
+      if (/السوق السوداء|الموازي/.test(m[2])) {
+        best = m[1];
+        break;
+      }
+    }
+    if (!best) return [];
+    const c2 = new AbortController();
+    const t2 = setTimeout(() => c2.abort(), 8e3);
+    const article = await fetch(best, { signal: c2.signal, headers: BROWSER_HEADERS });
+    clearTimeout(t2);
+    if (!article.ok) return [];
+    const body = await article.text();
+    if (!/السوق السوداء|الموازي/.test(body)) return [];
+    const rates = parseAlsougRates(body);
+    return rates.filter((r) => r.parallel !== null && r.parallel >= 100);
+  } catch {
+    return [];
+  }
+};
+var fetchLiveRates = async () => {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 9e3);
+    const res = await fetch(SOURCE_URL, { signal: controller.signal, headers: BROWSER_HEADERS });
+    clearTimeout(timer);
+    if (res.ok) {
+      const html = await res.text();
+      const rates = parseAlsougRates(html);
+      if (rates.length) {
+        return {
+          rates,
+          source: SOURCE_NAME,
+          sourceUrl: SOURCE_URL,
+          fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          stale: false
+        };
+      }
+    }
+  } catch {
+  }
+  const backup = await fetchSudanAkhbarRates();
+  if (backup.length) {
+    return {
+      rates: backup,
+      source: BACKUP_SOURCE_NAME,
+      sourceUrl: SUDANAKHBAR_HOME,
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      stale: false
+    };
+  }
+  return null;
+};
+var MAX_AGE_HOURS = 36;
+var ageHours = (iso) => {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return (Date.now() - t) / 36e5;
+};
+var isStale = (iso) => {
+  const h = ageHours(iso);
+  return h === null ? true : h > MAX_AGE_HOURS;
+};
+var BACKUP_SOURCE_NAME = "\u0627\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646 (sudanakhbar.com)";
+var RATES_SOURCE = {
+  primary: { url: SOURCE_URL, name: SOURCE_NAME },
+  backup: { url: SUDANAKHBAR_HOME, name: BACKUP_SOURCE_NAME }
+};
 
 // src/server/media.ts
 var TABLE = "sanad_media";
@@ -4457,9 +4655,68 @@ apiRouter.put("/storefront-orders/:id/status", requireTenant, (req, res) => {
   }
   res.json({ success: true, order });
 });
+var RATES_REFRESH_HOURS = 6;
+var refreshLiveRates = async (actorName) => {
+  const snapshot = await fetchLiveRates();
+  if (!snapshot) {
+    const last = db.getRatesSnapshot();
+    return {
+      refreshed: false,
+      reason: "SOURCE_UNAVAILABLE",
+      snapshot: last,
+      stale: last ? isStale(last.fetchedAt) : true
+    };
+  }
+  const { updated, skipped } = db.applyLiveRates(snapshot, actorName);
+  return { refreshed: true, updated, skipped, snapshot: db.getRatesSnapshot(), stale: false };
+};
+var needsRefresh = () => {
+  const snap = db.getRatesSnapshot();
+  if (!snap?.fetchedAt) return true;
+  const hours = ageHours(snap.fetchedAt);
+  return hours === null || hours >= RATES_REFRESH_HOURS;
+};
+apiRouter.get("/currency/parallel-rates", async (_req, res) => {
+  if (needsRefresh()) {
+    try {
+      await refreshLiveRates();
+    } catch {
+    }
+  }
+  const snap = db.getRatesSnapshot();
+  res.json({
+    snapshot: snap,
+    stale: snap ? isStale(snap.fetchedAt) : true,
+    sources: RATES_SOURCE,
+    refreshEveryHours: RATES_REFRESH_HOURS
+  });
+});
+apiRouter.post("/admin/currency/refresh", async (req, res) => {
+  const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u062F\u0648\u064A \u0645\u0646 \u0644\u0648\u062D\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629");
+  if (!result.refreshed) {
+    return res.status(502).json({
+      error: "SOURCE_UNAVAILABLE",
+      message: "\u062A\u0639\u0630\u0631 \u0627\u0644\u0648\u0635\u0648\u0644 \u0644\u0645\u0635\u062F\u0631 \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0622\u0646 \u2014 \u062A\u0645 \u0627\u0644\u0627\u062D\u062A\u0641\u0627\u0638 \u0628\u0622\u062E\u0631 \u0623\u0633\u0639\u0627\u0631 \u0645\u0639\u0631\u0648\u0641\u0629.",
+      snapshot: result.snapshot
+    });
+  }
+  res.json({ success: true, ...result });
+});
+apiRouter.get("/cron/currency-rates", async (_req, res) => {
+  const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u0648\u0645\u064A \u062A\u0644\u0642\u0627\u0626\u064A");
+  res.json({ ok: result.refreshed, updated: result.updated ?? 0, snapshot: result.snapshot });
+});
 apiRouter.get("/currencies", requireTenant, (req, res) => {
   const currencies = db.getSchema().currencies;
-  res.json({ currencies });
+  const snapshot = db.getRatesSnapshot();
+  res.json({
+    currencies,
+    rates: {
+      snapshot,
+      stale: snapshot ? isStale(snapshot.fetchedAt) : true,
+      sources: RATES_SOURCE
+    }
+  });
 });
 apiRouter.put("/currencies/:code", requireTenant, (req, res) => {
   const authReq = req;

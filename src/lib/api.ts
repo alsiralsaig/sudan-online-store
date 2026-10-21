@@ -451,6 +451,21 @@ class ApiClient {
     });
   }
 
+  /** Live parallel-market rates snapshot (used by the currencies screen). */
+  public async getParallelRates(): Promise<{
+    snapshot: any;
+    stale: boolean;
+    sources: any;
+    refreshEveryHours: number;
+  }> {
+    return this.request('/currency/parallel-rates');
+  }
+
+  /** Force a refresh from the public sources right now. */
+  public async refreshParallelRates(): Promise<{ success: boolean; updated?: number; snapshot: any }> {
+    return this.request('/admin/currency/refresh', { method: 'POST' });
+  }
+
   public async getCurrencyHistory(): Promise<{ history: CurrencyRateHistory[] }> {
     return this.request('/currencies/history');
   }
