@@ -36,7 +36,16 @@ const requireTenant = (req: Request, res: Response, next: NextFunction) => {
 
   // Attach to request
   (req as AuthenticatedRequest).tenantId = tenantId;
-  (req as AuthenticatedRequest).actorName = (req.headers['x-actor-name'] as string) || 'أحمد الطيب الرواد';
+  const rawActorName = (req.headers['x-actor-name'] as string) || '';
+  let decodedActorName = 'أحمد الطيب الرواد';
+  if (rawActorName) {
+    try {
+      decodedActorName = decodeURIComponent(rawActorName);
+    } catch {
+      decodedActorName = rawActorName;
+    }
+  }
+  (req as AuthenticatedRequest).actorName = decodedActorName;
   (req as AuthenticatedRequest).actorRole = (req.headers['x-actor-role'] as string) || 'owner';
   (req as AuthenticatedRequest).actorId = (req.headers['x-actor-id'] as string) || 'emp_owner_rowad';
   next();

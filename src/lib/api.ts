@@ -133,11 +133,13 @@ class ApiClient {
   }
 
   private getHeaders(): Record<string, string> {
+    // HTTP header values must be Latin-1, so the Arabic actor name is
+    // percent-encoded here and decoded again on the server.
     return {
       'Content-Type': 'application/json',
       'x-tenant-id': this.tenantId,
       'x-actor-id': this.currentActor.id,
-      'x-actor-name': this.currentActor.name,
+      'x-actor-name': encodeURIComponent(this.currentActor.name || ''),
       'x-actor-role': this.currentActor.role,
     };
   }

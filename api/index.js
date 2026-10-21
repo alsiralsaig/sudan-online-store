@@ -2716,7 +2716,16 @@ var requireTenant = (req, res, next) => {
     return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629 \u0641\u064A \u0627\u0644\u0646\u0638\u0627\u0645" });
   }
   req.tenantId = tenantId;
-  req.actorName = req.headers["x-actor-name"] || "\u0623\u062D\u0645\u062F \u0627\u0644\u0637\u064A\u0628 \u0627\u0644\u0631\u0648\u0627\u062F";
+  const rawActorName = req.headers["x-actor-name"] || "";
+  let decodedActorName = "\u0623\u062D\u0645\u062F \u0627\u0644\u0637\u064A\u0628 \u0627\u0644\u0631\u0648\u0627\u062F";
+  if (rawActorName) {
+    try {
+      decodedActorName = decodeURIComponent(rawActorName);
+    } catch {
+      decodedActorName = rawActorName;
+    }
+  }
+  req.actorName = decodedActorName;
   req.actorRole = req.headers["x-actor-role"] || "owner";
   req.actorId = req.headers["x-actor-id"] || "emp_owner_rowad";
   next();
