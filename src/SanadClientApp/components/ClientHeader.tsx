@@ -94,7 +94,7 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
       {/* Main Header Row */}
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex items-center justify-between gap-2 sm:gap-4 min-w-0">
         {/* Brand & Store Identity */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <SanadLogo size="md" variant="full" onClick={() => onTabChange('catalog')} />
           {tenant && (
             <div className="hidden md:flex flex-col border-r border-slate-200 pr-3 mr-1">
@@ -119,7 +119,7 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
         </div>
 
         {/* Actions Row: Branch, Loyalty, Wishlist, Cart */}
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {/* Branch Picker */}
           {branches.length > 0 && (
             <div className="relative hidden lg:block">
@@ -147,7 +147,7 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
           {/* Wishlist Button */}
           <button
             onClick={() => onTabChange('wishlist')}
-            className={`relative p-2 rounded-xl border transition-all ${
+            className={`hidden min-[430px]:flex relative p-2 rounded-xl border transition-all ${
               activeTab === 'wishlist'
                 ? 'bg-rose-50 border-rose-300 text-rose-600'
                 : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-rose-600 hover:bg-slate-100'
@@ -192,7 +192,7 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
           {/* Store application — visible entry point for traders */}
           <button
             onClick={() => setIsTenantModalOpen(true)}
-            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-2 text-xs font-black rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 active:scale-98 transition-all shadow-2xs whitespace-nowrap"
+            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-2 text-[11px] sm:text-xs font-black rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 active:scale-98 transition-all shadow-2xs whitespace-nowrap"
             title="طلب فتح متجر على منصة سند"
           >
             <Store className="w-4 h-4 text-emerald-700" />
