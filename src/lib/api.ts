@@ -726,7 +726,15 @@ class ApiClient {
     return this.request(`/market-banners/${id}/click`, { method: 'POST' });
   }
 
-  /** Admin: zero the click counter for one banner. */
+  /** Registers that a banner was really shown on screen (batched per rotation). */
+  public async trackMarketBannerImpressions(ids: string[]): Promise<{ success: boolean; counted: number }> {
+    return this.request('/market-banners/impressions', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
+  }
+
+  /** Admin: zero both counters (clicks + impressions) for one banner. */
   public async resetMarketBannerClicks(id: string): Promise<{ success: boolean; banner: any }> {
     return this.request(`/admin/market-banners/${id}/reset-clicks`, { method: 'POST' });
   }

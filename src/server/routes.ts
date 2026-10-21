@@ -3321,6 +3321,22 @@ apiRouter.post('/market-banners/:id/click', (req, res) => {
   res.json({ success: true, clicks: banner.clicks || 0 });
 });
 
+/** Banner was actually displayed — sent by the landing page (batched per rotation). */
+apiRouter.post('/market-banners/impressions', (req, res) => {
+  const raw = req.body?.ids;
+  const ids = Array.isArray(raw) ? raw.filter((i: any) => typeof i === 'string').slice(0, 20) : [];
+  if (!ids.length) {
+    return res.status(400).json({ error: 'IDS_REQUIRED', message: 'أرسل قائمة البانرات.' });
+  }
+  res.json({ success: true, counted: db.trackMarketBannerImpressions(ids) });
+});
+
+apiRouter.post('/market-banners/:id/impression', (req, res) => {
+  const banner = db.trackMarketBannerImpression(req.params.id);
+  if (!banner) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
+  res.json({ success: true, impressions: banner.impressions || 0 });
+});
+
 apiRouter.get('/admin/market-banners', (_req, res) => {
   res.json({ banners: db.getMarketBanners(false) });
 });

@@ -68,6 +68,43 @@ const reset = await call(`/api/admin/market-banners/${fresh.id}/reset-clicks`, {
 ok('reset zeroes the counter', reset.code === 200 && reset.body.banner.clicks === 0);
 ok('paused banner still counts taps', (await call('/api/market-banners/bnr_cars/click', { method: 'POST' })).code === 200);
 
+console.log('\n=== impressions + CTR ===');
+await call('/api/market-banners/bnr_appliances/impression', { method: 'POST' });
+const imp2 = await call('/api/market-banners/bnr_appliances/impression', { method: 'POST' });
+ok('single impression increments', imp2.body.impressions === 2, JSON.stringify(imp2.body));
+ok('impression on unknown banner 404', (await call('/api/market-banners/nope/impression', { method: 'POST' })).code === 404);
+
+const batch = await call('/api/market-banners/impressions', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ ids: ['bnr_cars', 'bnr_groceries'] }),
+});
+ok('batch counts both', batch.code === 200 && batch.body.counted === 2, JSON.stringify(batch.body));
+ok('batch rejects empty list', (await call('/api/market-banners/impressions', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [] }),
+})).code === 400);
+ok('batch ignores junk ids', (await call('/api/market-banners/impressions', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [123, null, 'ghost'] }),
+})).body.counted === 0);
+
+const appl = (await call('/api/admin/market-banners')).body.banners.find((b: any) => b.id === 'bnr_appliances');
+ok('impressions stored', appl.impressions === 2, String(appl.impressions));
+ok('lastImpressionAt saved', !!appl.lastImpressionAt);
+
+// 4 views + 1 tap on a fresh banner => 25.0% CTR
+const measured = (await call('/api/admin/market-banners', json({
+  title: 'بانر قياس CTR', imageUrl: '/assets/images/sanad_pos_hero_1792173270140.jpg',
+}))).body.banner;
+for (let i = 0; i < 4; i++) await call(`/api/market-banners/${measured.id}/impression`, { method: 'POST' });
+await call(`/api/market-banners/${measured.id}/click`, { method: 'POST' });
+const m = (await call('/api/admin/market-banners')).body.banners.find((b: any) => b.id === measured.id);
+const ctr = ((m.clicks || 0) / (m.impressions || 1)) * 100;
+ok('CTR = clicks / views', m.clicks === 1 && m.impressions === 4 && ctr.toFixed(1) === '25.0', `${m.clicks}/${m.impressions} = ${ctr.toFixed(1)}%`);
+await call(`/api/admin/market-banners/${measured.id}`, { method: 'DELETE' });
+
+const resetAll = await call('/api/admin/market-banners/bnr_appliances/reset-clicks', { method: 'POST' });
+ok('reset clears clicks AND views', resetAll.body.banner.clicks === 0 && resetAll.body.banner.impressions === 0);
+
 console.log('\n=== delete ===');
 ok('deleted', (await call(`/api/admin/market-banners/${id}`, { method: 'DELETE' })).code === 200);
 ok('gone from public feed', !(await call('/api/market-banners')).body.banners.some((b: any) => b.id === id));

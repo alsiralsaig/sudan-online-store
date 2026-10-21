@@ -804,5 +804,8 @@ export interface MarketBanner {
   /** How many shoppers tapped the banner (advertiser reporting). */
   clicks?: number;
   lastClickedAt?: string;
+  /** How many times the banner was actually on screen (CTR = clicks / impressions). */
+  impressions?: number;
+  lastImpressionAt?: string;
   createdAt: string;
 }

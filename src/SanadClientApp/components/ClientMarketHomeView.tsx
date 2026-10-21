@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Search,
   Sparkles,
@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
 import { api } from '../../lib/api.ts';
+import { useImpressionTracker } from '../../lib/useImpressionTracker.ts';
 import type { ClientMarketAd, ClientPurchaseRequest } from '../types.ts';
 
 interface ClientMarketHomeViewProps {
@@ -59,6 +60,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   onOpenCreateModal,
 }) => {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
+  const [rotationTick, setRotationTick] = useState(0);
 
   /** Defaults shown until the admin-managed banners load (or if none are set). */
   const defaultBanners = [
@@ -119,11 +121,17 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
     };
   }, []);
 
+  // Count a banner as "seen" only when it is really on screen for a moment (CTR needs honest numbers)
+  const heroRef = useRef<HTMLDivElement | null>(null);
+  const shownBannerId: string | undefined = (banners[currentBannerIndex] as any)?.id;
+  useImpressionTracker(heroRef, shownBannerId, { key: `${shownBannerId}:${rotationTick}` });
+
   // Rotate the banner like the reference landing page
   useEffect(() => {
     if (banners.length < 2) return;
     const timer = setInterval(() => {
       setCurrentBannerIndex((i) => (i + 1) % banners.length);
+      setRotationTick((t) => t + 1);
     }, 6000);
     return () => clearInterval(timer);
   }, [banners.length]);
@@ -218,6 +226,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
       <div className="max-w-md md:max-w-4xl mx-auto px-3 sm:px-4 py-3 space-y-3">
         {/* ---------------- Banner (photo-led, like the reference) -------- */}
         <div
+          ref={heroRef}
           className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 h-40 sm:h-52 bg-slate-900 cursor-pointer"
           onClick={() => {
             const shown: any = banners[currentBannerIndex];

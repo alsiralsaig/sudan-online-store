@@ -14,8 +14,17 @@ import {
   AlertCircle,
   MousePointerClick,
   RotateCcw,
+  Eye as EyeIcon,
+  TrendingUp,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
+
+/** CTR as a one-decimal percentage string. */
+const ctrOf = (b: { clicks?: number; impressions?: number }): string => {
+  const views = b.impressions || 0;
+  if (!views) return '—';
+  return `${(((b.clicks || 0) / views) * 100).toFixed(1)}%`;
+};
 
 interface Banner {
   id: string;
@@ -29,6 +38,8 @@ interface Banner {
   advertiserName?: string;
   clicks?: number;
   lastClickedAt?: string;
+  impressions?: number;
+  lastImpressionAt?: string;
   createdAt: string;
 }
 
@@ -154,7 +165,7 @@ export const MarketBannersAdminView: React.FC = () => {
   };
 
   const resetClicks = async (banner: Banner) => {
-    if (!confirm(`تصفير نقرات «${banner.title}»؟`)) return;
+    if (!confirm(`تصفير نقرات وظهور «${banner.title}»؟`)) return;
     setBusyId(banner.id);
     try {
       await api.resetMarketBannerClicks(banner.id);
@@ -176,10 +187,20 @@ export const MarketBannersAdminView: React.FC = () => {
   };
 
   const totalClicks = banners.reduce((sum, b) => sum + (b.clicks || 0), 0);
+  const totalImpressions = banners.reduce((sum, b) => sum + (b.impressions || 0), 0);
+  const overallCtr = totalImpressions ? ((totalClicks / totalImpressions) * 100).toFixed(1) : '—';
   const topBanner = banners.reduce<Banner | null>(
     (best, b) => ((b.clicks || 0) > (best?.clicks || 0) ? b : best),
     null
   );
+  /** Highest CTR among banners that actually ran (min 1 view). */
+  const bestCtrBanner = banners
+    .filter((b) => (b.impressions || 0) > 0)
+    .reduce<Banner | null>((best, b) => {
+      const ctr = (b.clicks || 0) / (b.impressions || 1);
+      const bestCtr = best ? (best.clicks || 0) / (best.impressions || 1) : -1;
+      return ctr > bestCtr ? b : best;
+    }, null);
 
   const field =
     'w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500';
@@ -216,7 +237,15 @@ export const MarketBannersAdminView: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
+          <p className="text-[10px] text-slate-400 flex items-center gap-1">
+            <EyeIcon className="w-3 h-3 text-sky-400" /> مرات الظهور
+          </p>
+          <p className="text-lg font-black text-white mt-1">
+            {totalImpressions.toLocaleString('en-US')}
+          </p>
+        </div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
           <p className="text-[10px] text-slate-400 flex items-center gap-1">
             <MousePointerClick className="w-3 h-3 text-emerald-400" /> إجمالي النقرات
@@ -224,21 +253,27 @@ export const MarketBannersAdminView: React.FC = () => {
           <p className="text-lg font-black text-white mt-1">{totalClicks.toLocaleString('en-US')}</p>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
-          <p className="text-[10px] text-slate-400">أفضل بانر</p>
+          <p className="text-[10px] text-slate-400 flex items-center gap-1">
+            <TrendingUp className="w-3 h-3 text-amber-400" /> نسبة التفاعل CTR
+          </p>
+          <p className="text-lg font-black text-emerald-400 mt-1">{overallCtr}</p>
+          {bestCtrBanner && (
+            <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+              الأعلى: {bestCtrBanner.title} ({ctrOf(bestCtrBanner)})
+            </p>
+          )}
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
+          <p className="text-[10px] text-slate-400">أفضل بانر (نقرات)</p>
           <p className="text-xs font-bold text-white mt-1.5 truncate">
             {topBanner && (topBanner.clicks || 0) > 0 ? topBanner.title : 'لا نقرات بعد'}
           </p>
           {topBanner && (topBanner.clicks || 0) > 0 && (
             <p className="text-[10px] text-emerald-400 mt-0.5">
-              {(topBanner.clicks || 0).toLocaleString('en-US')} نقرة
+              {(topBanner.clicks || 0).toLocaleString('en-US')} نقرة من{' '}
+              {(topBanner.impressions || 0).toLocaleString('en-US')} ظهور
             </p>
           )}
-        </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 col-span-2 sm:col-span-1">
-          <p className="text-[10px] text-slate-400">متوسط النقرات للبانر</p>
-          <p className="text-lg font-black text-white mt-1">
-            {sorted.length ? Math.round(totalClicks / sorted.length).toLocaleString('en-US') : '0'}
-          </p>
         </div>
       </div>
 
@@ -351,6 +386,13 @@ export const MarketBannersAdminView: React.FC = () => {
                     {(banner.clicks || 0).toLocaleString('en-US')}
                   </span>
                   <span
+                    title="مرات الظهور ثم نسبة التفاعل"
+                    className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-800 text-amber-300 border-slate-700 flex items-center gap-1"
+                  >
+                    <EyeIcon className="w-2.5 h-2.5" />
+                    {(banner.impressions || 0).toLocaleString('en-US')} · {ctrOf(banner)}
+                  </span>
+                  <span
                     className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                       banner.active
                         ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
@@ -386,7 +428,7 @@ export const MarketBannersAdminView: React.FC = () => {
                   </button>
                   <button
                     onClick={() => resetClicks(banner)}
-                    disabled={busyId === banner.id || !banner.clicks}
+                    disabled={busyId === banner.id || (!banner.clicks && !banner.impressions)}
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-800 text-slate-300 hover:text-white flex items-center gap-1 disabled:opacity-40"
                   >
                     <RotateCcw className="w-3 h-3" /> تصفير

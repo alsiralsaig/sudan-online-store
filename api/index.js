@@ -2158,6 +2158,7 @@ var Database = class {
       ...input,
       id: newId("bnr"),
       clicks: 0,
+      impressions: 0,
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     this.data.marketBanners = [...this.data.marketBanners || [], banner];
@@ -2183,11 +2184,37 @@ var Database = class {
     this.save();
     return banner;
   }
+  /** Counts one real on-screen view of a banner. */
+  trackMarketBannerImpression(id) {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+    banner.impressions = (banner.impressions || 0) + 1;
+    banner.lastImpressionAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.save();
+    return banner;
+  }
+  /** Counts a whole rotation in one write (fewer Neon round-trips). */
+  trackMarketBannerImpressions(ids) {
+    const wanted = new Set(ids);
+    let touched = 0;
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    for (const banner of this.data.marketBanners || []) {
+      if (!wanted.has(banner.id)) continue;
+      banner.impressions = (banner.impressions || 0) + 1;
+      banner.lastImpressionAt = now;
+      touched += 1;
+    }
+    if (touched) this.save();
+    return touched;
+  }
+  /** Zeroes both counters (a fresh campaign report). */
   resetMarketBannerClicks(id) {
     const banner = (this.data.marketBanners || []).find((b) => b.id === id);
     if (!banner) return null;
     banner.clicks = 0;
+    banner.impressions = 0;
     banner.lastClickedAt = void 0;
+    banner.lastImpressionAt = void 0;
     this.save();
     return banner;
   }
@@ -5817,6 +5844,19 @@ apiRouter.post("/market-banners/:id/click", (req, res) => {
   const banner = db.trackMarketBannerClick(req.params.id);
   if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, clicks: banner.clicks || 0 });
+});
+apiRouter.post("/market-banners/impressions", (req, res) => {
+  const raw = req.body?.ids;
+  const ids = Array.isArray(raw) ? raw.filter((i) => typeof i === "string").slice(0, 20) : [];
+  if (!ids.length) {
+    return res.status(400).json({ error: "IDS_REQUIRED", message: "\u0623\u0631\u0633\u0644 \u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0628\u0627\u0646\u0631\u0627\u062A." });
+  }
+  res.json({ success: true, counted: db.trackMarketBannerImpressions(ids) });
+});
+apiRouter.post("/market-banners/:id/impression", (req, res) => {
+  const banner = db.trackMarketBannerImpression(req.params.id);
+  if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  res.json({ success: true, impressions: banner.impressions || 0 });
 });
 apiRouter.get("/admin/market-banners", (_req, res) => {
   res.json({ banners: db.getMarketBanners(false) });

@@ -1939,6 +1939,7 @@ class Database {
       ...input,
       id: newId('bnr'),
       clicks: 0,
+      impressions: 0,
       createdAt: new Date().toISOString(),
     };
     this.data.marketBanners = [...(this.data.marketBanners || []), banner];
@@ -1971,11 +1972,39 @@ class Database {
     return banner;
   }
 
+  /** Counts one real on-screen view of a banner. */
+  public trackMarketBannerImpression(id: string): MarketBanner | null {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+    banner.impressions = (banner.impressions || 0) + 1;
+    banner.lastImpressionAt = new Date().toISOString();
+    this.save();
+    return banner;
+  }
+
+  /** Counts a whole rotation in one write (fewer Neon round-trips). */
+  public trackMarketBannerImpressions(ids: string[]): number {
+    const wanted = new Set(ids);
+    let touched = 0;
+    const now = new Date().toISOString();
+    for (const banner of this.data.marketBanners || []) {
+      if (!wanted.has(banner.id)) continue;
+      banner.impressions = (banner.impressions || 0) + 1;
+      banner.lastImpressionAt = now;
+      touched += 1;
+    }
+    if (touched) this.save();
+    return touched;
+  }
+
+  /** Zeroes both counters (a fresh campaign report). */
   public resetMarketBannerClicks(id: string): MarketBanner | null {
     const banner = (this.data.marketBanners || []).find((b) => b.id === id);
     if (!banner) return null;
     banner.clicks = 0;
+    banner.impressions = 0;
     banner.lastClickedAt = undefined;
+    banner.lastImpressionAt = undefined;
     this.save();
     return banner;
   }
