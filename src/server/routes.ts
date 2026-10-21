@@ -1580,7 +1580,15 @@ apiRouter.get('/cron/currency-rates', async (_req, res) => {
   res.json({ ok: result.refreshed, updated: (result as any).updated ?? 0, snapshot: result.snapshot });
 });
 
-apiRouter.get('/currencies', requireTenant, (_req, res) => {
+apiRouter.get('/currencies', requireTenant, async (_req, res) => {
+  if (needsRefresh()) {
+    try {
+      await refreshLiveRates();
+      await db.flush({ lock: false }).catch(() => {});
+    } catch {
+      /* keep the manual rates */
+    }
+  }
   const { currencies, snapshot } = withLiveRates();
   res.json({
     currencies,

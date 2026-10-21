@@ -66,8 +66,11 @@ export interface DatabaseSchema {
   customers: Customer[];
   currencies: CurrencyConfig[];
   currencyRateHistory: CurrencyRateHistory[];
-  /** Last successful pull of the parallel-market table. */
-  currencyRatesSnapshot: CurrencyRatesSnapshot | null;
+  /**
+   * Single-row collection holding the last successful parallel-market pull.
+   * (The store persists arrays only — an object here would silently vanish.)
+   */
+  currencyRatesSnapshot: Array<CurrencyRatesSnapshot & { id: string }>;
   storefrontOrders: StorefrontOrder[];
   expenses: Expense[];
   purchases: Purchase[];
@@ -2141,7 +2144,7 @@ class Database {
       customers: INITIAL_CUSTOMERS,
       currencies: INITIAL_CURRENCIES,
       currencyRateHistory: [],
-      currencyRatesSnapshot: null,
+      currencyRatesSnapshot: [],
       storefrontOrders: INITIAL_STORE_ORDERS,
       expenses: INITIAL_EXPENSES,
       purchases: INITIAL_PURCHASES,
@@ -2181,11 +2184,12 @@ class Database {
   /* ------------------------------------------------------------------ */
 
   public getRatesSnapshot(): CurrencyRatesSnapshot | null {
-    return this.data.currencyRatesSnapshot || null;
+    const row = (this.data.currencyRatesSnapshot || [])[0];
+    return row || null;
   }
 
   public saveRatesSnapshot(snapshot: CurrencyRatesSnapshot): void {
-    this.data.currencyRatesSnapshot = snapshot;
+    this.data.currencyRatesSnapshot = [{ id: 'latest', ...snapshot }];
     this.commit();
   }
 
@@ -2238,7 +2242,7 @@ class Database {
       }
     }
 
-    this.data.currencyRatesSnapshot = snapshot;
+    this.data.currencyRatesSnapshot = [{ id: 'latest', ...snapshot }];
     this.commit();
     return { updated, skipped };
   }

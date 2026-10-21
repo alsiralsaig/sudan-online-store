@@ -2317,7 +2317,7 @@ var Database = class {
       customers: INITIAL_CUSTOMERS,
       currencies: INITIAL_CURRENCIES,
       currencyRateHistory: [],
-      currencyRatesSnapshot: null,
+      currencyRatesSnapshot: [],
       storefrontOrders: INITIAL_STORE_ORDERS,
       expenses: INITIAL_EXPENSES,
       purchases: INITIAL_PURCHASES,
@@ -2352,10 +2352,11 @@ var Database = class {
   /*  Parallel-market currency rates                                     */
   /* ------------------------------------------------------------------ */
   getRatesSnapshot() {
-    return this.data.currencyRatesSnapshot || null;
+    const row = (this.data.currencyRatesSnapshot || [])[0];
+    return row || null;
   }
   saveRatesSnapshot(snapshot) {
-    this.data.currencyRatesSnapshot = snapshot;
+    this.data.currencyRatesSnapshot = [{ id: "latest", ...snapshot }];
     this.commit();
   }
   /**
@@ -2399,7 +2400,7 @@ var Database = class {
         updated += 1;
       }
     }
-    this.data.currencyRatesSnapshot = snapshot;
+    this.data.currencyRatesSnapshot = [{ id: "latest", ...snapshot }];
     this.commit();
     return { updated, skipped };
   }
@@ -4730,7 +4731,15 @@ apiRouter.get("/cron/currency-rates", async (_req, res) => {
   });
   res.json({ ok: result.refreshed, updated: result.updated ?? 0, snapshot: result.snapshot });
 });
-apiRouter.get("/currencies", requireTenant, (_req, res) => {
+apiRouter.get("/currencies", requireTenant, async (_req, res) => {
+  if (needsRefresh()) {
+    try {
+      await refreshLiveRates();
+      await db.flush({ lock: false }).catch(() => {
+      });
+    } catch {
+    }
+  }
   const { currencies, snapshot } = withLiveRates();
   res.json({
     currencies,
