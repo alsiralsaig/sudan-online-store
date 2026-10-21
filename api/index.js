@@ -4670,6 +4670,24 @@ var refreshLiveRates = async (actorName) => {
   const { updated, skipped } = db.applyLiveRates(snapshot, actorName);
   return { refreshed: true, updated, skipped, snapshot: db.getRatesSnapshot(), stale: false };
 };
+var withLiveRates = () => {
+  const snapshot = db.getRatesSnapshot();
+  const currencies = db.getSchema().currencies.map((c) => {
+    if (c.isBase || !snapshot) return c;
+    const live = snapshot.rates.find((r) => r.code === c.code);
+    const trading = live?.parallel ?? live?.official;
+    if (!trading) return c;
+    return {
+      ...c,
+      rateToSdg: Math.round(trading * 100) / 100,
+      parallelRate: live?.parallel ?? void 0,
+      officialRate: live?.official ?? c.officialRate,
+      rateSource: "parallel",
+      lastUpdated: snapshot.fetchedAt
+    };
+  });
+  return { currencies, snapshot };
+};
 var needsRefresh = () => {
   const snap = db.getRatesSnapshot();
   if (!snap?.fetchedAt) return true;
@@ -4684,8 +4702,12 @@ apiRouter.get("/currency/parallel-rates", async (_req, res) => {
     }
   }
   const snap = db.getRatesSnapshot();
+  const { currencies } = withLiveRates();
+  await db.flush({ lock: false }).catch(() => {
+  });
   res.json({
     snapshot: snap,
+    currencies,
     stale: snap ? isStale(snap.fetchedAt) : true,
     sources: RATES_SOURCE,
     refreshEveryHours: RATES_REFRESH_HOURS
@@ -4704,11 +4726,12 @@ apiRouter.post("/admin/currency/refresh", async (req, res) => {
 });
 apiRouter.get("/cron/currency-rates", async (_req, res) => {
   const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u0648\u0645\u064A \u062A\u0644\u0642\u0627\u0626\u064A");
+  await db.flush({ lock: false }).catch(() => {
+  });
   res.json({ ok: result.refreshed, updated: result.updated ?? 0, snapshot: result.snapshot });
 });
-apiRouter.get("/currencies", requireTenant, (req, res) => {
-  const currencies = db.getSchema().currencies;
-  const snapshot = db.getRatesSnapshot();
+apiRouter.get("/currencies", requireTenant, (_req, res) => {
+  const { currencies, snapshot } = withLiveRates();
   res.json({
     currencies,
     rates: {

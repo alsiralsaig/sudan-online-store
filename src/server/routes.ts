@@ -1508,6 +1508,29 @@ const refreshLiveRates = async (actorName?: string) => {
   return { refreshed: true, updated, skipped, snapshot: db.getRatesSnapshot(), stale: false };
 };
 
+/**
+ * The rate a cashier actually trades on: the parallel number from the latest
+ * snapshot. Computed at read time so a GET never depends on a write flush.
+ */
+const withLiveRates = () => {
+  const snapshot = db.getRatesSnapshot();
+  const currencies = db.getSchema().currencies.map((c) => {
+    if (c.isBase || !snapshot) return c;
+    const live = snapshot.rates.find((r) => r.code === c.code);
+    const trading = live?.parallel ?? live?.official;
+    if (!trading) return c;
+    return {
+      ...c,
+      rateToSdg: Math.round(trading * 100) / 100,
+      parallelRate: live?.parallel ?? undefined,
+      officialRate: live?.official ?? c.officialRate,
+      rateSource: 'parallel' as const,
+      lastUpdated: snapshot.fetchedAt,
+    };
+  });
+  return { currencies, snapshot };
+};
+
 const needsRefresh = (): boolean => {
   const snap = db.getRatesSnapshot();
   if (!snap?.fetchedAt) return true;
@@ -1525,8 +1548,12 @@ apiRouter.get('/currency/parallel-rates', async (_req, res) => {
     }
   }
   const snap = db.getRatesSnapshot();
+  const { currencies } = withLiveRates();
+  // A GET is not flushed by the middleware — persist explicitly if we just wrote.
+  await db.flush({ lock: false }).catch(() => {});
   res.json({
     snapshot: snap,
+    currencies,
     stale: snap ? isStale(snap.fetchedAt) : true,
     sources: RATES_SOURCE,
     refreshEveryHours: RATES_REFRESH_HOURS,
@@ -1549,12 +1576,12 @@ apiRouter.post('/admin/currency/refresh', async (req, res) => {
 /** Daily cron: keeps the numbers fresh even if nobody opens the page. */
 apiRouter.get('/cron/currency-rates', async (_req, res) => {
   const result = await refreshLiveRates('تحديث يومي تلقائي');
+  await db.flush({ lock: false }).catch(() => {});
   res.json({ ok: result.refreshed, updated: (result as any).updated ?? 0, snapshot: result.snapshot });
 });
 
-apiRouter.get('/currencies', requireTenant, (req, res) => {
-  const currencies = db.getSchema().currencies;
-  const snapshot = db.getRatesSnapshot();
+apiRouter.get('/currencies', requireTenant, (_req, res) => {
+  const { currencies, snapshot } = withLiveRates();
   res.json({
     currencies,
     rates: {

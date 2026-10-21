@@ -36,6 +36,7 @@ console.log('\n=== applying to the store (parallel becomes the trading rate) ===
 const pglite = new PGlite();
 setSqlClient({ query: async (t: string, p?: any[]) => { const r = await pglite.query(t, p); return { rows: r.rows as any[], rowCount: r.affectedRows ?? null }; } });
 const { db } = await import('../src/server/db.ts');
+const { createApp } = await import('../server.ts');
 const before = db.getSchema().currencies.find((c) => c.code === 'USD')!.rateToSdg;
 const res = db.applyLiveRates(
   { rates: rows, source: 'test', sourceUrl: 'https://example.com', fetchedAt: now },
@@ -56,6 +57,24 @@ ok('second identical run writes no new history', (() => {
   db.applyLiveRates({ rates: rows, source: 'test', sourceUrl: 'https://example.com', fetchedAt: now });
   return db.getSchema().currencyRateHistory.length === n;
 })());
+
+console.log('\n=== API surfaces the parallel rate ===');
+const app = createApp(); const server2 = app.listen(0); const port2 = (server2.address() as any).port;
+const B2 = `http://127.0.0.1:${port2}`;
+const get = async (p: string) => { const r = await fetch(B2 + p, { headers: { 'x-tenant-id': 'tenant_alrowad' } }); return { code: r.status, body: await r.json().catch(() => null) }; };
+
+const live = await get('/api/currency/parallel-rates');
+ok('endpoint returns a snapshot', !!live.body?.snapshot?.rates?.length, JSON.stringify(live.body).slice(0, 80));
+const usdFromLive = (live.body?.currencies || []).find((c: any) => c.code === 'USD');
+ok('currencies in payload use the parallel rate', usdFromLive?.rateToSdg === 10386, String(usdFromLive?.rateToSdg));
+ok('official still exposed for display', usdFromLive?.officialRate === 4886.38);
+
+const curr = await get('/api/currencies');
+const usdApi = (curr.body?.currencies || []).find((c: any) => c.code === 'USD');
+ok('/currencies trades on the parallel rate', usdApi?.rateToSdg === 10386, String(usdApi?.rateToSdg));
+ok('/currencies flags the source', usdApi?.rateSource === 'parallel');
+ok('SDG stays 1', (curr.body?.currencies || []).find((c: any) => c.code === 'SDG')?.rateToSdg === 1);
+server2.close();
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);
 process.exit(fail ? 1 : 0);
