@@ -296,12 +296,9 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900">
         {/* The app-switcher bar is a platform-admin tool: shoppers and
             merchants must never see links into the other apps. */}
+        {/* SanadClientApp renders its own assistant (with branch context) —
+            rendering a second one here produced duplicate floating buttons. */}
         <SanadClientApp />
-        <SanadAIAssistant
-          currentMode="client"
-          tenantName={tenant?.tradeName || tenant?.name}
-          branchName={currentBranch?.name}
-        />
       </div>
     );
   }
