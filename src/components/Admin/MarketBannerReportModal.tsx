@@ -152,6 +152,11 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
           .banner-report-sheet .rp-dim { color: #475569 !important; }
           .banner-report-sheet .rp-ink { color: #0f172a !important; }
           .banner-report-sheet .rp-green { color: #047857 !important; }
+          .banner-report-sheet thead { background: #e2e8f0 !important; }
+          .banner-report-sheet thead th { color: #0f172a !important; }
+          .banner-report-sheet tbody td { color: #0f172a !important; border-color: #cbd5e1 !important; }
+          .banner-report-sheet tbody tr { border-color: #cbd5e1 !important; }
+          .banner-report-sheet .max-h-64 { max-height: none !important; overflow: visible !important; }
           @page { size: A4; margin: 12mm; }
         }
       `}</style>
@@ -264,7 +269,7 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
             {days.length > 0 && (
               <div className="rp-card bg-slate-800/40 border border-slate-700 rounded-xl p-3">
                 <p className="text-[11px] font-bold text-slate-300 mb-2 rp-ink">الأداء اليومي</p>
-                <div className="flex items-end gap-[3px] h-28 overflow-x-auto pb-1">
+                <div dir="ltr" className="flex items-end gap-[3px] h-28 overflow-x-auto pb-1">
                   {days.map((d) => {
                     const h = Math.round((d.impressions / peak) * 100);
                     const ch = d.impressions
@@ -300,8 +305,8 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
                   <span className="flex items-center gap-1">
                     <span className="w-2.5 h-2.5 rounded-sm bg-emerald-400 inline-block" /> النقرات
                   </span>
-                  <span className="ms-auto">
-                    {shortDate(first || today)} ← {shortDate(last || today)}
+                  <span className="ms-auto" dir="ltr">
+                    {shortDate(first || today)} — {shortDate(last || today)}
                   </span>
                 </div>
               </div>
