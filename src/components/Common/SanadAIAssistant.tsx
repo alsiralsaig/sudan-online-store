@@ -99,6 +99,37 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
     window.speechSynthesis.speak(utterance);
   };
 
+  /** Gemini TTS returns raw 16-bit PCM; wrap it in a WAV header so audio tags can play it. */
+  const pcmBase64ToWavUrl = (base64: string, sampleRate = 24000, channels = 1) => {
+    const binary = atob(base64);
+    const pcm = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) pcm[i] = binary.charCodeAt(i);
+
+    const header = new ArrayBuffer(44);
+    const view = new DataView(header);
+    const writeString = (offset: number, value: string) => {
+      for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+    };
+
+    const byteRate = sampleRate * channels * 2;
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + pcm.length, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true); // PCM chunk size
+    view.setUint16(20, 1, true); // PCM format
+    view.setUint16(22, channels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, channels * 2, true); // block align
+    view.setUint16(34, 16, true); // bits per sample
+    writeString(36, 'data');
+    view.setUint32(40, pcm.length, true);
+
+    const blob = new Blob([header, pcm], { type: 'audio/wav' });
+    return URL.createObjectURL(blob);
+  };
+
   const speak = async (text: string) => {
     const clean = text
       .replace(/[*_`#>]/g, '')
@@ -117,11 +148,21 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
       });
       const data = await res.json();
       if (data?.audio) {
-        const audio = new Audio('data:' + (data.mimeType || 'audio/wav') + ';base64,' + data.audio);
+        const mime = String(data.mimeType || '');
+        // Raw PCM from Gemini → wrap in WAV; anything else plays as-is
+        const src = /pcm|L16/i.test(mime)
+          ? pcmBase64ToWavUrl(data.audio, 24000, 1)
+          : 'data:' + (mime || 'audio/wav') + ';base64,' + data.audio;
+
+        const audio = new Audio(src);
         audioRef.current = audio;
-        audio.onended = () => setIsSpeaking(false);
+        audio.onended = () => {
+          setIsSpeaking(false);
+          if (src.startsWith('blob:')) URL.revokeObjectURL(src);
+        };
         audio.onerror = () => {
           audioRef.current = null;
+          if (src.startsWith('blob:')) URL.revokeObjectURL(src);
           speakWithBrowser(clean);
         };
         await audio.play().catch(() => speakWithBrowser(clean));
