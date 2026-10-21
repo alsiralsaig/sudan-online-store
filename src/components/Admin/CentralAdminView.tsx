@@ -119,7 +119,7 @@ export const CentralAdminView: React.FC = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-3 sm:p-6 max-w-7xl mx-auto space-y-6 overflow-x-hidden">
       {/* Title */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
@@ -138,11 +138,14 @@ export const CentralAdminView: React.FC = () => {
             onNavigate={(tab) => setActiveTab(tab as any)}
           />
 
-        {/* Tab switcher */}
-        <div className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-semibold">
+        {/* Tab switcher — swipe scrolls the strip only, never the page */}
+        <div
+          className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-semibold overflow-x-auto overscroll-x-contain max-w-full [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+          style={{ touchAction: 'pan-x' }}
+        >
           <button
             onClick={() => setActiveTab('merchants')}
-            className={`px-3 py-1.5 rounded-md transition-colors ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors ${
               activeTab === 'merchants' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'
             }`}
           >
@@ -150,7 +153,7 @@ export const CentralAdminView: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('payments_queue')}
-            className={`px-3 py-1.5 rounded-md transition-colors ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors ${
               activeTab === 'payments_queue' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'
             }`}
           >
@@ -158,7 +161,7 @@ export const CentralAdminView: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('audit_trail')}
-            className={`px-3 py-1.5 rounded-md transition-colors ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors ${
               activeTab === 'audit_trail' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'
             }`}
           >
@@ -166,7 +169,7 @@ export const CentralAdminView: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('receipt_settings')}
-            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
               activeTab === 'receipt_settings' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
             }`}
           >
@@ -174,7 +177,7 @@ export const CentralAdminView: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('promotions')}
-            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
               activeTab === 'promotions' ? 'bg-white text-orange-700 shadow-sm font-bold' : 'text-slate-600'
             }`}
           >
@@ -183,7 +186,7 @@ export const CentralAdminView: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('market_ads')}
-            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 relative ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 relative ${
               activeTab === 'market_ads' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
             }`}
           >
@@ -192,7 +195,7 @@ export const CentralAdminView: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('tenant_requests')}
-            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
               activeTab === 'tenant_requests' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
             }`}
           >
@@ -201,7 +204,7 @@ export const CentralAdminView: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('banners')}
-            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
               activeTab === 'banners' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
             }`}
           >

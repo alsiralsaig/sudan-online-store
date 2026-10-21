@@ -119,8 +119,15 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     const handler = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   // Work out the current push state for this device
@@ -259,10 +266,20 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
         )}
       </button>
 
+      {/* Mobile: a full sheet on top of everything (never clipped or covered).
+          Desktop: the usual anchored dropdown. */}
       {open && (
         <div
-          className="absolute left-0 mt-2 w-[min(92vw,22rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 z-[70] overflow-hidden"
-          style={{ maxHeight: '80vh' }}
+          className="sm:hidden fixed inset-0 z-[75] bg-black/40"
+          onClick={() => setOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {open && (
+        <div
+          className="fixed inset-x-2 top-14 z-[80] sm:absolute sm:inset-x-auto sm:top-full sm:left-0 sm:mt-2 sm:w-[22rem] sm:z-[70] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col"
+          style={{ maxHeight: 'min(78vh, 640px)' }}
         >
           <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-900 text-white">
             <div className="flex items-center gap-2">
@@ -316,7 +333,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             )}
           </div>
 
-          <div className="overflow-y-auto" style={{ maxHeight: '52vh' }}>
+          <div className="overflow-y-auto overscroll-contain flex-1" style={{ minHeight: 0 }}>
             {items.length === 0 ? (
               <div className="text-center py-8 text-slate-400 text-[11px]">لا توجد إشعارات حالياً</div>
             ) : (
