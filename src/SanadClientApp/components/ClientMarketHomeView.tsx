@@ -78,8 +78,8 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   const [rotationTick, setRotationTick] = useState(0);
   const [sectionsOpen, setSectionsOpen] = useState(false);
   const [tenantModalOpen, setTenantModalOpen] = useState(false);
-  const [promoIndex, setPromoIndex] = useState(0);
-  const [promoTick, setPromoTick] = useState(0);
+  const [vipIndex, setVipIndex] = useState(0);
+  const [vipTick, setVipTick] = useState(0);
 
   /** Defaults shown until the admin-managed banners load (or if none are set). */
   const defaultBanners = [
@@ -177,45 +177,24 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   const latestAds = ads.slice(0, 10);
 
   /**
-   * Second moving strip (the reference landing page has two stacked sliders).
-   * It rotates through the newest ads that carry a photo, and falls back to the
-   * admin banners when the feed is still small — so it is never empty.
+   * The VIP showcase rotates exactly like the banner above it (same size, its
+   * own timer): VIP ads first, then the newest ads that carry a photo.
    */
-  const promoFromAds = ads
-    .filter((a) => !!a.imageUrl && a.id !== vipAd.id)
-    .slice(0, 6);
-  // Fallback: start one slide further so the two strips never look identical
-  const shiftedBanners = banners.length > 1 ? [...banners.slice(1), banners[0]] : banners;
-  const promos =
-    promoFromAds.length >= 2
-      ? promoFromAds.map((a) => ({
-          id: `ad_${a.id}`,
-          title: a.title,
-          subtitle: `${a.category} • ${a.location}`,
-          image: a.imageUrl as string,
-          price: a.priceSdg > 0 ? `${a.priceSdg.toLocaleString('en-US')} ج.س` : 'حسب الاتفاق',
-          open: () => onSelectAd(a),
-        }))
-      : shiftedBanners.map((b, i) => ({
-          id: `bn_${b.id}_${i}`,
-          title: b.title,
-          subtitle: b.subtitle || '',
-          image: b.image,
-          price: '',
-          open: () => onNavigateTab?.('catalog'),
-        }));
+  const vipSlides: ClientMarketAd[] = [
+    vipAd,
+    ...ads.filter((a) => !!a.imageUrl && a.id !== vipAd.id && !a.isVip),
+  ].slice(0, 6);
 
-  // Independent timer so both strips move at their own rhythm
   useEffect(() => {
-    if (promos.length < 2) return;
+    if (vipSlides.length < 2) return;
     const timer = setInterval(() => {
-      setPromoIndex((i) => (i + 1) % promos.length);
-      setPromoTick((k) => k + 1);
-    }, 5000);
+      setVipIndex((i) => (i + 1) % vipSlides.length);
+      setVipTick((k) => k + 1);
+    }, 6000);
     return () => clearInterval(timer);
-  }, [promos.length]);
+  }, [vipSlides.length]);
 
-  const promo = promos[promoIndex % Math.max(promos.length, 1)];
+  const vip = vipSlides[vipIndex % vipSlides.length];
 
   /** The four big shortcuts from the reference page, mapped onto real screens. */
   const shortcuts = [
@@ -446,89 +425,67 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
           </div>
         </div>
 
-        {/* ---------------- Second moving strip (promo carousel) -------- */}
-        {promo && (
-          <div className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 aspect-[4.6/1] sm:aspect-[6.4/1] bg-slate-900">
-            <div key={promoTick} className="absolute inset-0 animate-in fade-in duration-500">
+        {/* ---------------- VIP showcase (rotating, same size) ----------- */}
+        <div className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-white">
+          <div className="relative h-52 sm:h-72 w-full overflow-hidden bg-slate-100">
+            <div key={vipTick} className="absolute inset-0 animate-in fade-in duration-500">
               <img
-                src={promo.image}
-                alt={promo.title}
+                src={vip.imageUrl}
+                alt={vip.title}
                 loading="lazy"
                 decoding="async"
+                onClick={() => onSelectAd(vip)}
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.opacity = '0';
                 }}
-                className="absolute inset-0 w-full h-full object-cover"
+                className="w-full h-full object-cover cursor-pointer"
               />
-              <div className="absolute inset-0 bg-gradient-to-l from-slate-950/95 via-slate-950/40 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent pointer-events-none" />
+
+              <div className="absolute top-3 right-3 px-2.5 py-1 bg-amber-400 text-slate-950 font-black rounded-lg text-[11px] shadow flex items-center gap-1">
+                <Crown className="w-3 h-3 fill-current" /> {vip.isVip ? 'VIP' : vip.tag || 'مميّز'}
+              </div>
 
               <button
-                onClick={promo.open}
-                className="relative h-full w-full flex items-center justify-between gap-2 px-3 sm:px-5 text-right"
+                onClick={() => onSelectAd(vip)}
+                className="absolute bottom-5 inset-x-3 space-y-1.5 text-right block"
               >
-                <div className="min-w-0 max-w-[62%] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
-                  <h4 className="text-[12px] sm:text-base font-black leading-tight line-clamp-1">
-                    {promo.title}
-                  </h4>
-                  <p className="text-[10px] text-slate-100 line-clamp-1 mt-0.5">
-                    {promo.subtitle}
-                  </p>
-                </div>
-                {promo.price && (
-                  <span className="shrink-0 px-2 py-1 rounded-lg bg-emerald-950/85 backdrop-blur-md text-amber-300 font-black font-mono text-[11px] sm:text-sm">
-                    {promo.price}
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-black/60 backdrop-blur-md rounded-full text-[10px] text-white">
+                  <Layers className="w-3 h-3 text-amber-400" />
+                  <span>{vip.category}</span>
+                  <span>•</span>
+                  <MapPin className="w-3 h-3 text-red-400" />
+                  <span>{vip.location}</span>
+                </span>
+                <span className="block">
+                  <span className="inline-block px-3 py-1 bg-black/75 backdrop-blur-md rounded-xl text-white font-extrabold text-sm">
+                    {vip.title}
                   </span>
-                )}
+                </span>
+                <span className="block">
+                  <span className="inline-block px-3 py-1 bg-emerald-950/85 backdrop-blur-md rounded-xl text-amber-300 font-extrabold text-sm font-mono">
+                    {vip.priceSdg > 0
+                      ? `${vip.priceSdg.toLocaleString('en-US')} جنيه سوداني`
+                      : 'حسب الاتفاق'}
+                  </span>
+                </span>
               </button>
             </div>
 
-            <div className="absolute bottom-1.5 inset-x-0 flex items-center justify-center gap-1.5">
-              {promos.map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setPromoIndex(idx)}
-                  aria-label={`عرض ${idx + 1}`}
-                  className={`h-1.5 rounded-full transition-all ${
-                    promoIndex === idx ? 'w-5 bg-amber-400' : 'w-1.5 bg-white/50'
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ---------------- VIP showcase --------------------------------- */}
-        <div
-          onClick={() => onSelectAd(vipAd)}
-          className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-white cursor-pointer"
-        >
-          <div className="relative h-52 sm:h-72 w-full overflow-hidden bg-slate-100">
-            <img src={vipAd.imageUrl} alt={vipAd.title} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
-
-            <div className="absolute top-3 right-3 px-2.5 py-1 bg-amber-400 text-slate-950 font-black rounded-lg text-[11px] shadow flex items-center gap-1">
-              <Crown className="w-3 h-3 fill-current" /> VIP
-            </div>
-
-            <div className="absolute bottom-4 inset-x-3 space-y-1.5 text-right">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-black/60 backdrop-blur-md rounded-full text-[10px] text-white">
-                <Layers className="w-3 h-3 text-amber-400" />
-                <span>{vipAd.category}</span>
-                <span>•</span>
-                <MapPin className="w-3 h-3 text-red-400" />
-                <span>{vipAd.location}</span>
+            {vipSlides.length > 1 && (
+              <div className="absolute bottom-1.5 inset-x-0 flex items-center justify-center gap-1.5">
+                {vipSlides.map((slide, idx) => (
+                  <button
+                    key={slide.id}
+                    onClick={() => setVipIndex(idx)}
+                    aria-label={`إعلان مميّز ${idx + 1}`}
+                    className={`h-1.5 rounded-full transition-all ${
+                      vipIndex === idx ? 'w-5 bg-amber-400' : 'w-1.5 bg-white/50'
+                    }`}
+                  />
+                ))}
               </div>
-              <div>
-                <span className="inline-block px-3 py-1 bg-black/75 backdrop-blur-md rounded-xl text-white font-extrabold text-sm">
-                  {vipAd.title}
-                </span>
-              </div>
-              <div>
-                <span className="inline-block px-3 py-1 bg-emerald-950/85 backdrop-blur-md rounded-xl text-amber-300 font-extrabold text-sm font-mono">
-                  {vipAd.priceSdg.toLocaleString('en-US')} جنيه سوداني
-                </span>
-              </div>
-            </div>
+            )}
           </div>
         </div>
 
