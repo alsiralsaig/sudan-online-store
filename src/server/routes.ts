@@ -2522,54 +2522,169 @@ apiRouter.delete('/promotions/:id', requireTenant, (req, res) => {
 
 
 
-// AI Assistant Sudanese Chat Endpoint
-apiRouter.post("/assistant/chat", async (req: Request, res: Response) => {
+// ---------------------------------------------------------------------------
+// AI Assistant — Sudanese-dialect assistant that can answer anything
+// ---------------------------------------------------------------------------
+
+/** Models tried in order; override with GEMINI_MODEL when needed. */
+const ASSISTANT_MODELS = [
+  process.env.GEMINI_MODEL,
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+].filter(Boolean) as string[];
+
+let assistantClient: any = null;
+let assistantClientKey = '';
+
+async function getAssistantClient(): Promise<any | null> {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) return null;
+  if (assistantClient && assistantClientKey === apiKey) return assistantClient;
+
+  const { GoogleGenAI } = await import('@google/genai');
+  assistantClient = new GoogleGenAI({ apiKey });
+  assistantClientKey = apiKey;
+  return assistantClient;
+}
+
+function buildSystemInstruction(mode: string, context: any): string {
+  const now = new Date();
+  return `أنت «سند» — المساعد الذكي الرسمي لمنصة سند (Sanad POS & Commerce) للتجارة ونقاط البيع السحابية في السودان.
+
+## شخصيتك
+- ودود، محترم، ذكي جداً، وتتحدث باللهجة السودانية الطبيعية ("حبابك عشرة"، "أبشر بالخير"، "ما تشيل هم"، "هسي"، "داير"، "السمح"، "كده تمام التمام").
+- تجاوب باختصار ودقة، وتستخدم التنسيق (نقاط، أرقام) لو الجواب طويل.
+- مؤدب مع الجميع، لا تتدخل في الإساءة أو الكراهية أو أي محتوى ضار، ولا تعطي تعليمات تضر أحد.
+
+## نطاق الإجابة (مهم جداً)
+- **تقدر تجاوب على أي سؤال**: عام، ثقافي، ديني، تاريخي، علمي، حسابي، طبي عام، قانوني عام، برمجي، لغات، ترجمة، تلخيص، أفكار، نصائح عملية... حتى لو ما ليه علاقة بالمنصة. لا تعتذر ولا تقول "ما عندي معلومة" إلا إذا فعلاً لا تعرف.
+- لو السؤال عن المنصة، استخدم المعلومات أدناه بدقة وطابقها مع الواقع.
+- في المواضيع الحساسة (صحة، أدوية، قانون، أموال) أعطِ معلومة عامة مفيدة وانصح بمراجعة المختص.
+- لو السؤال ناقص أو غامض، اسأل سؤال توضيحي واحد قصير ثم جاوب.
+
+## معلومات المنصة
+- نقاط البيع (POS): تعمل أوفلاين دون إنترنت مع مزامنة تلقائية عند الرجوع.
+- الدفع: بنكك (بنك الخرطوم)، فوري (بنك فيصل)، أوكاش، تحصيل العملات الأجنبية.
+- أسعار الصرف المخزنة: الدولار 2750 ج.س، الريال السعودي 733.33، الليرة التركية 82.5، الجنيه المصري 56.8، الدرهم الإماراتي 748.5، اليورو 2980.
+- تطبيق الجمهور: الكتالوج، الطلبات المسبقة، السلة، قائمة الرغبات، نقاط الولاء والكوبونات، تتبع الطلبات، مشاركة واتساب، تقييم المنتجات، إعلانات السوق (تُنشر بعد موافقة الإدارة مقابل رسوم اختيارية)، وطلب فتح متجر (يُراجع من الإدارة ويُرسل كود دخول وقيمة تسجيل).
+- تطبيق التاجر: نقطة البيع، المخزون، المشتريات، المصروفات، التقارير، الورديات، إدارة الطلبات، والإشعارات.
+- لوحة الإدارة: المتاجر، الاشتراكات، تدقيق السداد، سجل التدقيق، الفواتير الحرارية، العروض الترويجية، إعلانات السوق، وطلبات المتاجر.
+- الإشعارات: داخل التطبيق + على الهاتف (Web Push) عند نقص المخزون، انتهاء الاشتراك، تغيّر حالة الطلب، والمراجعات.
+
+## السياق الحالي
+- التطبيق: ${mode === 'admin' ? 'الإدارة ونقاط البيع' : mode === 'merchant' ? 'تطبيق التاجر' : 'تطبيق الجمهور'}
+- المنشأة: ${context?.tenantName || 'منصة سند'}
+- الفرع: ${context?.branchName || 'الفرع الرئيسي'}
+- التاريخ والوقت: ${now.toLocaleString('ar-EG')}`;
+}
+
+apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   try {
-    const { message, mode, context } = req.body;
-    if (!message || typeof message !== "string") {
-      return res.status(400).json({ error: "الرسالة مطلوبة" });
+    const { message, mode, context, history } = req.body || {};
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'الرسالة مطلوبة' });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.json({ reply: null, reason: "NO_API_KEY" });
+    const ai = await getAssistantClient();
+    if (!ai) {
+      return res.json({ reply: null, reason: 'NO_API_KEY' });
     }
 
-    // Lazy-load the SDK: keeps it out of the static bundle so the
-    // serverless function boots even if the optional AI dependency fails.
-    const { GoogleGenAI } = await import("@google/genai");
-    const ai = new GoogleGenAI({ apiKey });
-    const systemInstruction = `أنت "سند" - المساعد الذكي الخبير والمتحدث الأصيل باللهجة السودانية التابع لمنصة سند (Sanad POS & Commerce) للتجارة ونقاط البيع السحابية في السودان.
-أسلوبك:
-- ترحيبي، دافئ، كريم، وذكي جداً، وتتحدث باللهجة السودانية الحبيبة ("حبابك عشرة"، "يا زول يا طيب"، "أبشر بالخير"، "ما تشيل هم"، "هسي"، "داير"، "البلد دي"، "السمح"، "كده تمام التمام").
-- الوضع الحالي للمستخدم: ${mode === "admin" ? "وضع الإدارة ونقاط البيع (Admin POS)" : "وضع المتجر وتطبيق الجمهور (SanadClientApp)"}.
-- المنشأة: ${context?.tenantName || "منصة سند"}.
-- الفرع: ${context?.branchName || "الفرع الرئيسي"}.
-- معلومات المنصة:
-  * نقاط البيع: تعمل دون إنترنت أوفلاين مع مزامنة تلقائية.
-  * الدفع: تطبيق بنكك (بنك الخرطوم)، فوري (بنك فيصل)، أوكاش، والتحصيل بالعملات الأجنبية (دولار 2750 ج.س، ريال 733.33 ج.س، ليرة تركية 82.5 ج.س، جنيه مصري 56.8 ج.س، درهم 748.5 ج.س، يورو 2980 ج.س).
-  * تطبيق الجمهور: الكتالوج، الطلبات المسبقة، سلة المشتريات، قائمة الرغبات، نقاط الولاء واستبدالها بكوبونات، تتبع الطلبات، مشاركة واتساب، وتقييم المنتجات.
-- جاوب باللهجة السودانية، وبإيجاز ودقة.`;
+    // Convert the running conversation into Gemini "contents"
+    const turns = Array.isArray(history)
+      ? history
+          .filter((h: any) => h && typeof h.text === 'string' && h.text.trim())
+          .slice(-10)
+          .map((h: any) => ({
+            role: h.sender === 'user' ? 'user' : 'model',
+            parts: [{ text: String(h.text).slice(0, 4000) }],
+          }))
+      : [];
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), 5000)
-    );
+    turns.push({ role: 'user', parts: [{ text: message.slice(0, 4000) }] });
 
-    const callPromise = ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: message,
+    const systemInstruction = buildSystemInstruction(String(mode || 'admin'), context || {});
+
+    let lastError = 'UNKNOWN';
+    for (const model of ASSISTANT_MODELS) {
+      try {
+        const response: any = await Promise.race([
+          ai.models.generateContent({
+            model,
+            contents: turns,
+            config: {
+              systemInstruction,
+              temperature: 0.8,
+              maxOutputTokens: 1200,
+            },
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('TIMEOUT')), 25000)
+          ),
+        ]);
+
+        const reply =
+          response?.text ||
+          response?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).join('') ||
+          null;
+
+        if (reply) {
+          return res.json({ reply, model });
+        }
+        lastError = 'EMPTY_REPLY';
+      } catch (err: any) {
+        lastError = String(err?.message || err).slice(0, 120);
+        // A bad model name is the only reason to try the next one
+        if (!/not found|not supported|404|invalid model/i.test(lastError)) break;
+      }
+    }
+
+    console.warn('[assistant] all models failed:', lastError);
+    return res.json({ reply: null, reason: 'FALLBACK', detail: lastError });
+  } catch (error) {
+    console.warn('Assistant route fallback:', error instanceof Error ? error.message : String(error));
+    return res.json({ reply: null, reason: 'FALLBACK' });
+  }
+});
+
+/**
+ * Text-to-speech for answers, so the assistant can talk back.
+ * Uses Gemini TTS when available; the browser voice is the fallback.
+ */
+apiRouter.post('/assistant/speak', async (req: Request, res: Response) => {
+  try {
+    const { text } = req.body || {};
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: 'النص مطلوب' });
+    }
+
+    const ai = await getAssistantClient();
+    if (!ai) return res.json({ audio: null, reason: 'NO_API_KEY' });
+
+    const response: any = await ai.models.generateContent({
+      model: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
+      contents: [{ role: 'user', parts: [{ text: String(text).slice(0, 800) }] }],
       config: {
-        systemInstruction,
-        temperature: 0.7,
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
+        },
       },
     });
 
-    const response: any = await Promise.race([callPromise, timeoutPromise]);
-    const reply = response?.text || null;
-    return res.json({ reply });
+    const part = response?.candidates?.[0]?.content?.parts?.find((p: any) => p?.inlineData);
+    if (!part?.inlineData?.data) {
+      return res.json({ audio: null, reason: 'NO_AUDIO' });
+    }
+
+    return res.json({
+      audio: part.inlineData.data,
+      mimeType: part.inlineData.mimeType || 'audio/wav',
+    });
   } catch (error) {
-    console.warn("Assistant route fallback:", error instanceof Error ? error.message : String(error));
-    return res.json({ reply: null, reason: "FALLBACK" });
+    console.warn('[assistant] tts failed:', error instanceof Error ? error.message : String(error));
+    return res.json({ audio: null, reason: 'FALLBACK' });
   }
 });
 

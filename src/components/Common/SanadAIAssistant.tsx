@@ -18,6 +18,11 @@ import {
   Globe,
   Coins,
   CheckCircle,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Loader2,
 } from 'lucide-react';
 
 export interface SanadAIAssistantProps {
@@ -49,6 +54,169 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
   const [isTyping, setIsTyping] = useState(false);
   const [unreadCount, setUnreadCount] = useState(1);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  /* ---- Voice: dictation in, speech out -------------------------------- */
+  const [isListening, setIsListening] = useState(false);
+  const [interimText, setInterimText] = useState('');
+  const [voiceReply, setVoiceReply] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [voiceError, setVoiceError] = useState('');
+  const recognitionRef = useRef<any>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const speechSupported =
+    typeof window !== 'undefined' &&
+    !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+
+  const stopSpeaking = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+  };
+
+  const speakWithBrowser = (text: string) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setIsSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = window.speechSynthesis.getVoices();
+    const arabic =
+      voices.find((v) => /ar[-_]SD/i.test(v.lang)) ||
+      voices.find((v) => /^ar/i.test(v.lang)) ||
+      voices.find((v) => /arab/i.test(v.name));
+    if (arabic) utterance.voice = arabic;
+    utterance.lang = arabic?.lang || 'ar-SA';
+    utterance.rate = 0.95;
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const speak = async (text: string) => {
+    const clean = text
+      .replace(/[*_`#>]/g, '')
+      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\uFE0F]/gu, '')
+      .slice(0, 700);
+    if (!clean.trim()) return;
+
+    stopSpeaking();
+    setIsSpeaking(true);
+
+    try {
+      const res = await fetch('/api/assistant/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: clean }),
+      });
+      const data = await res.json();
+      if (data?.audio) {
+        const audio = new Audio('data:' + (data.mimeType || 'audio/wav') + ';base64,' + data.audio);
+        audioRef.current = audio;
+        audio.onended = () => setIsSpeaking(false);
+        audio.onerror = () => {
+          audioRef.current = null;
+          speakWithBrowser(clean);
+        };
+        await audio.play().catch(() => speakWithBrowser(clean));
+        return;
+      }
+    } catch {
+      /* fall back to the browser voice */
+    }
+
+    speakWithBrowser(clean);
+  };
+
+  const startListening = () => {
+    setVoiceError('');
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setVoiceError('المتصفح ده ما بيدعم الإدخال بالصوت. جرّب كروم أو سفاري.');
+      return;
+    }
+
+    const recognition = new SR();
+    recognition.lang = 'ar-SD';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      setInterimText('');
+    };
+
+    recognition.onresult = (event: any) => {
+      let interim = '';
+      let final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const chunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) final += chunk;
+        else interim += chunk;
+      }
+      if (interim) setInterimText(interim);
+      if (final) {
+        setInterimText('');
+        setInputText('');
+        handleSendMessage(final.trim());
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      setIsListening(false);
+      setInterimText('');
+      const code = event?.error;
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        setVoiceError('لازم تسمح للمتصفح باستخدام المايك.');
+      } else if (code === 'no-speech') {
+        setVoiceError('ما سمعت صوت، جرّب تاني.');
+      } else if (code !== 'aborted') {
+        setVoiceError('تعذر السمع، جرّب مرة تانية.');
+      }
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      setInterimText('');
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      setIsListening(false);
+    }
+  };
+
+  const stopListening = () => {
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    setIsListening(false);
+    setInterimText('');
+  };
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.abort?.();
+      } catch {
+        /* ignore */
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   // Initial Sudanese welcome messages based on app mode
   const initialMessages: ChatMessage[] = [
@@ -106,6 +274,11 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
             tenantName,
             branchName,
           },
+          // Last turns give the assistant real memory inside the conversation
+          history: messages
+            .filter((m) => m.id !== 'welcome_1')
+            .slice(-8)
+            .map((m) => ({ sender: m.sender, text: m.text })),
         }),
       });
 
@@ -293,6 +466,7 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
         quickActions: response.actions,
       };
       setMessages((prev) => [...prev, assistantMsg]);
+      if (voiceReply) speak(response.text);
     } catch {
       const fallbackMsg: ChatMessage = {
         id: `ast_${Date.now()}`,
@@ -373,6 +547,27 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
 
             <div className="flex items-center gap-1">
               <button
+                onClick={() => {
+                  if (isSpeaking) stopSpeaking();
+                  setVoiceReply((v) => !v);
+                }}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  voiceReply ? 'text-emerald-300 bg-emerald-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+                title={voiceReply ? 'قارئ الردود مفعّل — اضغط للكتم' : 'قارئ الردود مكتوم — اضغط للتشغيل'}
+              >
+                {voiceReply ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              </button>
+              {isSpeaking && (
+                <button
+                  onClick={stopSpeaking}
+                  className="p-1.5 text-amber-300 bg-amber-500/20 rounded-lg animate-pulse"
+                  title="إيقاف القراءة"
+                >
+                  <VolumeX className="w-4 h-4" />
+                </button>
+              )}
+              <button
                 onClick={() => setMessages(initialMessages)}
                 className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
                 title="إعادة بدء الحوار"
@@ -393,7 +588,7 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
           <div className="bg-emerald-50/80 border-b border-emerald-100 px-4 py-2 flex items-center justify-between text-[11px] text-emerald-900">
             <span className="flex items-center gap-1.5 font-medium">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>حوار أصيل وسريع باللهجة السودانية</span>
+              <span>حوار بالصوت أو بالكتابة — باللهجة السودانية</span>
             </span>
             <span className="text-[10px] text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded-full font-mono">
               يدعم أوفلاين والعملات
@@ -474,6 +669,26 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
           </div>
 
           {/* Message Input Box */}
+          {(isListening || voiceError) && (
+            <div className={`px-3 py-2 border-t text-[11px] flex items-center gap-2 ${
+              voiceError ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}>
+              {isListening ? (
+                <>
+                  <span className="flex gap-0.5 items-end h-3">
+                    <span className="w-0.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
+                    <span className="w-0.5 h-3 bg-emerald-600 rounded-full animate-pulse [animation-delay:0.15s]" />
+                    <span className="w-0.5 h-2 bg-emerald-600 rounded-full animate-pulse [animation-delay:0.3s]" />
+                  </span>
+                  <span className="font-bold">سند بيسمعك…</span>
+                  <span className="truncate">{interimText || 'اتكلم عادي بالعربي'}</span>
+                </>
+              ) : (
+                <span>{voiceError}</span>
+              )}
+            </div>
+          )}
+
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -485,16 +700,31 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
               type="text"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="اكتب سؤالك هنا باللهجة السودانية أو العربي..."
+              placeholder={isListening ? 'اتكلم… أو اكتب سؤالك' : 'اكتب أو اضغط المايك وسول بالصوت...'}
               className="flex-1 px-3.5 py-2 text-xs border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 focus:bg-white transition-all text-slate-900"
             />
+
+            <button
+              type="button"
+              onClick={isListening ? stopListening : startListening}
+              className={`p-2.5 rounded-xl transition-all shadow-xs shrink-0 ${
+                isListening
+                  ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                  : 'bg-slate-100 hover:bg-emerald-50 text-emerald-700 border border-slate-200'
+              }`}
+              title={isListening ? 'إيقاف التسجيل' : 'اسأل بالصوت'}
+              aria-label="إدخال صوتي"
+            >
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+
             <button
               type="submit"
-              disabled={!inputText.trim()}
+              disabled={!inputText.trim() || isTyping}
               className="p-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white rounded-xl transition-all shadow-xs shrink-0"
               title="إرسال"
             >
-              <Send className="w-4 h-4 rtl:-scale-x-100" />
+              {isTyping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 rtl:-scale-x-100" />}
             </button>
           </form>
         </div>
