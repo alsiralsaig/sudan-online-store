@@ -238,23 +238,35 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
             if (shown?.linkUrl) window.open(shown.linkUrl, '_blank');
           }}
         >
+          {/* Photo stays the hero: the scrim only darkens the side that carries the text */}
           <img
             src={banners[currentBannerIndex].image}
             alt={banners[currentBannerIndex].title}
+            loading={currentBannerIndex === 0 ? 'eager' : 'lazy'}
+            decoding="async"
+            onError={(e) => {
+              // never leave a broken-image icon over the headline
+              (e.currentTarget as HTMLImageElement).style.opacity = '0';
+            }}
             className="absolute inset-0 w-full h-full object-cover"
           />
-          <div className={`absolute inset-0 bg-gradient-to-l ${banners[currentBannerIndex].theme} opacity-90`} />
+          <div className="absolute inset-0 bg-gradient-to-l from-slate-950/95 via-slate-950/45 to-transparent" />
+          <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-slate-950/70 to-transparent" />
           <div className="relative h-full flex items-center justify-between p-5">
-            <div className="space-y-1 max-w-[62%] text-white">
-              <span className="text-[10px] font-mono tracking-widest text-amber-300 block">
-                {banners[currentBannerIndex].badge}
-              </span>
+            <div className="space-y-1 max-w-[66%] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
+              {banners[currentBannerIndex].badge && (
+                <span className="text-[10px] font-mono tracking-widest text-amber-300 block">
+                  {banners[currentBannerIndex].badge}
+                </span>
+              )}
               <h3 className="text-base sm:text-2xl font-black leading-tight">
                 {banners[currentBannerIndex].title}
               </h3>
-              <p className="text-[11px] sm:text-xs text-slate-200 line-clamp-2">
-                {banners[currentBannerIndex].subtitle}
-              </p>
+              {banners[currentBannerIndex].subtitle && (
+                <p className="text-[11px] sm:text-xs text-slate-100 line-clamp-2">
+                  {banners[currentBannerIndex].subtitle}
+                </p>
+              )}
               <button
                 onClick={onOpenCreateModal}
                 className="mt-2 px-3 py-1.5 bg-white text-slate-900 rounded-xl text-[11px] font-black active:scale-95 transition-transform"
