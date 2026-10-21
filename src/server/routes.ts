@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
 import { fetchLiveRates, ageHours, isStale, RATES_SOURCE } from './rates.ts';
+import { checkRateMoves, detectMoves, whatsappConfigured, THRESHOLD_PERCENT } from './rateAlerts.ts';
 import { newId, newCode } from './ids.ts';
 import { saveMedia, getMedia, deleteMedia, HttpError, MAX_RAW_BYTES } from './media.ts';
 import type {
@@ -1505,7 +1506,16 @@ const refreshLiveRates = async (actorName?: string) => {
     };
   }
   const { updated, skipped } = db.applyLiveRates(snapshot, actorName);
-  return { refreshed: true, updated, skipped, snapshot: db.getRatesSnapshot(), stale: false };
+
+  // Big moves → in-app notification + push (+ WhatsApp when configured)
+  let alerts = null;
+  try {
+    alerts = await checkRateMoves(detectMoves());
+  } catch (err) {
+    console.warn('[rates] alert failed:', (err as Error).message);
+  }
+
+  return { refreshed: true, updated, skipped, alerts, snapshot: db.getRatesSnapshot(), stale: false };
 };
 
 /**
@@ -1570,6 +1580,47 @@ apiRouter.post('/admin/currency/refresh', async (req, res) => {
       snapshot: result.snapshot,
     });
   }
+  res.json({ success: true, ...result });
+});
+
+/** Instant rate answer for the assistant (text; the client can also speak it). */
+apiRouter.get('/assistant/rates', async (_req, res) => {
+  let snapshot = db.getRatesSnapshot();
+  const hours = snapshot?.fetchedAt ? ageHours(snapshot.fetchedAt) : null;
+  if (hours === null || hours >= 1) {
+    try {
+      const fresh = await fetchLiveRates();
+      if (fresh) {
+        db.applyLiveRates(fresh, 'المساعد الذكي');
+        await db.flush({ lock: false }).catch(() => {});
+        snapshot = db.getRatesSnapshot();
+      }
+    } catch {
+      /* use the cache */
+    }
+  }
+  res.json({
+    snapshot,
+    stale: snapshot ? isStale(snapshot.fetchedAt) : true,
+    answer: formatRatesAnswer(snapshot),
+  });
+});
+
+/** What the admin screen needs: threshold + how alerts are delivered. */
+apiRouter.get('/currency/alerts/status', (_req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  res.json({
+    thresholdPercent: THRESHOLD_PERCENT,
+    whatsappConfigured: whatsappConfigured(),
+    whatsappRecipient: process.env.WHATSAPP_ALERT_PHONE ? '•••' + String(process.env.WHATSAPP_ALERT_PHONE).slice(-4) : null,
+    todayAlerts: db.getRateAlertLog().filter((a) => a.day === today),
+    recentAlerts: db.getRateAlertLog().slice(0, 20),
+  });
+});
+
+/** Run the check on demand (used after a manual refresh / for testing). */
+apiRouter.post('/admin/currency/alerts/run', async (_req, res) => {
+  const result = await checkRateMoves(detectMoves());
   res.json({ success: true, ...result });
 });
 
@@ -2649,6 +2700,59 @@ const ASSISTANT_MODELS = [
   'gemini-2.5-flash',
 ].filter(Boolean) as string[];
 
+/** Renders the live parallel-market table for the assistant prompt. */
+const ratesBlockForPrompt = (snapshot: any): string => {
+  if (!snapshot?.rates?.length) {
+    return 'لا توجد قراءة حديثة لأسعار السوق الموازي الآن — قل للمستخدم إن المصدر غير متاح حالياً ولا تخترع أرقاماً.';
+  }
+  const lines = snapshot.rates.map((r: any) => {
+    const parallel = r.parallel ?? r.official;
+    const bank = r.official ? ` — بنك الخرطوم ${r.official}` : '';
+    const label =
+      r.code === 'USD' ? 'دولار أمريكي' :
+      r.code === 'SAR' ? 'ريال سعودي' :
+      r.code === 'AED' ? 'درهم إماراتي' :
+      r.code === 'EUR' ? 'يورو' :
+      r.code === 'EGP' ? 'جنيه مصري' :
+      r.code === 'QAR' ? 'ريال قطري' : r.code;
+    return `- ${label} (${r.code}): ${parallel} ج.س${bank}`;
+  });
+  const when = snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toLocaleString('ar-SD') : '';
+  return `المصدر: ${snapshot.source || 'السوق الموازي'} — آخر تحديث: ${when}\n${lines.join('\n')}`;
+};
+
+const AR_NAMES: Record<string, string> = {
+  USD: 'الدولار الأمريكي',
+  SAR: 'الريال السعودي',
+  AED: 'الدرهم الإماراتي',
+  EUR: 'اليورو',
+  EGP: 'الجنيه المصري',
+  QAR: 'الريال القطري',
+  TRY: 'الليرة التركية',
+  GBP: 'الجنيه الإسترليني',
+};
+
+/** Plain-Arabic answer built only from the cached snapshot (no model needed). */
+const formatRatesAnswer = (snapshot: any): string | null => {
+  if (!snapshot?.rates?.length) return null;
+  const lines = snapshot.rates
+    .filter((r: any) => r.parallel || r.official)
+    .map((r: any) => {
+      const price = (r.parallel ?? r.official).toLocaleString('en-US');
+      const bank = r.official ? ` (البنك: ${r.official.toLocaleString('en-US')})` : '';
+      return `• ${AR_NAMES[r.code] || r.code}: ${price} ج.س${bank}`;
+    });
+  const when = snapshot.fetchedAt
+    ? new Date(snapshot.fetchedAt).toLocaleString('ar-SD')
+    : '';
+  return (
+    `حبابك 👋 دي أسعار السوق الموازي (السوق الأسود) الحالية:\n` +
+    `${lines.join('\n')}\n\n` +
+    `المصدر: ${snapshot.source} — آخر تحديث: ${when}.\n` +
+    `السعر الرسمي للبنك أقل من سوق الموازي، والتعامل في السودان بيمشي بسعر السوق.`
+  );
+};
+
 function buildSystemInstruction(mode: string, context: any): string {
   const now = new Date();
   return `أنت «سند» — المساعد الذكي الرسمي لمنصة سند (Sanad POS & Commerce) للتجارة ونقاط البيع السحابية في السودان.
@@ -2667,11 +2771,21 @@ function buildSystemInstruction(mode: string, context: any): string {
 ## معلومات المنصة
 - نقاط البيع (POS): تعمل أوفلاين دون إنترنت مع مزامنة تلقائية.
 - الدفع: بنكك (بنك الخرطوم)، فوري (بنك فيصل)، أوكاش، وتحصيل العملات الأجنبية.
-- أسعار الصرف: الدولار 2750 ج.س، الريال السعودي 733.33، الليرة التركية 82.5، الجنيه المصري 56.8، الدرهم 748.5، اليورو 2980.
+- أسعار الصرف: تُقرأ حيّة من السوق الموازي (السوق الأسود) — لا تحفظ أرقاماً ثابتة، واستخدم الأرقام المرفقة في «أسعار السوق الموازي» تحت.
 - تطبيق الجمهور: الكتالوج، الطلبات المسبقة، السلة، المفضلة، نقاط الولاء والكوبونات، تتبع الطلبات، مشاركة واتساب، تقييم المنتجات، إعلانات السوق (بعد موافقة الإدارة مع رسوم اختيارية)، وطلب فتح متجر (مراجعة إدارية + كود دخول + قيمة تسجيل).
 - تطبيق التاجر: الكاشير، المخزون، المشتريات، المصروفات، التقارير، الورديات، الطلبات، والإشعارات.
 - لوحة الإدارة: المتاجر، الاشتراكات، تدقيق السداد، سجل التدقيق، الفواتير الحرارية، العروض، إعلانات السوق، طلبات المتاجر.
 - الإشعارات: داخل التطبيق وعلى الهاتف (نقص المخزون، انتهاء الاشتراك، حالة الطلب، المراجعات).
+
+## أسعار السوق الموازي (السوق الأسود) — حيّة
+${context?.liveRates ? ratesBlockForPrompt(context.liveRates) : 'لا توجد بيانات مرفقة.'}
+
+قواعد صارمة عند السؤال عن الأسعار:
+- السعر الرسمي للبنك ≠ سعر السوق. الناس في السودان بتتعامل بسعر السوق الموازي، فاذكر سعر السوق أولاً وبخط واضح.
+- اذكر تاريخ/وقت آخر تحديث، ولو الأرقام قديمة نبّه المستخدم.
+- لو ما في بيانات حديثة: قل بصراحة إن المصدر مش متاح هسي، وما تخترع سعر من راسك أبداً.
+- لو سأل عن مبلغ (مثلاً «100 دولار كم بالجنيه؟») احسب بالضرب في سعر السوق الموازي.
+- اختصر: سعر، مصدر، وقت، ونصيحة سطر واحد.
 
 ## السياق الحالي
 - التطبيق: ${mode === 'admin' ? 'الإدارة ونقاط البيع' : mode === 'merchant' ? 'تطبيق التاجر' : 'تطبيق الجمهور'}
@@ -2780,10 +2894,34 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   turns.push({ role: 'user', parts: [{ text: message.slice(0, 3000) }] });
 
   try {
+    // Rate questions (and anything touching money) need the live parallel table.
+    let liveRates: any = db.getRatesSnapshot();
+    const asksAboutRates = /سعر|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|عملة|عملات|صرف|تحويل/i.test(message);
+    if (asksAboutRates) {
+      const hours = liveRates?.fetchedAt ? ageHours(liveRates.fetchedAt) : null;
+      if (hours === null || hours >= 1) {
+        try {
+          const snapshot = await fetchLiveRates();
+          if (snapshot) {
+            db.applyLiveRates(snapshot, 'المساعد الذكي');
+            await db.flush({ lock: false }).catch(() => {});
+            liveRates = db.getRatesSnapshot();
+          }
+        } catch {
+          /* fall back to the cached snapshot */
+        }
+      }
+    }
+
+    const enrichedContext = {
+      ...(context || {}),
+      liveRates: asksAboutRates ? liveRates : undefined,
+    };
+
     const result = await geminiGenerate({
       models: ASSISTANT_MODELS,
       contents: turns,
-      systemInstruction: buildSystemInstruction(String(mode || 'admin'), context || {}),
+      systemInstruction: buildSystemInstruction(String(mode || 'admin'), enrichedContext),
       temperature: 0.85,
       maxTokens: 1200,
       timeoutMs: 16000,
@@ -2794,6 +2932,10 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
     }
 
     console.warn('[assistant] failed:', result.error);
+    if (asksAboutRates) {
+      const offline = formatRatesAnswer(liveRates);
+      if (offline) return res.json({ reply: offline, model: 'rates-cache' });
+    }
     return res.json({ reply: null, reason: 'FALLBACK', detail: result.error });
   } catch (error) {
     console.warn('Assistant route fallback:', error instanceof Error ? error.message : String(error));

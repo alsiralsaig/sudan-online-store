@@ -34,6 +34,11 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
   } | null>(null);
   const [refreshingRates, setRefreshingRates] = useState(false);
   const [ratesError, setRatesError] = useState('');
+  const [alertStatus, setAlertStatus] = useState<{
+    thresholdPercent: number;
+    whatsappConfigured: boolean;
+    recentAlerts: Array<{ id: string; code: string; day: string; percent: number; rate: number }>;
+  } | null>(null);
 
   // Quick Currency Converter calculator
   const [calcAmount, setCalcAmount] = useState<string>('100');
@@ -58,6 +63,17 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
     }
   };
 
+  const loadAlertStatus = async () => {
+    try {
+      const res = await fetch('/api/currency/alerts/status', {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) setAlertStatus(await res.json());
+    } catch {
+      /* silent */
+    }
+  };
+
   const refreshNow = async () => {
     setRefreshingRates(true);
     setRatesError('');
@@ -76,6 +92,7 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
   useEffect(() => {
     loadHistory();
     loadLiveRates();
+    loadAlertStatus();
   }, []);
 
   const handleUpdateRate = async (e: React.FormEvent) => {
@@ -173,6 +190,46 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
                 {refreshingRates ? 'جاري التحديث…' : 'تحديث الآن'}
               </button>
             </div>
+          </div>
+
+          {/* Alert routing: in-app always, WhatsApp when configured */}
+          <div className="rounded-xl border border-slate-200 bg-white p-3 flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                تنبيه تلقائي عند تحرك السعر أكثر من {alertStatus?.thresholdPercent ?? 3}% في اليوم
+              </p>
+              <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                الإشعار داخل التطبيق وعلى الهاتف —
+                {alertStatus?.whatsappConfigured ? (
+                  <span className="text-emerald-700 font-bold"> وواتساب مفعّل ✅</span>
+                ) : (
+                  <span className="text-amber-700">
+                    {' '}والواتساب يحتاج مفتاح CallMeBot في إعدادات الخادم
+                  </span>
+                )}
+                {!!alertStatus?.recentAlerts?.length && (
+                  <span className="block mt-1 text-slate-600">
+                    آخر تنبيه: {alertStatus.recentAlerts[0].code} (
+                    {alertStatus.recentAlerts[0].percent > 0 ? '+' : ''}
+                    {alertStatus.recentAlerts[0].percent}%) — {alertStatus.recentAlerts[0].day}
+                  </span>
+                )}
+              </p>
+            </div>
+            <button
+              onClick={async () => {
+                try {
+                  await fetch('/api/admin/currency/alerts/run', { method: 'POST' });
+                } catch {
+                  /* ignore */
+                }
+                loadAlertStatus();
+              }}
+              className="shrink-0 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold hover:bg-amber-100"
+            >
+              فحص التحركات
+            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">

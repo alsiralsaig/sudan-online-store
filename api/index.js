@@ -2318,6 +2318,7 @@ var Database = class {
       currencies: INITIAL_CURRENCIES,
       currencyRateHistory: [],
       currencyRatesSnapshot: [],
+      currencyRateAlerts: [],
       storefrontOrders: INITIAL_STORE_ORDERS,
       expenses: INITIAL_EXPENSES,
       purchases: INITIAL_PURCHASES,
@@ -2355,6 +2356,20 @@ var Database = class {
     const row = (this.data.currencyRatesSnapshot || [])[0];
     return row || null;
   }
+  /** Alert bookkeeping: one entry per currency per day. */
+  getRateAlertLog() {
+    return this.data.currencyRateAlerts || [];
+  }
+  markRateAlerted(code, percent, rate) {
+    const data = this.data;
+    if (!Array.isArray(data.currencyRateAlerts)) data.currencyRateAlerts = [];
+    const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    data.currencyRateAlerts = [
+      { id: `${code}_${day}`, code, day, percent, rate },
+      ...data.currencyRateAlerts.filter((a) => !(a.code === code && a.day === day))
+    ].slice(0, 200);
+    this.commit();
+  }
   saveRatesSnapshot(snapshot) {
     this.data.currencyRatesSnapshot = [{ id: "latest", ...snapshot }];
     this.commit();
@@ -2382,7 +2397,10 @@ var Database = class {
         continue;
       }
       const oldRate = currency.rateToSdg;
+      const previousParallel = currency.parallelRate;
+      const movePercent = previousParallel && previousParallel > 0 ? Number(((trading - previousParallel) / previousParallel * 100).toFixed(2)) : 0;
       currency.rateToSdg = Math.round(trading * 100) / 100;
+      currency.lastMovePercent = movePercent;
       if (live.official) currency.officialRate = live.official;
       if (live.parallel) currency.parallelRate = live.parallel;
       currency.rateSource = "parallel";
@@ -3227,106 +3245,6 @@ var RATES_SOURCE = {
   backup: { url: SUDANAKHBAR_HOME, name: BACKUP_SOURCE_NAME }
 };
 
-// src/server/media.ts
-var TABLE = "sanad_media";
-var MAX_RAW_BYTES = 3 * 1024 * 1024;
-var ready = null;
-function ensureMediaTable() {
-  if (!ready) {
-    ready = transaction(async (client) => {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${TABLE} (
-          id          text PRIMARY KEY,
-          kind        text NOT NULL,
-          mime        text NOT NULL,
-          bytes       integer NOT NULL,
-          owner_phone text,
-          data        text NOT NULL,
-          created_at  timestamptz NOT NULL DEFAULT now()
-        )
-      `);
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS idx_${TABLE}_created ON ${TABLE} (created_at)`
-      );
-    }).catch((err) => {
-      ready = null;
-      throw err;
-    });
-  }
-  return ready;
-}
-var ALLOWED_PREFIXES = {
-  image: ["data:image/jpeg", "data:image/png", "data:image/webp", "data:image/gif"],
-  video: ["data:video/mp4", "data:video/webm", "data:video/quicktime"]
-};
-async function saveMedia(input) {
-  await ensureMediaTable();
-  const { dataUrl, kind } = input;
-  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
-    throw new HttpError(400, "BAD_DATA_URL", "\u0635\u064A\u063A\u0629 \u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629.");
-  }
-  const comma = dataUrl.indexOf(",");
-  if (comma === -1) {
-    throw new HttpError(400, "BAD_DATA_URL", "\u0635\u064A\u063A\u0629 \u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629.");
-  }
-  const header = dataUrl.slice(5, comma);
-  const isBase64 = header.includes(";base64");
-  if (!isBase64) {
-    throw new HttpError(400, "BAD_DATA_URL", "\u064A\u062C\u0628 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0645\u0644\u0641 \u0628\u062A\u0631\u0645\u064A\u0632 base64.");
-  }
-  const mime = header.split(";")[0].toLowerCase();
-  const allowed = ALLOWED_PREFIXES[kind] || [];
-  if (!allowed.some((prefix) => dataUrl.toLowerCase().startsWith(prefix))) {
-    throw new HttpError(
-      415,
-      "UNSUPPORTED_TYPE",
-      kind === "video" ? "\u0635\u064A\u063A\u0629 \u0627\u0644\u0641\u064A\u062F\u064A\u0648 \u063A\u064A\u0631 \u0645\u062F\u0639\u0648\u0645\u0629. \u0627\u0633\u062A\u062E\u062F\u0645 MP4 \u0623\u0648 WebM." : "\u0635\u064A\u063A\u0629 \u0627\u0644\u0635\u0648\u0631\u0629 \u063A\u064A\u0631 \u0645\u062F\u0639\u0648\u0645\u0629. \u0627\u0633\u062A\u062E\u062F\u0645 JPG \u0623\u0648 PNG \u0623\u0648 WebP."
-    );
-  }
-  const base64 = dataUrl.slice(comma + 1);
-  const bytes = Math.floor(base64.length * 3 / 4);
-  if (bytes > MAX_RAW_BYTES) {
-    throw new HttpError(
-      413,
-      "TOO_LARGE",
-      `\u062D\u062C\u0645 \u0627\u0644\u0645\u0644\u0641 ${(bytes / 1024 / 1024).toFixed(1)} \u0645\u064A\u062C\u0627\u060C \u0648\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${MAX_RAW_BYTES / 1024 / 1024} \u0645\u064A\u062C\u0627.`
-    );
-  }
-  const id = newId(kind === "video" ? "vid" : "img");
-  await query(
-    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, kind, mime, bytes, input.ownerPhone || null, base64]
-  );
-  return { id, url: `/api/media/${id}`, mime, bytes, kind };
-}
-async function getMedia(id) {
-  await ensureMediaTable();
-  const { rows } = await query(
-    `SELECT mime, data, bytes FROM ${TABLE} WHERE id = $1`,
-    [id]
-  );
-  const row = rows[0];
-  if (!row) return null;
-  return {
-    mime: row.mime,
-    bytes: Number(row.bytes) || 0,
-    data: Buffer.from(row.data, "base64")
-  };
-}
-async function deleteMedia(id) {
-  await ensureMediaTable();
-  const { rowCount } = await query(`DELETE FROM ${TABLE} WHERE id = $1`, [id]);
-  return (rowCount ?? 0) > 0;
-}
-var HttpError = class extends Error {
-  constructor(status, code, message) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-};
-
 // src/server/notifications.ts
 import webpush from "web-push";
 var CONTACT = process.env.VAPID_CONTACT || "mailto:admin@sanad.sd";
@@ -3499,6 +3417,189 @@ async function runNotificationScan() {
   }
   return { lowStock, subscriptions };
 }
+
+// src/server/rateAlerts.ts
+var THRESHOLD_PERCENT = 3;
+var PHONE = (process.env.WHATSAPP_ALERT_PHONE || "").replace(/[^\d]/g, "");
+var CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || "";
+var sendWhatsApp = async (text) => {
+  if (!PHONE || !CALLMEBOT_KEY) return false;
+  try {
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(PHONE)}&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8e3);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+var fmt = (n) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+var checkRateMoves = async (moves = detectMoves()) => {
+  const result = {
+    triggered: [],
+    inApp: 0,
+    whatsapp: { sent: 0, skipped: !PHONE || !CALLMEBOT_KEY ? "NOT_CONFIGURED" : "" }
+  };
+  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  for (const move of moves) {
+    const already = db.getRateAlertLog().some((a) => a.code === move.code && a.day === today);
+    if (already) continue;
+    result.triggered.push(move);
+    const direction = move.percent > 0 ? "\u0627\u0631\u062A\u0641\u0639" : "\u0627\u0646\u062E\u0641\u0636";
+    const title = `${move.name} ${direction} ${Math.abs(move.percent)}% \u0641\u064A \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A`;
+    const body = `\u0633\u0639\u0631 ${move.name} (${move.code}) ${direction} \u0645\u0646 ${fmt(move.previous)} \u0625\u0644\u0649 ${fmt(move.current)} \u062C.\u0633 \u2014 \u062A\u063A\u064A\u0651\u0631 ${move.percent > 0 ? "+" : ""}${move.percent}%. \u0631\u0627\u062C\u0639 \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0628\u064A\u0639 \u0648\u0627\u0644\u062A\u0643\u0644\u0641\u0629 \u0642\u0628\u0644 \u0627\u0644\u062A\u0639\u0627\u0645\u0644 \u0627\u0644\u0642\u0627\u062F\u0645.`;
+    try {
+      await notify({
+        app: "merchant",
+        kind: "system",
+        title,
+        body,
+        linkTab: "currencies",
+        dedupeKey: `rate_move_${move.code}_${today}`
+      });
+      await notify({
+        app: "admin",
+        kind: "system",
+        title,
+        body,
+        linkTab: "currencies",
+        dedupeKey: `rate_move_admin_${move.code}_${today}`
+      });
+      result.inApp += 2;
+    } catch (err) {
+      console.warn("[rate-alert] in-app failed:", err.message);
+    }
+    if (PHONE && CALLMEBOT_KEY) {
+      const ok = await sendWhatsApp(`\u{1F4C9} *\u0645\u0646\u0635\u0629 \u0633\u0646\u062F* \u2014 \u062A\u0646\u0628\u064A\u0647 \u0633\u0639\u0631
+
+${body}`);
+      if (ok) result.whatsapp.sent += 1;
+    }
+    db.markRateAlerted(move.code, move.percent, move.current);
+  }
+  return result;
+};
+function detectMoves() {
+  const moves = [];
+  for (const c of db.getSchema().currencies) {
+    if (c.isBase) continue;
+    const pct = c.lastMovePercent;
+    if (typeof pct !== "number" || !Number.isFinite(pct)) continue;
+    if (Math.abs(pct) < THRESHOLD_PERCENT) continue;
+    const previous = c.parallelRate ? c.parallelRate / (1 + pct / 100) : c.rateToSdg;
+    moves.push({
+      code: c.code,
+      name: c.name,
+      previous: Math.round(previous * 100) / 100,
+      current: c.rateToSdg,
+      percent: pct
+    });
+  }
+  return moves;
+}
+var whatsappConfigured = () => !!PHONE && !!CALLMEBOT_KEY;
+
+// src/server/media.ts
+var TABLE = "sanad_media";
+var MAX_RAW_BYTES = 3 * 1024 * 1024;
+var ready = null;
+function ensureMediaTable() {
+  if (!ready) {
+    ready = transaction(async (client) => {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${TABLE} (
+          id          text PRIMARY KEY,
+          kind        text NOT NULL,
+          mime        text NOT NULL,
+          bytes       integer NOT NULL,
+          owner_phone text,
+          data        text NOT NULL,
+          created_at  timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_${TABLE}_created ON ${TABLE} (created_at)`
+      );
+    }).catch((err) => {
+      ready = null;
+      throw err;
+    });
+  }
+  return ready;
+}
+var ALLOWED_PREFIXES = {
+  image: ["data:image/jpeg", "data:image/png", "data:image/webp", "data:image/gif"],
+  video: ["data:video/mp4", "data:video/webm", "data:video/quicktime"]
+};
+async function saveMedia(input) {
+  await ensureMediaTable();
+  const { dataUrl, kind } = input;
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+    throw new HttpError(400, "BAD_DATA_URL", "\u0635\u064A\u063A\u0629 \u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629.");
+  }
+  const comma = dataUrl.indexOf(",");
+  if (comma === -1) {
+    throw new HttpError(400, "BAD_DATA_URL", "\u0635\u064A\u063A\u0629 \u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629.");
+  }
+  const header = dataUrl.slice(5, comma);
+  const isBase64 = header.includes(";base64");
+  if (!isBase64) {
+    throw new HttpError(400, "BAD_DATA_URL", "\u064A\u062C\u0628 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0645\u0644\u0641 \u0628\u062A\u0631\u0645\u064A\u0632 base64.");
+  }
+  const mime = header.split(";")[0].toLowerCase();
+  const allowed = ALLOWED_PREFIXES[kind] || [];
+  if (!allowed.some((prefix) => dataUrl.toLowerCase().startsWith(prefix))) {
+    throw new HttpError(
+      415,
+      "UNSUPPORTED_TYPE",
+      kind === "video" ? "\u0635\u064A\u063A\u0629 \u0627\u0644\u0641\u064A\u062F\u064A\u0648 \u063A\u064A\u0631 \u0645\u062F\u0639\u0648\u0645\u0629. \u0627\u0633\u062A\u062E\u062F\u0645 MP4 \u0623\u0648 WebM." : "\u0635\u064A\u063A\u0629 \u0627\u0644\u0635\u0648\u0631\u0629 \u063A\u064A\u0631 \u0645\u062F\u0639\u0648\u0645\u0629. \u0627\u0633\u062A\u062E\u062F\u0645 JPG \u0623\u0648 PNG \u0623\u0648 WebP."
+    );
+  }
+  const base64 = dataUrl.slice(comma + 1);
+  const bytes = Math.floor(base64.length * 3 / 4);
+  if (bytes > MAX_RAW_BYTES) {
+    throw new HttpError(
+      413,
+      "TOO_LARGE",
+      `\u062D\u062C\u0645 \u0627\u0644\u0645\u0644\u0641 ${(bytes / 1024 / 1024).toFixed(1)} \u0645\u064A\u062C\u0627\u060C \u0648\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${MAX_RAW_BYTES / 1024 / 1024} \u0645\u064A\u062C\u0627.`
+    );
+  }
+  const id = newId(kind === "video" ? "vid" : "img");
+  await query(
+    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, kind, mime, bytes, input.ownerPhone || null, base64]
+  );
+  return { id, url: `/api/media/${id}`, mime, bytes, kind };
+}
+async function getMedia(id) {
+  await ensureMediaTable();
+  const { rows } = await query(
+    `SELECT mime, data, bytes FROM ${TABLE} WHERE id = $1`,
+    [id]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    mime: row.mime,
+    bytes: Number(row.bytes) || 0,
+    data: Buffer.from(row.data, "base64")
+  };
+}
+async function deleteMedia(id) {
+  await ensureMediaTable();
+  const { rowCount } = await query(`DELETE FROM ${TABLE} WHERE id = $1`, [id]);
+  return (rowCount ?? 0) > 0;
+}
+var HttpError = class extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+};
 
 // src/server/routes.ts
 var apiRouter = Router();
@@ -4669,7 +4770,13 @@ var refreshLiveRates = async (actorName) => {
     };
   }
   const { updated, skipped } = db.applyLiveRates(snapshot, actorName);
-  return { refreshed: true, updated, skipped, snapshot: db.getRatesSnapshot(), stale: false };
+  let alerts = null;
+  try {
+    alerts = await checkRateMoves(detectMoves());
+  } catch (err) {
+    console.warn("[rates] alert failed:", err.message);
+  }
+  return { refreshed: true, updated, skipped, alerts, snapshot: db.getRatesSnapshot(), stale: false };
 };
 var withLiveRates = () => {
   const snapshot = db.getRatesSnapshot();
@@ -4723,6 +4830,41 @@ apiRouter.post("/admin/currency/refresh", async (req, res) => {
       snapshot: result.snapshot
     });
   }
+  res.json({ success: true, ...result });
+});
+apiRouter.get("/assistant/rates", async (_req, res) => {
+  let snapshot = db.getRatesSnapshot();
+  const hours = snapshot?.fetchedAt ? ageHours(snapshot.fetchedAt) : null;
+  if (hours === null || hours >= 1) {
+    try {
+      const fresh = await fetchLiveRates();
+      if (fresh) {
+        db.applyLiveRates(fresh, "\u0627\u0644\u0645\u0633\u0627\u0639\u062F \u0627\u0644\u0630\u0643\u064A");
+        await db.flush({ lock: false }).catch(() => {
+        });
+        snapshot = db.getRatesSnapshot();
+      }
+    } catch {
+    }
+  }
+  res.json({
+    snapshot,
+    stale: snapshot ? isStale(snapshot.fetchedAt) : true,
+    answer: formatRatesAnswer(snapshot)
+  });
+});
+apiRouter.get("/currency/alerts/status", (_req, res) => {
+  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  res.json({
+    thresholdPercent: THRESHOLD_PERCENT,
+    whatsappConfigured: whatsappConfigured(),
+    whatsappRecipient: process.env.WHATSAPP_ALERT_PHONE ? "\u2022\u2022\u2022" + String(process.env.WHATSAPP_ALERT_PHONE).slice(-4) : null,
+    todayAlerts: db.getRateAlertLog().filter((a) => a.day === today),
+    recentAlerts: db.getRateAlertLog().slice(0, 20)
+  });
+});
+apiRouter.post("/admin/currency/alerts/run", async (_req, res) => {
+  const result = await checkRateMoves(detectMoves());
   res.json({ success: true, ...result });
 });
 apiRouter.get("/cron/currency-rates", async (_req, res) => {
@@ -5568,6 +5710,44 @@ var ASSISTANT_MODELS = [
   "gemini-3.1-flash-lite",
   "gemini-2.5-flash"
 ].filter(Boolean);
+var ratesBlockForPrompt = (snapshot) => {
+  if (!snapshot?.rates?.length) {
+    return "\u0644\u0627 \u062A\u0648\u062C\u062F \u0642\u0631\u0627\u0621\u0629 \u062D\u062F\u064A\u062B\u0629 \u0644\u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A \u0627\u0644\u0622\u0646 \u2014 \u0642\u0644 \u0644\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0625\u0646 \u0627\u0644\u0645\u0635\u062F\u0631 \u063A\u064A\u0631 \u0645\u062A\u0627\u062D \u062D\u0627\u0644\u064A\u0627\u064B \u0648\u0644\u0627 \u062A\u062E\u062A\u0631\u0639 \u0623\u0631\u0642\u0627\u0645\u0627\u064B.";
+  }
+  const lines = snapshot.rates.map((r) => {
+    const parallel = r.parallel ?? r.official;
+    const bank = r.official ? ` \u2014 \u0628\u0646\u0643 \u0627\u0644\u062E\u0631\u0637\u0648\u0645 ${r.official}` : "";
+    const label = r.code === "USD" ? "\u062F\u0648\u0644\u0627\u0631 \u0623\u0645\u0631\u064A\u0643\u064A" : r.code === "SAR" ? "\u0631\u064A\u0627\u0644 \u0633\u0639\u0648\u062F\u064A" : r.code === "AED" ? "\u062F\u0631\u0647\u0645 \u0625\u0645\u0627\u0631\u0627\u062A\u064A" : r.code === "EUR" ? "\u064A\u0648\u0631\u0648" : r.code === "EGP" ? "\u062C\u0646\u064A\u0647 \u0645\u0635\u0631\u064A" : r.code === "QAR" ? "\u0631\u064A\u0627\u0644 \u0642\u0637\u0631\u064A" : r.code;
+    return `- ${label} (${r.code}): ${parallel} \u062C.\u0633${bank}`;
+  });
+  const when = snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toLocaleString("ar-SD") : "";
+  return `\u0627\u0644\u0645\u0635\u062F\u0631: ${snapshot.source || "\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A"} \u2014 \u0622\u062E\u0631 \u062A\u062D\u062F\u064A\u062B: ${when}
+${lines.join("\n")}`;
+};
+var AR_NAMES = {
+  USD: "\u0627\u0644\u062F\u0648\u0644\u0627\u0631 \u0627\u0644\u0623\u0645\u0631\u064A\u0643\u064A",
+  SAR: "\u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0633\u0639\u0648\u062F\u064A",
+  AED: "\u0627\u0644\u062F\u0631\u0647\u0645 \u0627\u0644\u0625\u0645\u0627\u0631\u0627\u062A\u064A",
+  EUR: "\u0627\u0644\u064A\u0648\u0631\u0648",
+  EGP: "\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0645\u0635\u0631\u064A",
+  QAR: "\u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0642\u0637\u0631\u064A",
+  TRY: "\u0627\u0644\u0644\u064A\u0631\u0629 \u0627\u0644\u062A\u0631\u0643\u064A\u0629",
+  GBP: "\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0625\u0633\u062A\u0631\u0644\u064A\u0646\u064A"
+};
+var formatRatesAnswer = (snapshot) => {
+  if (!snapshot?.rates?.length) return null;
+  const lines = snapshot.rates.filter((r) => r.parallel || r.official).map((r) => {
+    const price = (r.parallel ?? r.official).toLocaleString("en-US");
+    const bank = r.official ? ` (\u0627\u0644\u0628\u0646\u0643: ${r.official.toLocaleString("en-US")})` : "";
+    return `\u2022 ${AR_NAMES[r.code] || r.code}: ${price} \u062C.\u0633${bank}`;
+  });
+  const when = snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toLocaleString("ar-SD") : "";
+  return `\u062D\u0628\u0627\u0628\u0643 \u{1F44B} \u062F\u064A \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A (\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0623\u0633\u0648\u062F) \u0627\u0644\u062D\u0627\u0644\u064A\u0629:
+${lines.join("\n")}
+
+\u0627\u0644\u0645\u0635\u062F\u0631: ${snapshot.source} \u2014 \u0622\u062E\u0631 \u062A\u062D\u062F\u064A\u062B: ${when}.
+\u0627\u0644\u0633\u0639\u0631 \u0627\u0644\u0631\u0633\u0645\u064A \u0644\u0644\u0628\u0646\u0643 \u0623\u0642\u0644 \u0645\u0646 \u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A\u060C \u0648\u0627\u0644\u062A\u0639\u0627\u0645\u0644 \u0641\u064A \u0627\u0644\u0633\u0648\u062F\u0627\u0646 \u0628\u064A\u0645\u0634\u064A \u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642.`;
+};
 function buildSystemInstruction(mode, context) {
   const now = /* @__PURE__ */ new Date();
   return `\u0623\u0646\u062A \xAB\u0633\u0646\u062F\xBB \u2014 \u0627\u0644\u0645\u0633\u0627\u0639\u062F \u0627\u0644\u0630\u0643\u064A \u0627\u0644\u0631\u0633\u0645\u064A \u0644\u0645\u0646\u0635\u0629 \u0633\u0646\u062F (Sanad POS & Commerce) \u0644\u0644\u062A\u062C\u0627\u0631\u0629 \u0648\u0646\u0642\u0627\u0637 \u0627\u0644\u0628\u064A\u0639 \u0627\u0644\u0633\u062D\u0627\u0628\u064A\u0629 \u0641\u064A \u0627\u0644\u0633\u0648\u062F\u0627\u0646.
@@ -5586,11 +5766,21 @@ function buildSystemInstruction(mode, context) {
 ## \u0645\u0639\u0644\u0648\u0645\u0627\u062A \u0627\u0644\u0645\u0646\u0635\u0629
 - \u0646\u0642\u0627\u0637 \u0627\u0644\u0628\u064A\u0639 (POS): \u062A\u0639\u0645\u0644 \u0623\u0648\u0641\u0644\u0627\u064A\u0646 \u062F\u0648\u0646 \u0625\u0646\u062A\u0631\u0646\u062A \u0645\u0639 \u0645\u0632\u0627\u0645\u0646\u0629 \u062A\u0644\u0642\u0627\u0626\u064A\u0629.
 - \u0627\u0644\u062F\u0641\u0639: \u0628\u0646\u0643\u0643 (\u0628\u0646\u0643 \u0627\u0644\u062E\u0631\u0637\u0648\u0645)\u060C \u0641\u0648\u0631\u064A (\u0628\u0646\u0643 \u0641\u064A\u0635\u0644)\u060C \u0623\u0648\u0643\u0627\u0634\u060C \u0648\u062A\u062D\u0635\u064A\u0644 \u0627\u0644\u0639\u0645\u0644\u0627\u062A \u0627\u0644\u0623\u062C\u0646\u0628\u064A\u0629.
-- \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0635\u0631\u0641: \u0627\u0644\u062F\u0648\u0644\u0627\u0631 2750 \u062C.\u0633\u060C \u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0633\u0639\u0648\u062F\u064A 733.33\u060C \u0627\u0644\u0644\u064A\u0631\u0629 \u0627\u0644\u062A\u0631\u0643\u064A\u0629 82.5\u060C \u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0645\u0635\u0631\u064A 56.8\u060C \u0627\u0644\u062F\u0631\u0647\u0645 748.5\u060C \u0627\u0644\u064A\u0648\u0631\u0648 2980.
+- \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0635\u0631\u0641: \u062A\u064F\u0642\u0631\u0623 \u062D\u064A\u0651\u0629 \u0645\u0646 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A (\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0623\u0633\u0648\u062F) \u2014 \u0644\u0627 \u062A\u062D\u0641\u0638 \u0623\u0631\u0642\u0627\u0645\u0627\u064B \u062B\u0627\u0628\u062A\u0629\u060C \u0648\u0627\u0633\u062A\u062E\u062F\u0645 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0627\u0644\u0645\u0631\u0641\u0642\u0629 \u0641\u064A \xAB\u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A\xBB \u062A\u062D\u062A.
 - \u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062C\u0645\u0647\u0648\u0631: \u0627\u0644\u0643\u062A\u0627\u0644\u0648\u062C\u060C \u0627\u0644\u0637\u0644\u0628\u0627\u062A \u0627\u0644\u0645\u0633\u0628\u0642\u0629\u060C \u0627\u0644\u0633\u0644\u0629\u060C \u0627\u0644\u0645\u0641\u0636\u0644\u0629\u060C \u0646\u0642\u0627\u0637 \u0627\u0644\u0648\u0644\u0627\u0621 \u0648\u0627\u0644\u0643\u0648\u0628\u0648\u0646\u0627\u062A\u060C \u062A\u062A\u0628\u0639 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0645\u0634\u0627\u0631\u0643\u0629 \u0648\u0627\u062A\u0633\u0627\u0628\u060C \u062A\u0642\u064A\u064A\u0645 \u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A\u060C \u0625\u0639\u0644\u0627\u0646\u0627\u062A \u0627\u0644\u0633\u0648\u0642 (\u0628\u0639\u062F \u0645\u0648\u0627\u0641\u0642\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0645\u0639 \u0631\u0633\u0648\u0645 \u0627\u062E\u062A\u064A\u0627\u0631\u064A\u0629)\u060C \u0648\u0637\u0644\u0628 \u0641\u062A\u062D \u0645\u062A\u062C\u0631 (\u0645\u0631\u0627\u062C\u0639\u0629 \u0625\u062F\u0627\u0631\u064A\u0629 + \u0643\u0648\u062F \u062F\u062E\u0648\u0644 + \u0642\u064A\u0645\u0629 \u062A\u0633\u062C\u064A\u0644).
 - \u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062A\u0627\u062C\u0631: \u0627\u0644\u0643\u0627\u0634\u064A\u0631\u060C \u0627\u0644\u0645\u062E\u0632\u0648\u0646\u060C \u0627\u0644\u0645\u0634\u062A\u0631\u064A\u0627\u062A\u060C \u0627\u0644\u0645\u0635\u0631\u0648\u0641\u0627\u062A\u060C \u0627\u0644\u062A\u0642\u0627\u0631\u064A\u0631\u060C \u0627\u0644\u0648\u0631\u062F\u064A\u0627\u062A\u060C \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0627\u0644\u0625\u0634\u0639\u0627\u0631\u0627\u062A.
 - \u0644\u0648\u062D\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629: \u0627\u0644\u0645\u062A\u0627\u062C\u0631\u060C \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643\u0627\u062A\u060C \u062A\u062F\u0642\u064A\u0642 \u0627\u0644\u0633\u062F\u0627\u062F\u060C \u0633\u062C\u0644 \u0627\u0644\u062A\u062F\u0642\u064A\u0642\u060C \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631 \u0627\u0644\u062D\u0631\u0627\u0631\u064A\u0629\u060C \u0627\u0644\u0639\u0631\u0648\u0636\u060C \u0625\u0639\u0644\u0627\u0646\u0627\u062A \u0627\u0644\u0633\u0648\u0642\u060C \u0637\u0644\u0628\u0627\u062A \u0627\u0644\u0645\u062A\u0627\u062C\u0631.
 - \u0627\u0644\u0625\u0634\u0639\u0627\u0631\u0627\u062A: \u062F\u0627\u062E\u0644 \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0648\u0639\u0644\u0649 \u0627\u0644\u0647\u0627\u062A\u0641 (\u0646\u0642\u0635 \u0627\u0644\u0645\u062E\u0632\u0648\u0646\u060C \u0627\u0646\u062A\u0647\u0627\u0621 \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643\u060C \u062D\u0627\u0644\u0629 \u0627\u0644\u0637\u0644\u0628\u060C \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0627\u062A).
+
+## \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A (\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0623\u0633\u0648\u062F) \u2014 \u062D\u064A\u0651\u0629
+${context?.liveRates ? ratesBlockForPrompt(context.liveRates) : "\u0644\u0627 \u062A\u0648\u062C\u062F \u0628\u064A\u0627\u0646\u0627\u062A \u0645\u0631\u0641\u0642\u0629."}
+
+\u0642\u0648\u0627\u0639\u062F \u0635\u0627\u0631\u0645\u0629 \u0639\u0646\u062F \u0627\u0644\u0633\u0624\u0627\u0644 \u0639\u0646 \u0627\u0644\u0623\u0633\u0639\u0627\u0631:
+- \u0627\u0644\u0633\u0639\u0631 \u0627\u0644\u0631\u0633\u0645\u064A \u0644\u0644\u0628\u0646\u0643 \u2260 \u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642. \u0627\u0644\u0646\u0627\u0633 \u0641\u064A \u0627\u0644\u0633\u0648\u062F\u0627\u0646 \u0628\u062A\u062A\u0639\u0627\u0645\u0644 \u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A\u060C \u0641\u0627\u0630\u0643\u0631 \u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0623\u0648\u0644\u0627\u064B \u0648\u0628\u062E\u0637 \u0648\u0627\u0636\u062D.
+- \u0627\u0630\u0643\u0631 \u062A\u0627\u0631\u064A\u062E/\u0648\u0642\u062A \u0622\u062E\u0631 \u062A\u062D\u062F\u064A\u062B\u060C \u0648\u0644\u0648 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0642\u062F\u064A\u0645\u0629 \u0646\u0628\u0651\u0647 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645.
+- \u0644\u0648 \u0645\u0627 \u0641\u064A \u0628\u064A\u0627\u0646\u0627\u062A \u062D\u062F\u064A\u062B\u0629: \u0642\u0644 \u0628\u0635\u0631\u0627\u062D\u0629 \u0625\u0646 \u0627\u0644\u0645\u0635\u062F\u0631 \u0645\u0634 \u0645\u062A\u0627\u062D \u0647\u0633\u064A\u060C \u0648\u0645\u0627 \u062A\u062E\u062A\u0631\u0639 \u0633\u0639\u0631 \u0645\u0646 \u0631\u0627\u0633\u0643 \u0623\u0628\u062F\u0627\u064B.
+- \u0644\u0648 \u0633\u0623\u0644 \u0639\u0646 \u0645\u0628\u0644\u063A (\u0645\u062B\u0644\u0627\u064B \xAB100 \u062F\u0648\u0644\u0627\u0631 \u0643\u0645 \u0628\u0627\u0644\u062C\u0646\u064A\u0647\u061F\xBB) \u0627\u062D\u0633\u0628 \u0628\u0627\u0644\u0636\u0631\u0628 \u0641\u064A \u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A.
+- \u0627\u062E\u062A\u0635\u0631: \u0633\u0639\u0631\u060C \u0645\u0635\u062F\u0631\u060C \u0648\u0642\u062A\u060C \u0648\u0646\u0635\u064A\u062D\u0629 \u0633\u0637\u0631 \u0648\u0627\u062D\u062F.
 
 ## \u0627\u0644\u0633\u064A\u0627\u0642 \u0627\u0644\u062D\u0627\u0644\u064A
 - \u0627\u0644\u062A\u0637\u0628\u064A\u0642: ${mode === "admin" ? "\u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0648\u0646\u0642\u0627\u0637 \u0627\u0644\u0628\u064A\u0639" : mode === "merchant" ? "\u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062A\u0627\u062C\u0631" : "\u062A\u0637\u0628\u064A\u0642 \u0627\u0644\u062C\u0645\u0647\u0648\u0631"}
@@ -5656,10 +5846,31 @@ apiRouter.post("/assistant/chat", async (req, res) => {
   })) : [];
   turns.push({ role: "user", parts: [{ text: message.slice(0, 3e3) }] });
   try {
+    let liveRates = db.getRatesSnapshot();
+    const asksAboutRates = /سعر|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|عملة|عملات|صرف|تحويل/i.test(message);
+    if (asksAboutRates) {
+      const hours = liveRates?.fetchedAt ? ageHours(liveRates.fetchedAt) : null;
+      if (hours === null || hours >= 1) {
+        try {
+          const snapshot = await fetchLiveRates();
+          if (snapshot) {
+            db.applyLiveRates(snapshot, "\u0627\u0644\u0645\u0633\u0627\u0639\u062F \u0627\u0644\u0630\u0643\u064A");
+            await db.flush({ lock: false }).catch(() => {
+            });
+            liveRates = db.getRatesSnapshot();
+          }
+        } catch {
+        }
+      }
+    }
+    const enrichedContext = {
+      ...context || {},
+      liveRates: asksAboutRates ? liveRates : void 0
+    };
     const result = await geminiGenerate({
       models: ASSISTANT_MODELS,
       contents: turns,
-      systemInstruction: buildSystemInstruction(String(mode || "admin"), context || {}),
+      systemInstruction: buildSystemInstruction(String(mode || "admin"), enrichedContext),
       temperature: 0.85,
       maxTokens: 1200,
       timeoutMs: 16e3
@@ -5668,6 +5879,10 @@ apiRouter.post("/assistant/chat", async (req, res) => {
       return res.json({ reply: result.text, model: result.model });
     }
     console.warn("[assistant] failed:", result.error);
+    if (asksAboutRates) {
+      const offline = formatRatesAnswer(liveRates);
+      if (offline) return res.json({ reply: offline, model: "rates-cache" });
+    }
     return res.json({ reply: null, reason: "FALLBACK", detail: result.error });
   } catch (error) {
     console.warn("Assistant route fallback:", error instanceof Error ? error.message : String(error));

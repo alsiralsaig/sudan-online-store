@@ -334,22 +334,33 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
     }
 
     // Comprehensive Sudanese Dialect Knowledge Matrix:
-    if (q.includes('صرف') || q.includes('دولار') || q.includes('ريال') || q.includes('ليرة') || q.includes('مصري') || q.includes('عملة') || q.includes('عملات')) {
+    // Rate questions always come from the live parallel market (never hard-coded)
+    if (
+      /سعر|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|ليرة|عملة|عملات|صرف/.test(query)
+    ) {
+      try {
+        const res = await fetch('/api/assistant/rates');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.answer) {
+            return {
+              text: data.answer,
+              actions: onNavigateTab
+                ? [
+                    { label: 'فتح شاشة أسعار العملات 🪙', action: () => onNavigateTab('currencies') },
+                    { label: 'الذهاب لنقطة البيع (الكاشير) 🛒', action: () => onNavigateTab('pos') },
+                  ]
+                : undefined,
+            };
+          }
+        }
+      } catch {
+        /* fall through to the generic reply */
+      }
       return {
-        text: `يا هلا بيك! أسعار الصرف المعتمدة والمخزنة في خزينة سند هسي هي كالتالي:
-💵 **الدولار الأمريكي ($):** 2,750 ج.س
-🇸🇦 **الريال السعودي (ر.س):** 733.33 ج.س
-🇹🇷 **الليرة التركية (₺):** 82.5 ج.س
-🇪🇬 **الجنيه المصري (ج.م):** 56.8 ج.س
-🇦🇪 **الدرهم الإماراتي (د.إ):** 748.5 ج.س
-💶 **اليورو الأوروبي (€):** 2,980 ج.س
-
-💡 **ملاحظة سمحة:** في شاشة الكاشير (POS)، لمن تضغط على العملة الأجنبية، النظام بيحسب الفاتورة ويعطيك المبلغ المطلوب بالعملة والمتبقي للزبون (الفكة) بالجنيه السوداني فورياً!`,
+        text: 'يا هلا بيك! مصدر أسعار السوق الموازي مش متاح هسي — جرّب تسألني بعد شوية أو افتح شاشة «العملات والصرف» وشوف آخر سعر محفوظ.',
         actions: onNavigateTab
-          ? [
-              { label: 'فتح شاشة أسعار العملات 🪙', action: () => onNavigateTab('currencies') },
-              { label: 'الذهاب لنقطة البيع (الكاشير) 🛒', action: () => onNavigateTab('pos') },
-            ]
+          ? [{ label: 'فتح شاشة أسعار العملات 🪙', action: () => onNavigateTab('currencies') }]
           : undefined,
       };
     }

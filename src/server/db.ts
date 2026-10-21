@@ -71,6 +71,8 @@ export interface DatabaseSchema {
    * (The store persists arrays only — an object here would silently vanish.)
    */
   currencyRatesSnapshot: Array<CurrencyRatesSnapshot & { id: string }>;
+  /** One row per currency per day that already triggered a move alert. */
+  currencyRateAlerts: Array<{ id: string; code: string; day: string; percent: number; rate: number }>;
   storefrontOrders: StorefrontOrder[];
   expenses: Expense[];
   purchases: Purchase[];
@@ -2145,6 +2147,7 @@ class Database {
       currencies: INITIAL_CURRENCIES,
       currencyRateHistory: [],
       currencyRatesSnapshot: [],
+      currencyRateAlerts: [],
       storefrontOrders: INITIAL_STORE_ORDERS,
       expenses: INITIAL_EXPENSES,
       purchases: INITIAL_PURCHASES,
@@ -2188,6 +2191,22 @@ class Database {
     return row || null;
   }
 
+  /** Alert bookkeeping: one entry per currency per day. */
+  public getRateAlertLog(): Array<{ id: string; code: string; day: string; percent: number; rate: number }> {
+    return (this.data as any).currencyRateAlerts || [];
+  }
+
+  public markRateAlerted(code: string, percent: number, rate: number): void {
+    const data: any = this.data;
+    if (!Array.isArray(data.currencyRateAlerts)) data.currencyRateAlerts = [];
+    const day = new Date().toISOString().slice(0, 10);
+    data.currencyRateAlerts = [
+      { id: `${code}_${day}`, code, day, percent, rate },
+      ...data.currencyRateAlerts.filter((a: any) => !(a.code === code && a.day === day)),
+    ].slice(0, 200);
+    this.commit();
+  }
+
   public saveRatesSnapshot(snapshot: CurrencyRatesSnapshot): void {
     this.data.currencyRatesSnapshot = [{ id: 'latest', ...snapshot }];
     this.commit();
@@ -2222,7 +2241,16 @@ class Database {
       }
 
       const oldRate = currency.rateToSdg;
+      // The very first live reading is a baseline, not a "move" — otherwise the
+      // seeded demo rates would fire six false alerts on first boot.
+      const previousParallel = currency.parallelRate;
+      const movePercent =
+        previousParallel && previousParallel > 0
+          ? Number((((trading - previousParallel) / previousParallel) * 100).toFixed(2))
+          : 0;
+
       currency.rateToSdg = Math.round(trading * 100) / 100;
+      (currency as any).lastMovePercent = movePercent;
       if (live.official) currency.officialRate = live.official;
       if (live.parallel) currency.parallelRate = live.parallel;
       currency.rateSource = 'parallel';

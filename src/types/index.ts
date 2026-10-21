@@ -384,6 +384,8 @@ export interface CurrencyConfig {
   parallelRate?: number;
   /** 'parallel' | 'manual' — where rateToSdg came from. */
   rateSource?: 'parallel' | 'manual';
+  /** Percentage move of the parallel price on the last refresh. */
+  lastMovePercent?: number;
 }
 
 /** Snapshot of the parallel-market table pulled from the public sources. */
