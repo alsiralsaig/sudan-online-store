@@ -2596,6 +2596,33 @@ apiRouter.get('/assistant/models', async (_req, res) => {
   }
 });
 
+/** Diagnostic: try each candidate model and report the real error. */
+apiRouter.get('/assistant/diag', async (req, res) => {
+  const ai = await getAssistantClient();
+  if (!ai) return res.json({ ok: false, reason: 'NO_API_KEY' });
+
+  const candidates = [
+    String(req.query.model || ''),
+    'gemini-2.5-flash',
+    'gemini-flash-latest',
+    'gemini-2.5-flash-lite',
+  ].filter(Boolean);
+
+  const out: any[] = [];
+  for (const model of candidates) {
+    try {
+      const r: any = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: 'قل: تم' }] }],
+      });
+      out.push({ model, ok: true, text: r?.text || null });
+    } catch (err: any) {
+      out.push({ model, ok: false, error: String(err?.message || err).slice(0, 220) });
+    }
+  }
+  res.json({ results: out });
+});
+
 apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   try {
     const { message, mode, context, history } = req.body || {};
