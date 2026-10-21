@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="border-b border-slate-200 bg-white sticky top-0 z-40">
       {/* Top Bar Contract: 3 Zones */}
-      <div className="flex items-center justify-between gap-8 px-6 py-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-6 px-4 sm:px-6 py-3.5 min-w-0">
         {/* Zone 1: Sanad Logo Brand Wordmark */}
         <div className="flex items-center gap-3 shrink-0">
           <SanadLogo size="sm" variant="full" onClick={() => onTabChange('welcome')} />
