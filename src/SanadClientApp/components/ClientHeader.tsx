@@ -92,7 +92,7 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
       </div>
 
       {/* Main Header Row */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex items-center justify-between gap-2 sm:gap-4 min-w-0">
         {/* Brand & Store Identity */}
         <div className="flex items-center gap-3 shrink-0">
           <SanadLogo size="md" variant="full" onClick={() => onTabChange('catalog')} />
@@ -179,7 +179,7 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
           {/* Track Orders Quick Link */}
           <button
             onClick={() => onTabChange('track_order')}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl transition-colors ${
+            className={`hidden sm:flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl transition-colors ${
               activeTab === 'track_order'
                 ? 'bg-slate-900 text-emerald-400'
                 : 'text-slate-700 hover:bg-slate-100'
@@ -192,11 +192,11 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
           {/* Store application — visible entry point for traders */}
           <button
             onClick={() => setIsTenantModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-black rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 active:scale-98 transition-all shadow-2xs"
+            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-2 text-xs font-black rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 active:scale-98 transition-all shadow-2xs whitespace-nowrap"
             title="طلب فتح متجر على منصة سند"
           >
             <Store className="w-4 h-4 text-emerald-700" />
-            <span>طلب متجر</span>
+            <span className="hidden xs:inline sm:inline">طلب متجر</span>
           </button>
 
           {/* Cart Trigger */}
