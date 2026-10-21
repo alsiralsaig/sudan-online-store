@@ -51,6 +51,8 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
   });
 
   const [adMedia, setAdMedia] = useState<UploadedMedia | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const videoUrl: string | null = null;
 
   // Purchase request form state
@@ -66,17 +68,12 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
     notes: '',
   });
 
-  if (!isOpen) return null;
-
   const sampleImages = [
     { label: 'سيارة حديثة', url: '/assets/images/albander_hyundai_car_1792184093653.jpg' },
     { label: 'لابتوب وماك بوك', url: '/assets/images/albander_macbook_laptop_1792184108039.jpg' },
     { label: 'شاحنة بيك آب', url: '/assets/images/albander_pickup_truck_1792184123630.jpg' },
     { label: 'مواد تموينية وغذائية', url: '/assets/images/product_cooking_oil_1792173269992.jpg' },
   ];
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const feeSdg = adForm.isVip ? pricing.vipFeeSdg : pricing.standardFeeSdg;
 
@@ -147,6 +144,10 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
       onClose();
     }, 1800);
   };
+
+  // Every hook must run before this line, otherwise opening the modal
+  // changes the hook order and React throws #310 (white screen).
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">

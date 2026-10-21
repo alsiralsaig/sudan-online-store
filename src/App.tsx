@@ -14,6 +14,7 @@ import { SubscriptionView } from './components/Subscription/SubscriptionView.tsx
 import { MerchantAdsView } from './components/Merchant/MerchantAdsView.tsx';
 import { SanadContactSection } from './components/Common/SanadContactSection.tsx';
 import { SanadWhatsAppFab } from './components/Common/SanadWhatsAppFab.tsx';
+import { SanadErrorBoundary } from './components/Common/SanadErrorBoundary.tsx';
 import { CentralAdminView } from './components/Admin/CentralAdminView.tsx';
 import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx';
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
@@ -301,7 +302,9 @@ export default function App() {
             merchants must never see links into the other apps. */}
         {/* SanadClientApp renders its own assistant (with branch context) —
             rendering a second one here produced duplicate floating buttons. */}
-        <SanadClientApp />
+        <SanadErrorBoundary appName="تطبيق الجمهور">
+          <SanadClientApp />
+        </SanadErrorBoundary>
         <SanadWhatsAppFab offset="above-nav" app="client" />
       </div>
     );
@@ -347,7 +350,9 @@ export default function App() {
               </div>
             </div>
 
-            <CentralAdminView />
+            <SanadErrorBoundary appName="لوحة الإدارة">
+              <CentralAdminView />
+            </SanadErrorBoundary>
             <SanadContactSection variant="dark" title="تواصل مع فريق سند" />
           </div>
         </div>
@@ -482,6 +487,7 @@ export default function App() {
       </div>
 
       {/* Main Content Viewport */}
+      <SanadErrorBoundary appName="تطبيق التاجر">
       <main className="flex-1 overflow-auto">
         {/* Sanad POS Promotional Welcome Banner for Admin */}
         {(currentTab === 'welcome' || currentTab === 'pos') && (
@@ -651,6 +657,7 @@ export default function App() {
         )}
         {currentTab === 'admin' && <CentralAdminView />}
       </main>
+      </SanadErrorBoundary>
 
       {/* Reach-us: phones / WhatsApp / e-mail / social pages */}
       <footer className="mt-6 px-4 pb-6 sm:px-6">
