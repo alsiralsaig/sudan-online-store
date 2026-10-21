@@ -704,3 +704,35 @@ export interface MarketAdPricing {
   vipFeeSdg: number;
   currency: string;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Store (tenant) applications — a shop asks to join the platform     */
+/* ------------------------------------------------------------------ */
+
+export type TenantApplicationStatus = 'pending' | 'approved' | 'rejected';
+
+export interface TenantApplication {
+  id: string;
+  storeName: string;
+  ownerName: string;
+  wilaya: string;
+  city: string;
+  phone: string;
+  email?: string;
+  branchesCount: number;
+  businessType: string;
+  notes?: string;
+  /** Which app the request came from, for reporting. */
+  source: 'client' | 'merchant';
+  status: TenantApplicationStatus;
+  /** Registration fee quoted to the applicant (set by the admin on approval). */
+  registrationFeeSdg: number;
+  /** Issued only after approval: the code used to log in and register the store. */
+  activationCode?: string;
+  codeSentVia?: 'whatsapp' | 'sms' | 'email';
+  codeSentAt?: string;
+  rejectionReason?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+}

@@ -43,7 +43,7 @@ const tables = await pglite.query(
   `SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name`
 );
 const tableNames = tables.rows.map((r: any) => r.table_name);
-check('27 tables created', tableNames.length === 27, `(got ${tableNames.length})`);
+check('28 tables created', tableNames.length === 28, `(got ${tableNames.length})`);
 check('products table present', tableNames.includes('sanad_products'));
 check('sales table present', tableNames.includes('sanad_sales'));
 

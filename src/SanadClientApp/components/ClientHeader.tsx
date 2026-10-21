@@ -17,8 +17,10 @@ import {
   Heart,
   Gift,
   Award,
+  Store,
 } from 'lucide-react';
 import { SanadLogo } from '../../components/Common/SanadLogo.tsx';
+import { TenantApplicationModal } from '../../components/Common/TenantApplicationModal.tsx';
 import type { ClientActiveTab } from '../types.ts';
 import type { Branch, Tenant, Product } from '../../types/index.ts';
 import { ClientAutocompleteSearch } from './ClientAutocompleteSearch.tsx';
@@ -61,7 +63,10 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
   products = [],
   onSelectProduct,
 }) => {
+  const [isTenantModalOpen, setIsTenantModalOpen] = React.useState(false);
+
   return (
+    <>
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
       {/* Top Banner Notice for Dual App System */}
       <div className="bg-slate-900 text-white px-4 py-1.5 text-xs flex items-center justify-between">
@@ -184,6 +189,16 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
             <span className="hidden sm:inline">تتبع طلبي</span>
           </button>
 
+          {/* Store application — visible entry point for traders */}
+          <button
+            onClick={() => setIsTenantModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-black rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 active:scale-98 transition-all shadow-2xs"
+            title="طلب فتح متجر على منصة سند"
+          >
+            <Store className="w-4 h-4 text-emerald-700" />
+            <span>طلب متجر</span>
+          </button>
+
           {/* Cart Trigger */}
           <button
             onClick={onOpenCart}
@@ -300,5 +315,12 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
         </div>
       </div>
     </header>
+
+    <TenantApplicationModal
+      isOpen={isTenantModalOpen}
+      onClose={() => setIsTenantModalOpen(false)}
+      source="client"
+    />
+    </>
   );
 };

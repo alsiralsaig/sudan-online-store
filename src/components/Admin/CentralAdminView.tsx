@@ -17,6 +17,7 @@ import {
   X,
   Sparkles,
   Megaphone,
+  Store,
   Tag,
 } from 'lucide-react';
 import type { AuditLog, Product } from '../../types/index.ts';
@@ -24,9 +25,10 @@ import { api } from '../../lib/api.ts';
 import { ThermalReceiptSettingsView } from './ThermalReceiptSettingsView.tsx';
 import { PromotionsSettingsView } from './PromotionsSettingsView.tsx';
 import { MarketAdsAdminView } from './MarketAdsAdminView.tsx';
+import { TenantApplicationsAdminView } from './TenantApplicationsAdminView.tsx';
 
 export const CentralAdminView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads'>('merchants');
+  const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads' | 'tenant_requests'>('merchants');
   const [tenants, setTenants] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
@@ -165,6 +167,15 @@ export const CentralAdminView: React.FC = () => {
           >
             <Megaphone className="w-3.5 h-3.5 text-emerald-600" />
             <span>إعلانات السوق</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('tenant_requests')}
+            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+              activeTab === 'tenant_requests' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
+            }`}
+          >
+            <Store className="w-3.5 h-3.5 text-emerald-600" />
+            <span>طلبات المتاجر</span>
           </button>
         </div>
       </div>
@@ -382,6 +393,7 @@ export const CentralAdminView: React.FC = () => {
       {/* Tab 5: Promotional Offers Management */}
       {activeTab === 'promotions' && <PromotionsSettingsView products={products} />}
       {activeTab === 'market_ads' && <MarketAdsAdminView />}
+      {activeTab === 'tenant_requests' && <TenantApplicationsAdminView />}
 
       {/* =========================================================================
           REVIEW PAYMENT MODAL

@@ -43,6 +43,7 @@ import type {
   InventoryAudit,
   InventoryAuditItem,
   MarketAd,
+  TenantApplication,
 } from '../types/index.ts';
 
 export interface DatabaseSchema {
@@ -73,6 +74,7 @@ export interface DatabaseSchema {
   inventoryAlerts: InventoryAlert[];
   inventoryAudits: InventoryAudit[];
   marketAds: MarketAd[];
+  tenantApplications: TenantApplication[];
 }
 
 // Initial seed data for Sudanese market
@@ -1310,6 +1312,44 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
 
 
 /** Ads that ship with the platform so the market is never empty. */
+const INITIAL_TENANT_APPLICATIONS: TenantApplication[] = [
+  {
+    id: 'tapp_demo_pending',
+    storeName: 'مطعم نيل كسلا',
+    ownerName: 'عثمان إدريس',
+    wilaya: 'كسلا',
+    city: 'كسلا',
+    phone: '0913224455',
+    email: 'nile.kassala@example.com',
+    branchesCount: 2,
+    businessType: 'مطاعم وكافيهات',
+    notes: 'نرغب في ربط فرعين ونقطة بيع واحدة في البداية.',
+    source: 'client',
+    status: 'pending',
+    registrationFeeSdg: 50000,
+    createdAt: '2026-10-15T09:20:00.000Z',
+  },
+  {
+    id: 'tapp_demo_approved',
+    storeName: 'بقالة البركة',
+    ownerName: 'فاطمة عبد الرحمن',
+    wilaya: 'الخرطوم',
+    city: 'أم درمان',
+    phone: '0922334455',
+    branchesCount: 1,
+    businessType: 'بقالات ومواد غذائية',
+    source: 'merchant',
+    status: 'approved',
+    registrationFeeSdg: 50000,
+    activationCode: 'SND-7K2M-9Q4P',
+    codeSentVia: 'whatsapp',
+    codeSentAt: '2026-10-12T11:05:00.000Z',
+    reviewedBy: 'إدارة سند',
+    reviewedAt: '2026-10-12T11:05:00.000Z',
+    createdAt: '2026-10-11T08:00:00.000Z',
+  },
+];
+
 const INITIAL_MARKET_ADS: MarketAd[] = [
   {
     id: 'mkt_ad_aircon',
@@ -1575,6 +1615,92 @@ class Database {
     return { ok: true };
   }
 
+  /* ------------------------------------------------------------------ */
+  /*  Store applications (شops asking to join the platform)              */
+  /* ------------------------------------------------------------------ */
+
+  public getTenantApplications(): TenantApplication[] {
+    return this.data.tenantApplications || [];
+  }
+
+  public getTenantApplication(id: string): TenantApplication | undefined {
+    return (this.data.tenantApplications || []).find((a) => a.id === id);
+  }
+
+  /** Applications always start as `pending` — the admin decides. */
+  public createTenantApplication(
+    input: Omit<TenantApplication, 'id' | 'status' | 'createdAt' | 'activationCode'>
+  ): TenantApplication {
+    const application: TenantApplication = {
+      ...input,
+      id: newId('tapp'),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+
+    this.data.tenantApplications = [application, ...(this.data.tenantApplications || [])];
+    this.save();
+    return application;
+  }
+
+  public reviewTenantApplication(
+    id: string,
+    decision: {
+      decision: 'approved' | 'rejected';
+      note?: string;
+      reviewedBy?: string;
+      registrationFeeSdg?: number;
+      activationCode?: string;
+      codeSentVia?: 'whatsapp' | 'sms' | 'email';
+    }
+  ): TenantApplication | null {
+    const application = this.getTenantApplication(id);
+    if (!application) return null;
+
+    application.status = decision.decision;
+    application.reviewedBy = decision.reviewedBy || 'إدارة سند';
+    application.reviewedAt = new Date().toISOString();
+
+    if (typeof decision.registrationFeeSdg === 'number' && decision.registrationFeeSdg >= 0) {
+      application.registrationFeeSdg = decision.registrationFeeSdg;
+    }
+
+    if (decision.decision === 'rejected') {
+      application.rejectionReason = decision.note || 'لم يستوف طلب المتجر شروط الانضمام.';
+      application.activationCode = undefined;
+    } else {
+      application.rejectionReason = undefined;
+      application.activationCode = decision.activationCode || application.activationCode;
+      if (decision.codeSentVia) {
+        application.codeSentVia = decision.codeSentVia;
+        application.codeSentAt = new Date().toISOString();
+      }
+    }
+
+    this.save();
+    return application;
+  }
+
+  public markTenantApplicationCodeSent(
+    id: string,
+    via: 'whatsapp' | 'sms' | 'email'
+  ): TenantApplication | null {
+    const application = this.getTenantApplication(id);
+    if (!application || !application.activationCode) return null;
+    application.codeSentVia = via;
+    application.codeSentAt = new Date().toISOString();
+    this.save();
+    return application;
+  }
+
+  public deleteTenantApplication(id: string): boolean {
+    const before = (this.data.tenantApplications || []).length;
+    this.data.tenantApplications = (this.data.tenantApplications || []).filter((a) => a.id !== id);
+    const removed = this.data.tenantApplications.length !== before;
+    if (removed) this.save();
+    return removed;
+  }
+
   public isDatabaseEnabled(): boolean {
     return isDbEnabled();
   }
@@ -1617,6 +1743,7 @@ class Database {
       inventoryAlerts: [],
       inventoryAudits: [],
       marketAds: INITIAL_MARKET_ADS,
+      tenantApplications: INITIAL_TENANT_APPLICATIONS,
     };
   }
 

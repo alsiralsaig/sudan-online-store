@@ -1660,6 +1660,43 @@ var INITIAL_ALBANDAR_LISTINGS = [
     locationDetails: "\u0628\u0648\u0631\u062A\u0633\u0648\u062F\u0627\u0646 - \u0642\u0631\u0628 \u0631\u0626\u0627\u0633\u0629 \u0647\u064A\u0626\u0629 \u0627\u0644\u0645\u0648\u0627\u0646\u0626 \u0627\u0644\u0628\u062D\u0631\u064A\u0629"
   }
 ];
+var INITIAL_TENANT_APPLICATIONS = [
+  {
+    id: "tapp_demo_pending",
+    storeName: "\u0645\u0637\u0639\u0645 \u0646\u064A\u0644 \u0643\u0633\u0644\u0627",
+    ownerName: "\u0639\u062B\u0645\u0627\u0646 \u0625\u062F\u0631\u064A\u0633",
+    wilaya: "\u0643\u0633\u0644\u0627",
+    city: "\u0643\u0633\u0644\u0627",
+    phone: "0913224455",
+    email: "nile.kassala@example.com",
+    branchesCount: 2,
+    businessType: "\u0645\u0637\u0627\u0639\u0645 \u0648\u0643\u0627\u0641\u064A\u0647\u0627\u062A",
+    notes: "\u0646\u0631\u063A\u0628 \u0641\u064A \u0631\u0628\u0637 \u0641\u0631\u0639\u064A\u0646 \u0648\u0646\u0642\u0637\u0629 \u0628\u064A\u0639 \u0648\u0627\u062D\u062F\u0629 \u0641\u064A \u0627\u0644\u0628\u062F\u0627\u064A\u0629.",
+    source: "client",
+    status: "pending",
+    registrationFeeSdg: 5e4,
+    createdAt: "2026-10-15T09:20:00.000Z"
+  },
+  {
+    id: "tapp_demo_approved",
+    storeName: "\u0628\u0642\u0627\u0644\u0629 \u0627\u0644\u0628\u0631\u0643\u0629",
+    ownerName: "\u0641\u0627\u0637\u0645\u0629 \u0639\u0628\u062F \u0627\u0644\u0631\u062D\u0645\u0646",
+    wilaya: "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+    city: "\u0623\u0645 \u062F\u0631\u0645\u0627\u0646",
+    phone: "0922334455",
+    branchesCount: 1,
+    businessType: "\u0628\u0642\u0627\u0644\u0627\u062A \u0648\u0645\u0648\u0627\u062F \u063A\u0630\u0627\u0626\u064A\u0629",
+    source: "merchant",
+    status: "approved",
+    registrationFeeSdg: 5e4,
+    activationCode: "SND-7K2M-9Q4P",
+    codeSentVia: "whatsapp",
+    codeSentAt: "2026-10-12T11:05:00.000Z",
+    reviewedBy: "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F",
+    reviewedAt: "2026-10-12T11:05:00.000Z",
+    createdAt: "2026-10-11T08:00:00.000Z"
+  }
+];
 var INITIAL_MARKET_ADS = [
   {
     id: "mkt_ad_aircon",
@@ -1874,6 +1911,65 @@ var Database = class {
     this.save();
     return { ok: true };
   }
+  /* ------------------------------------------------------------------ */
+  /*  Store applications (شops asking to join the platform)              */
+  /* ------------------------------------------------------------------ */
+  getTenantApplications() {
+    return this.data.tenantApplications || [];
+  }
+  getTenantApplication(id) {
+    return (this.data.tenantApplications || []).find((a) => a.id === id);
+  }
+  /** Applications always start as `pending` — the admin decides. */
+  createTenantApplication(input) {
+    const application = {
+      ...input,
+      id: newId("tapp"),
+      status: "pending",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.tenantApplications = [application, ...this.data.tenantApplications || []];
+    this.save();
+    return application;
+  }
+  reviewTenantApplication(id, decision) {
+    const application = this.getTenantApplication(id);
+    if (!application) return null;
+    application.status = decision.decision;
+    application.reviewedBy = decision.reviewedBy || "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F";
+    application.reviewedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (typeof decision.registrationFeeSdg === "number" && decision.registrationFeeSdg >= 0) {
+      application.registrationFeeSdg = decision.registrationFeeSdg;
+    }
+    if (decision.decision === "rejected") {
+      application.rejectionReason = decision.note || "\u0644\u0645 \u064A\u0633\u062A\u0648\u0641 \u0637\u0644\u0628 \u0627\u0644\u0645\u062A\u062C\u0631 \u0634\u0631\u0648\u0637 \u0627\u0644\u0627\u0646\u0636\u0645\u0627\u0645.";
+      application.activationCode = void 0;
+    } else {
+      application.rejectionReason = void 0;
+      application.activationCode = decision.activationCode || application.activationCode;
+      if (decision.codeSentVia) {
+        application.codeSentVia = decision.codeSentVia;
+        application.codeSentAt = (/* @__PURE__ */ new Date()).toISOString();
+      }
+    }
+    this.save();
+    return application;
+  }
+  markTenantApplicationCodeSent(id, via) {
+    const application = this.getTenantApplication(id);
+    if (!application || !application.activationCode) return null;
+    application.codeSentVia = via;
+    application.codeSentAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.save();
+    return application;
+  }
+  deleteTenantApplication(id) {
+    const before = (this.data.tenantApplications || []).length;
+    this.data.tenantApplications = (this.data.tenantApplications || []).filter((a) => a.id !== id);
+    const removed = this.data.tenantApplications.length !== before;
+    if (removed) this.save();
+    return removed;
+  }
   isDatabaseEnabled() {
     return isDbEnabled();
   }
@@ -1912,7 +2008,8 @@ var Database = class {
       kitchenTickets: INITIAL_KITCHEN_TICKETS,
       inventoryAlerts: [],
       inventoryAudits: [],
-      marketAds: INITIAL_MARKET_ADS
+      marketAds: INITIAL_MARKET_ADS,
+      tenantApplications: INITIAL_TENANT_APPLICATIONS
     };
   }
   /** Mark the snapshot as changed; the request pipeline flushes it. */
@@ -4833,6 +4930,191 @@ apiRouter.delete("/admin/market-ads/:id", (req, res) => {
   const result = db.deleteMarketAd(req.params.id, { admin: true });
   if (!result.ok) {
     return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  }
+  res.json({ success: true });
+});
+var TENANT_REGISTRATION_FEE_SDG = Number(process.env.TENANT_REGISTRATION_FEE_SDG || 5e4);
+var SUDAN_WILAYAS = [
+  "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+  "\u0627\u0644\u062C\u0632\u064A\u0631\u0629",
+  "\u0627\u0644\u0646\u064A\u0644 \u0627\u0644\u0623\u0632\u0631\u0642",
+  "\u0627\u0644\u0646\u064A\u0644 \u0627\u0644\u0623\u0628\u064A\u0636",
+  "\u0627\u0644\u0628\u062D\u0631 \u0627\u0644\u0623\u062D\u0645\u0631",
+  "\u0643\u0633\u0644\u0627",
+  "\u0627\u0644\u0642\u0636\u0627\u0631\u0641",
+  "\u0633\u0646\u0627\u0631",
+  "\u0627\u0644\u0646\u064A\u0644 \u0627\u0644\u0623\u0632\u0631\u0642 \u0627\u0644\u0634\u0645\u0627\u0644\u064A",
+  "\u0627\u0644\u0634\u0645\u0627\u0644\u064A\u0629",
+  "\u0646\u0647\u0631 \u0627\u0644\u0646\u064A\u0644",
+  "\u0634\u0645\u0627\u0644 \u0643\u0631\u062F\u0641\u0627\u0646",
+  "\u062C\u0646\u0648\u0628 \u0643\u0631\u062F\u0641\u0627\u0646",
+  "\u063A\u0631\u0628 \u0643\u0631\u062F\u0641\u0627\u0646",
+  "\u0634\u0645\u0627\u0644 \u062F\u0627\u0631\u0641\u0648\u0631",
+  "\u062C\u0646\u0648\u0628 \u062F\u0627\u0631\u0641\u0648\u0631",
+  "\u0634\u0631\u0642 \u062F\u0627\u0631\u0641\u0648\u0631",
+  "\u063A\u0631\u0628 \u062F\u0627\u0631\u0641\u0648\u0631",
+  "\u0648\u0633\u0637 \u062F\u0627\u0631\u0641\u0648\u0631"
+];
+function newActivationCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const block = (n) => Array.from({ length: n }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+  return `SND-${block(4)}-${block(4)}`;
+}
+apiRouter.get("/tenant-applications/pricing", (_req, res) => {
+  res.json({
+    registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG,
+    currency: "SDG",
+    wilayas: SUDAN_WILAYAS,
+    businessTypes: [
+      "\u0628\u0642\u0627\u0644\u0627\u062A \u0648\u0645\u0648\u0627\u062F \u063A\u0630\u0627\u0626\u064A\u0629",
+      "\u0645\u0637\u0627\u0639\u0645 \u0648\u0643\u0627\u0641\u064A\u0647\u0627\u062A",
+      "\u0645\u0644\u0627\u0628\u0633 \u0648\u0623\u062D\u0630\u064A\u0629",
+      "\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A\u0627\u062A \u0648\u062C\u0648\u0627\u0644\u0627\u062A",
+      "\u0635\u064A\u062F\u0644\u064A\u0629 \u0648\u0645\u0633\u062A\u0644\u0632\u0645\u0627\u062A \u0637\u0628\u064A\u0629",
+      "\u0623\u062C\u0647\u0632\u0629 \u0645\u0646\u0632\u0644\u064A\u0629",
+      "\u0645\u0648\u0627\u062F \u0628\u0646\u0627\u0621",
+      "\u0642\u0637\u0639 \u063A\u064A\u0627\u0631 \u0648\u0633\u064A\u0627\u0631\u0627\u062A",
+      "\u0645\u0633\u062A\u062D\u0636\u0631\u0627\u062A \u062A\u062C\u0645\u064A\u0644",
+      "\u0645\u0643\u062A\u0628\u0627\u062A \u0648\u0623\u062F\u0648\u0627\u062A \u0645\u062F\u0631\u0633\u064A\u0629",
+      "\u062E\u062F\u0645\u0627\u062A \u0623\u062E\u0631\u0649"
+    ]
+  });
+});
+apiRouter.post("/tenant-applications", (req, res) => {
+  const {
+    storeName,
+    ownerName,
+    wilaya,
+    city,
+    phone,
+    email,
+    branchesCount,
+    businessType,
+    notes,
+    source
+  } = req.body || {};
+  if (!storeName || String(storeName).trim().length < 3) {
+    return res.status(400).json({ error: "STORE_NAME_REQUIRED", message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0637\u0644\u0648\u0628 (3 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644)." });
+  }
+  if (!ownerName || String(ownerName).trim().length < 3) {
+    return res.status(400).json({ error: "OWNER_NAME_REQUIRED", message: "\u0627\u0633\u0645 \u0635\u0627\u062D\u0628 \u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0637\u0644\u0648\u0628." });
+  }
+  if (!wilaya || !String(wilaya).trim()) {
+    return res.status(400).json({ error: "WILAYA_REQUIRED", message: "\u0627\u0644\u0648\u0644\u0627\u064A\u0629 \u0645\u0637\u0644\u0648\u0628\u0629." });
+  }
+  if (!city || String(city).trim().length < 2) {
+    return res.status(400).json({ error: "CITY_REQUIRED", message: "\u0627\u0644\u0645\u062F\u064A\u0646\u0629 \u0645\u0637\u0644\u0648\u0628\u0629." });
+  }
+  if (!phone || String(phone).replace(/\D/g, "").length < 9) {
+    return res.status(400).json({ error: "PHONE_REQUIRED", message: "\u0631\u0642\u0645 \u0627\u0644\u0647\u0627\u062A\u0641 \u0645\u0637\u0644\u0648\u0628 (9 \u0623\u0631\u0642\u0627\u0645 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644)." });
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+    return res.status(400).json({ error: "EMAIL_INVALID", message: "\u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u063A\u064A\u0631 \u0635\u062D\u064A\u062D." });
+  }
+  const branches = Number(branchesCount);
+  if (!Number.isFinite(branches) || branches < 1 || branches > 200) {
+    return res.status(400).json({ error: "BRANCHES_INVALID", message: "\u0639\u062F\u062F \u0627\u0644\u0641\u0631\u0648\u0639 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 \u0631\u0642\u0645\u0627\u064B \u0628\u064A\u0646 1 \u0648 200." });
+  }
+  const application = db.createTenantApplication({
+    storeName: String(storeName).trim(),
+    ownerName: String(ownerName).trim(),
+    wilaya: String(wilaya).trim(),
+    city: String(city).trim(),
+    phone: String(phone).trim(),
+    email: email ? String(email).trim() : void 0,
+    branchesCount: Math.round(branches),
+    businessType: businessType ? String(businessType).trim() : "\u063A\u064A\u0631 \u0645\u062D\u062F\u062F",
+    notes: notes ? String(notes).trim() : void 0,
+    source: source === "merchant" ? "merchant" : "client",
+    registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG
+  });
+  res.json({
+    success: true,
+    application: {
+      id: application.id,
+      storeName: application.storeName,
+      status: application.status,
+      registrationFeeSdg: application.registrationFeeSdg,
+      createdAt: application.createdAt
+    },
+    message: `\u062A\u0645 \u0627\u0633\u062A\u0644\u0627\u0645 \u0637\u0644\u0628 \u0645\u062A\u062C\u0631 \xAB${application.storeName}\xBB. \u0633\u064A\u062A\u0648\u0627\u0635\u0644 \u0645\u0639\u0643 \u0641\u0631\u064A\u0642 \u0633\u0646\u062F \u0628\u0639\u062F \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0629\u060C \u0648\u0642\u064A\u0645\u0629 \u0627\u0644\u062A\u0633\u062C\u064A\u0644 ${TENANT_REGISTRATION_FEE_SDG.toLocaleString("en-US")} \u062C.\u0633.`
+  });
+});
+apiRouter.get("/tenant-applications/status", (req, res) => {
+  const code = String(req.query.code || "").trim().toUpperCase();
+  if (!code) {
+    return res.status(400).json({ error: "CODE_REQUIRED", message: "\u0623\u062F\u062E\u0644 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644." });
+  }
+  const application = db.getTenantApplications().find((a) => (a.activationCode || "").toUpperCase() === code);
+  if (!application) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "\u0644\u0627 \u064A\u0648\u062C\u062F \u0637\u0644\u0628 \u0628\u0647\u0630\u0627 \u0627\u0644\u0643\u0648\u062F." });
+  }
+  res.json({
+    application: {
+      id: application.id,
+      storeName: application.storeName,
+      status: application.status,
+      registrationFeeSdg: application.registrationFeeSdg,
+      activationCode: application.activationCode,
+      reviewedAt: application.reviewedAt
+    }
+  });
+});
+apiRouter.get("/admin/tenant-applications", (req, res) => {
+  const status = String(req.query.status || "all");
+  const all = db.getTenantApplications();
+  const filtered = status === "all" ? all : all.filter((a) => a.status === status);
+  res.json({
+    applications: filtered.sort((a, b) => a.createdAt < b.createdAt ? 1 : -1),
+    counts: {
+      pending: all.filter((a) => a.status === "pending").length,
+      approved: all.filter((a) => a.status === "approved").length,
+      rejected: all.filter((a) => a.status === "rejected").length,
+      pendingBranches: all.filter((a) => a.status === "pending").reduce((s, a) => s + a.branchesCount, 0),
+      feesExpectedSdg: all.filter((a) => a.status === "pending").reduce((s, a) => s + (a.registrationFeeSdg || 0), 0),
+      feesCollectedSdg: all.filter((a) => a.status === "approved").reduce((s, a) => s + (a.registrationFeeSdg || 0), 0)
+    },
+    pricing: { registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG, currency: "SDG" }
+  });
+});
+apiRouter.post("/admin/tenant-applications/:id/review", (req, res) => {
+  const { decision, note, registrationFeeSdg, codeSentVia } = req.body || {};
+  if (decision !== "approved" && decision !== "rejected") {
+    return res.status(400).json({ error: "BAD_DECISION", message: "\u0627\u0644\u0642\u0631\u0627\u0631 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 approved \u0623\u0648 rejected." });
+  }
+  const existing = db.getTenantApplication(req.params.id);
+  if (!existing) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  }
+  const application = db.reviewTenantApplication(req.params.id, {
+    decision,
+    note,
+    reviewedBy: req.actorName || "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F",
+    registrationFeeSdg: registrationFeeSdg === void 0 || registrationFeeSdg === null || registrationFeeSdg === "" ? void 0 : Number(registrationFeeSdg),
+    activationCode: decision === "approved" ? existing.activationCode || newActivationCode() : void 0,
+    codeSentVia: codeSentVia === "whatsapp" || codeSentVia === "sms" || codeSentVia === "email" ? codeSentVia : void 0
+  });
+  res.json({
+    success: true,
+    application,
+    message: decision === "approved" ? `\u062A\u0645\u062A \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629. \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644: ${application?.activationCode} \u2014 \u0642\u064A\u0645\u0629 \u0627\u0644\u062A\u0633\u062C\u064A\u0644 ${(application?.registrationFeeSdg || 0).toLocaleString("en-US")} \u062C.\u0633.` : "\u062A\u0645 \u0631\u0641\u0636 \u0627\u0644\u0637\u0644\u0628."
+  });
+});
+apiRouter.post("/admin/tenant-applications/:id/mark-sent", (req, res) => {
+  const via = req.body?.via;
+  if (via !== "whatsapp" && via !== "sms" && via !== "email") {
+    return res.status(400).json({ error: "BAD_CHANNEL", message: "\u0642\u0646\u0627\u0629 \u0627\u0644\u0625\u0631\u0633\u0627\u0644 \u063A\u064A\u0631 \u0645\u0639\u0631\u0648\u0641\u0629." });
+  }
+  const application = db.markTenantApplicationCodeSent(req.params.id, via);
+  if (!application) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "\u0644\u0627 \u064A\u0648\u062C\u062F \u0643\u0648\u062F \u0645\u064F\u0635\u062F\u0631 \u0644\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628." });
+  }
+  res.json({ success: true, application });
+});
+apiRouter.delete("/admin/tenant-applications/:id", (req, res) => {
+  const removed = db.deleteTenantApplication(req.params.id);
+  if (!removed) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   }
   res.json({ success: true });
 });

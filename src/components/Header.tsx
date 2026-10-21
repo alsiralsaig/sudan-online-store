@@ -23,9 +23,11 @@ import {
   CheckCircle,
   Sparkles,
   LayoutDashboard,
+  PlusCircle,
 } from 'lucide-react';
 import type { InventoryAlert } from '../types/index.ts';
 import { SanadLogo } from './Common/SanadLogo.tsx';
+import { TenantApplicationModal } from './Common/TenantApplicationModal.tsx';
 
 interface HeaderProps {
   currentTab: string;
@@ -65,6 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
   onRefreshAlerts,
 }) => {
   const [isAlertsOpen, setIsAlertsOpen] = React.useState(false);
+  const [isTenantModalOpen, setIsTenantModalOpen] = React.useState(false);
   const getRoleLabel = (role: string) => {
     switch (role) {
       case 'owner':
@@ -186,6 +189,16 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             </button>
           </div>
+
+          {/* Store application — same entry point as the shopper app */}
+          <button
+            onClick={() => setIsTenantModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 transition-all whitespace-nowrap"
+            title="طلب فتح متجر جديد على منصة سند"
+          >
+            <PlusCircle className="w-3.5 h-3.5 text-emerald-700" />
+            <span>طلب متجر</span>
+          </button>
           {/* Offline indicator & simulation button */}
           <button
             onClick={onToggleSimulateOffline}
@@ -511,6 +524,12 @@ export const Header: React.FC<HeaderProps> = ({
           <span>إدارة المنصة المركزية</span>
         </button>
       </div>
+
+      <TenantApplicationModal
+        isOpen={isTenantModalOpen}
+        onClose={() => setIsTenantModalOpen(false)}
+        source="merchant"
+      />
     </header>
   );
 };

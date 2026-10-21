@@ -2720,3 +2720,202 @@ apiRouter.delete('/admin/market-ads/:id', (req, res) => {
   }
   res.json({ success: true });
 });
+
+/* ------------------------------------------------------------------ */
+/*  Store applications — a shop applies to join the platform            */
+/* ------------------------------------------------------------------ */
+
+const TENANT_REGISTRATION_FEE_SDG = Number(process.env.TENANT_REGISTRATION_FEE_SDG || 50000);
+
+const SUDAN_WILAYAS = [
+  'الخرطوم', 'الجزيرة', 'النيل الأزرق', 'النيل الأبيض', 'البحر الأحمر', 'كسلا',
+  'القضارف', 'سنار', 'النيل الأزرق الشمالي', 'الشمالية', 'نهر النيل', 'شمال كردفان',
+  'جنوب كردفان', 'غرب كردفان', 'شمال دارفور', 'جنوب دارفور', 'شرق دارفور',
+  'غرب دارفور', 'وسط دارفور',
+];
+
+/** Human-friendly activation code, e.g. SND-7K2M-9Q4P. */
+function newActivationCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const block = (n: number) =>
+    Array.from({ length: n }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+  return `SND-${block(4)}-${block(4)}`;
+}
+
+apiRouter.get('/tenant-applications/pricing', (_req, res) => {
+  res.json({
+    registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG,
+    currency: 'SDG',
+    wilayas: SUDAN_WILAYAS,
+    businessTypes: [
+      'بقالات ومواد غذائية', 'مطاعم وكافيهات', 'ملابس وأحذية', 'إلكترونيات وجوالات',
+      'صيدلية ومستلزمات طبية', 'أجهزة منزلية', 'مواد بناء', 'قطع غيار وسيارات',
+      'مستحضرات تجميل', 'مكتبات وأدوات مدرسية', 'خدمات أخرى',
+    ],
+  });
+});
+
+/** Public: submit an application. Always lands as `pending`. */
+apiRouter.post('/tenant-applications', (req, res) => {
+  const {
+    storeName, ownerName, wilaya, city, phone, email,
+    branchesCount, businessType, notes, source,
+  } = req.body || {};
+
+  if (!storeName || String(storeName).trim().length < 3) {
+    return res.status(400).json({ error: 'STORE_NAME_REQUIRED', message: 'اسم المتجر مطلوب (3 أحرف على الأقل).' });
+  }
+  if (!ownerName || String(ownerName).trim().length < 3) {
+    return res.status(400).json({ error: 'OWNER_NAME_REQUIRED', message: 'اسم صاحب المتجر مطلوب.' });
+  }
+  if (!wilaya || !String(wilaya).trim()) {
+    return res.status(400).json({ error: 'WILAYA_REQUIRED', message: 'الولاية مطلوبة.' });
+  }
+  if (!city || String(city).trim().length < 2) {
+    return res.status(400).json({ error: 'CITY_REQUIRED', message: 'المدينة مطلوبة.' });
+  }
+  if (!phone || String(phone).replace(/\D/g, '').length < 9) {
+    return res.status(400).json({ error: 'PHONE_REQUIRED', message: 'رقم الهاتف مطلوب (9 أرقام على الأقل).' });
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+    return res.status(400).json({ error: 'EMAIL_INVALID', message: 'البريد الإلكتروني غير صحيح.' });
+  }
+  const branches = Number(branchesCount);
+  if (!Number.isFinite(branches) || branches < 1 || branches > 200) {
+    return res.status(400).json({ error: 'BRANCHES_INVALID', message: 'عدد الفروع يجب أن يكون رقماً بين 1 و 200.' });
+  }
+
+  const application = db.createTenantApplication({
+    storeName: String(storeName).trim(),
+    ownerName: String(ownerName).trim(),
+    wilaya: String(wilaya).trim(),
+    city: String(city).trim(),
+    phone: String(phone).trim(),
+    email: email ? String(email).trim() : undefined,
+    branchesCount: Math.round(branches),
+    businessType: businessType ? String(businessType).trim() : 'غير محدد',
+    notes: notes ? String(notes).trim() : undefined,
+    source: source === 'merchant' ? 'merchant' : 'client',
+    registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG,
+  });
+
+  res.json({
+    success: true,
+    application: {
+      id: application.id,
+      storeName: application.storeName,
+      status: application.status,
+      registrationFeeSdg: application.registrationFeeSdg,
+      createdAt: application.createdAt,
+    },
+    message: `تم استلام طلب متجر «${application.storeName}». سيتواصل معك فريق سند بعد المراجعة، وقيمة التسجيل ${TENANT_REGISTRATION_FEE_SDG.toLocaleString('en-US')} ج.س.`,
+  });
+});
+
+/** Public: an applicant can check the outcome with the activation code. */
+apiRouter.get('/tenant-applications/status', (req, res) => {
+  const code = String(req.query.code || '').trim().toUpperCase();
+  if (!code) {
+    return res.status(400).json({ error: 'CODE_REQUIRED', message: 'أدخل كود الدخول.' });
+  }
+
+  const application = db
+    .getTenantApplications()
+    .find((a) => (a.activationCode || '').toUpperCase() === code);
+
+  if (!application) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'لا يوجد طلب بهذا الكود.' });
+  }
+
+  res.json({
+    application: {
+      id: application.id,
+      storeName: application.storeName,
+      status: application.status,
+      registrationFeeSdg: application.registrationFeeSdg,
+      activationCode: application.activationCode,
+      reviewedAt: application.reviewedAt,
+    },
+  });
+});
+
+/** Admin: the review queue. */
+apiRouter.get('/admin/tenant-applications', (req, res) => {
+  const status = String(req.query.status || 'all');
+  const all = db.getTenantApplications();
+  const filtered = status === 'all' ? all : all.filter((a) => a.status === status);
+
+  res.json({
+    applications: filtered.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
+    counts: {
+      pending: all.filter((a) => a.status === 'pending').length,
+      approved: all.filter((a) => a.status === 'approved').length,
+      rejected: all.filter((a) => a.status === 'rejected').length,
+      pendingBranches: all.filter((a) => a.status === 'pending').reduce((s, a) => s + a.branchesCount, 0),
+      feesExpectedSdg: all
+        .filter((a) => a.status === 'pending')
+        .reduce((s, a) => s + (a.registrationFeeSdg || 0), 0),
+      feesCollectedSdg: all
+        .filter((a) => a.status === 'approved')
+        .reduce((s, a) => s + (a.registrationFeeSdg || 0), 0),
+    },
+    pricing: { registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG, currency: 'SDG' },
+  });
+});
+
+/** Admin: approve (issues the login code) or reject. */
+apiRouter.post('/admin/tenant-applications/:id/review', (req, res) => {
+  const { decision, note, registrationFeeSdg, codeSentVia } = req.body || {};
+
+  if (decision !== 'approved' && decision !== 'rejected') {
+    return res.status(400).json({ error: 'BAD_DECISION', message: 'القرار يجب أن يكون approved أو rejected.' });
+  }
+
+  const existing = db.getTenantApplication(req.params.id);
+  if (!existing) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'الطلب غير موجود.' });
+  }
+
+  const application = db.reviewTenantApplication(req.params.id, {
+    decision,
+    note,
+    reviewedBy: (req as unknown as AuthenticatedRequest).actorName || 'إدارة سند',
+    registrationFeeSdg:
+      registrationFeeSdg === undefined || registrationFeeSdg === null || registrationFeeSdg === ''
+        ? undefined
+        : Number(registrationFeeSdg),
+    activationCode:
+      decision === 'approved' ? existing.activationCode || newActivationCode() : undefined,
+    codeSentVia: codeSentVia === 'whatsapp' || codeSentVia === 'sms' || codeSentVia === 'email' ? codeSentVia : undefined,
+  });
+
+  res.json({
+    success: true,
+    application,
+    message:
+      decision === 'approved'
+        ? `تمت الموافقة. كود الدخول: ${application?.activationCode} — قيمة التسجيل ${(application?.registrationFeeSdg || 0).toLocaleString('en-US')} ج.س.`
+        : 'تم رفض الطلب.',
+  });
+});
+
+/** Admin: log that the code was delivered to the applicant. */
+apiRouter.post('/admin/tenant-applications/:id/mark-sent', (req, res) => {
+  const via = req.body?.via;
+  if (via !== 'whatsapp' && via !== 'sms' && via !== 'email') {
+    return res.status(400).json({ error: 'BAD_CHANNEL', message: 'قناة الإرسال غير معروفة.' });
+  }
+  const application = db.markTenantApplicationCodeSent(req.params.id, via);
+  if (!application) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'لا يوجد كود مُصدر لهذا الطلب.' });
+  }
+  res.json({ success: true, application });
+});
+
+apiRouter.delete('/admin/tenant-applications/:id', (req, res) => {
+  const removed = db.deleteTenantApplication(req.params.id);
+  if (!removed) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'الطلب غير موجود.' });
+  }
+  res.json({ success: true });
+});

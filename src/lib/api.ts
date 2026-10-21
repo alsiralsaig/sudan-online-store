@@ -590,6 +590,54 @@ class ApiClient {
     return this.request(`/admin/market-ads/${id}`, { method: 'DELETE' });
   }
 
+  /* Store (tenant) applications */
+  public async getTenantApplicationConfig(): Promise<{
+    registrationFeeSdg: number; currency: string; wilayas: string[]; businessTypes: string[];
+  }> {
+    return this.request('/tenant-applications/pricing');
+  }
+
+  public async submitTenantApplication(payload: any): Promise<{
+    success: boolean; application: any; message: string;
+  }> {
+    return this.request('/tenant-applications', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async getTenantApplicationStatus(code: string): Promise<{ application: any }> {
+    return this.request(`/tenant-applications/status?code=${encodeURIComponent(code)}`);
+  }
+
+  public async getAdminTenantApplications(status: string = 'all'): Promise<{
+    applications: any[]; counts: any; pricing: any;
+  }> {
+    return this.request(`/admin/tenant-applications?status=${encodeURIComponent(status)}`);
+  }
+
+  public async reviewTenantApplication(
+    id: string,
+    decision: 'approved' | 'rejected',
+    options: { note?: string; registrationFeeSdg?: number; codeSentVia?: 'whatsapp' | 'sms' | 'email' } = {}
+  ): Promise<{ success: boolean; application: any; message: string }> {
+    return this.request(`/admin/tenant-applications/${id}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, ...options }),
+    });
+  }
+
+  public async markTenantApplicationSent(id: string, via: 'whatsapp' | 'sms' | 'email'): Promise<{ success: boolean }> {
+    return this.request(`/admin/tenant-applications/${id}/mark-sent`, {
+      method: 'POST',
+      body: JSON.stringify({ via }),
+    });
+  }
+
+  public async adminDeleteTenantApplication(id: string): Promise<{ success: boolean }> {
+    return this.request(`/admin/tenant-applications/${id}`, { method: 'DELETE' });
+  }
+
   public async getAdminTenants(): Promise<{ tenants: any[] }> {
     return this.request('/admin/tenants');
   }
