@@ -2579,6 +2579,23 @@ function buildSystemInstruction(mode: string, context: any): string {
 - التاريخ والوقت: ${now.toLocaleString('ar-EG')}`;
 }
 
+/** Diagnostic: which models this API key can actually use. */
+apiRouter.get('/assistant/models', async (_req, res) => {
+  try {
+    const ai = await getAssistantClient();
+    if (!ai) return res.json({ ok: false, reason: 'NO_API_KEY' });
+    const pager: any = await ai.models.list();
+    const names: string[] = [];
+    for await (const m of pager) {
+      names.push(m.name);
+      if (names.length >= 60) break;
+    }
+    res.json({ ok: true, count: names.length, models: names });
+  } catch (err: any) {
+    res.json({ ok: false, reason: String(err?.message || err).slice(0, 200) });
+  }
+});
+
 apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   try {
     const { message, mode, context, history } = req.body || {};

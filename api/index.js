@@ -5138,6 +5138,21 @@ function buildSystemInstruction(mode, context) {
 - \u0627\u0644\u0641\u0631\u0639: ${context?.branchName || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A"}
 - \u0627\u0644\u062A\u0627\u0631\u064A\u062E \u0648\u0627\u0644\u0648\u0642\u062A: ${now.toLocaleString("ar-EG")}`;
 }
+apiRouter.get("/assistant/models", async (_req, res) => {
+  try {
+    const ai = await getAssistantClient();
+    if (!ai) return res.json({ ok: false, reason: "NO_API_KEY" });
+    const pager = await ai.models.list();
+    const names = [];
+    for await (const m of pager) {
+      names.push(m.name);
+      if (names.length >= 60) break;
+    }
+    res.json({ ok: true, count: names.length, models: names });
+  } catch (err) {
+    res.json({ ok: false, reason: String(err?.message || err).slice(0, 200) });
+  }
+});
 apiRouter.post("/assistant/chat", async (req, res) => {
   try {
     const { message, mode, context, history } = req.body || {};
