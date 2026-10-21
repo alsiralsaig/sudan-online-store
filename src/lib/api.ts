@@ -734,6 +734,25 @@ class ApiClient {
     });
   }
 
+  /** Admin: day-by-day report for one banner (defaults to everything recorded). */
+  public async getMarketBannerReport(
+    id: string,
+    range: { from?: string; to?: string } = {}
+  ): Promise<{
+    success: boolean;
+    banner: any;
+    from: string;
+    to: string;
+    days: Array<{ date: string; impressions: number; clicks: number; ctr: number }>;
+    totals: { impressions: number; clicks: number; ctr: number };
+  }> {
+    const qs = new URLSearchParams();
+    if (range.from) qs.set('from', range.from);
+    if (range.to) qs.set('to', range.to);
+    const q = qs.toString();
+    return this.request(`/admin/market-banners/${id}/report${q ? `?${q}` : ''}`);
+  }
+
   /** Admin: zero both counters (clicks + impressions) for one banner. */
   public async resetMarketBannerClicks(id: string): Promise<{ success: boolean; banner: any }> {
     return this.request(`/admin/market-banners/${id}/reset-clicks`, { method: 'POST' });

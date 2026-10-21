@@ -16,7 +16,9 @@ import {
   RotateCcw,
   Eye as EyeIcon,
   TrendingUp,
+  FileBarChart,
 } from 'lucide-react';
+import { MarketBannerReportModal } from './MarketBannerReportModal.tsx';
 import { api } from '../../lib/api.ts';
 
 /** CTR as a one-decimal percentage string. */
@@ -74,6 +76,7 @@ export const MarketBannersAdminView: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [reportFor, setReportFor] = useState<Banner | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
@@ -427,6 +430,12 @@ export const MarketBannersAdminView: React.FC = () => {
                     <ArrowDown className="w-3 h-3" /> أخّر
                   </button>
                   <button
+                    onClick={() => setReportFor(banner)}
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 flex items-center gap-1"
+                  >
+                    <FileBarChart className="w-3 h-3" /> تقرير
+                  </button>
+                  <button
                     onClick={() => resetClicks(banner)}
                     disabled={busyId === banner.id || (!banner.clicks && !banner.impressions)}
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-800 text-slate-300 hover:text-white flex items-center gap-1 disabled:opacity-40"
@@ -445,6 +454,10 @@ export const MarketBannersAdminView: React.FC = () => {
             </div>
           ))}
         </div>
+      )}
+
+      {reportFor && (
+        <MarketBannerReportModal banner={reportFor} onClose={() => setReportFor(null)} />
       )}
     </div>
   );

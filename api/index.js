@@ -2175,12 +2175,25 @@ var Database = class {
   getMarketBanner(id) {
     return (this.data.marketBanners || []).find((b) => b.id === id) || null;
   }
-  /** Counts one shopper tap. Cheap write — only the two click fields change. */
+  /** UTC day key — keeps reports stable across serverless instances. */
+  dayKey(d = /* @__PURE__ */ new Date()) {
+    return d.toISOString().slice(0, 10);
+  }
+  bumpDaily(banner, field, count = 1) {
+    const day = this.dayKey();
+    if (!banner.daily) banner.daily = {};
+    const row = banner.daily[day] || { i: 0, c: 0 };
+    row[field] += count;
+    banner.daily[day] = row;
+    if (!banner.statsSince) banner.statsSince = day;
+  }
+  /** Counts one shopper tap. Cheap write — only the counter fields change. */
   trackMarketBannerClick(id) {
     const banner = (this.data.marketBanners || []).find((b) => b.id === id);
     if (!banner) return null;
     banner.clicks = (banner.clicks || 0) + 1;
     banner.lastClickedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.bumpDaily(banner, "c");
     this.save();
     return banner;
   }
@@ -2190,6 +2203,7 @@ var Database = class {
     if (!banner) return null;
     banner.impressions = (banner.impressions || 0) + 1;
     banner.lastImpressionAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.bumpDaily(banner, "i");
     this.save();
     return banner;
   }
@@ -2202,6 +2216,7 @@ var Database = class {
       if (!wanted.has(banner.id)) continue;
       banner.impressions = (banner.impressions || 0) + 1;
       banner.lastImpressionAt = now;
+      this.bumpDaily(banner, "i");
       touched += 1;
     }
     if (touched) this.save();
@@ -2215,8 +2230,50 @@ var Database = class {
     banner.impressions = 0;
     banner.lastClickedAt = void 0;
     banner.lastImpressionAt = void 0;
+    banner.daily = {};
+    banner.statsSince = this.dayKey();
     this.save();
     return banner;
+  }
+  /**
+   * Day-by-day performance for one banner, gaps filled with zeros so a report
+   * never has holes. `toDay` is inclusive.
+   */
+  getMarketBannerReport(id, fromDay, toDay) {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+    const today = this.dayKey();
+    const keys = Object.keys(banner.daily || {}).sort();
+    const DAY = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+    const to = toDay && DAY.test(toDay) ? toDay : today;
+    const from = fromDay && DAY.test(fromDay) ? fromDay : keys[0] || banner.statsSince || to;
+    const days = [];
+    const cursor = /* @__PURE__ */ new Date(from + "T00:00:00.000Z");
+    const end = /* @__PURE__ */ new Date(to + "T00:00:00.000Z");
+    for (let guard = 0; cursor <= end && guard < 400; guard++) {
+      const key = cursor.toISOString().slice(0, 10);
+      const row = (banner.daily || {})[key] || { i: 0, c: 0 };
+      days.push({
+        date: key,
+        impressions: row.i,
+        clicks: row.c,
+        ctr: row.i ? Number((row.c / row.i * 100).toFixed(1)) : 0
+      });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    const impressions = days.reduce((a, d) => a + d.impressions, 0);
+    const clicks = days.reduce((a, d) => a + d.clicks, 0);
+    return {
+      banner,
+      from: days[0] ? days[0].date : from,
+      to,
+      days,
+      totals: {
+        impressions,
+        clicks,
+        ctr: impressions ? Number((clicks / impressions * 100).toFixed(1)) : 0
+      }
+    };
   }
   deleteMarketBanner(id) {
     const before = (this.data.marketBanners || []).length;
@@ -5891,6 +5948,13 @@ apiRouter.put("/admin/market-banners/:id", (req, res) => {
   const banner = db.updateMarketBanner(req.params.id, patch);
   if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, banner });
+});
+apiRouter.get("/admin/market-banners/:id/report", (req, res) => {
+  const from = typeof req.query.from === "string" ? req.query.from : void 0;
+  const to = typeof req.query.to === "string" ? req.query.to : void 0;
+  const report = db.getMarketBannerReport(req.params.id, from, to);
+  if (!report) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  res.json({ success: true, ...report });
 });
 apiRouter.post("/admin/market-banners/:id/reset-clicks", (req, res) => {
   const banner = db.resetMarketBannerClicks(req.params.id);

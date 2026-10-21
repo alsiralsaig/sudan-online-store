@@ -1962,12 +1962,27 @@ class Database {
     return (this.data.marketBanners || []).find((b) => b.id === id) || null;
   }
 
-  /** Counts one shopper tap. Cheap write — only the two click fields change. */
+  /** UTC day key — keeps reports stable across serverless instances. */
+  private dayKey(d = new Date()): string {
+    return d.toISOString().slice(0, 10);
+  }
+
+  private bumpDaily(banner: MarketBanner, field: 'i' | 'c', count = 1): void {
+    const day = this.dayKey();
+    if (!banner.daily) banner.daily = {};
+    const row = banner.daily[day] || { i: 0, c: 0 };
+    row[field] += count;
+    banner.daily[day] = row;
+    if (!banner.statsSince) banner.statsSince = day;
+  }
+
+  /** Counts one shopper tap. Cheap write — only the counter fields change. */
   public trackMarketBannerClick(id: string): MarketBanner | null {
     const banner = (this.data.marketBanners || []).find((b) => b.id === id);
     if (!banner) return null;
     banner.clicks = (banner.clicks || 0) + 1;
     banner.lastClickedAt = new Date().toISOString();
+    this.bumpDaily(banner, 'c');
     this.save();
     return banner;
   }
@@ -1978,6 +1993,7 @@ class Database {
     if (!banner) return null;
     banner.impressions = (banner.impressions || 0) + 1;
     banner.lastImpressionAt = new Date().toISOString();
+    this.bumpDaily(banner, 'i');
     this.save();
     return banner;
   }
@@ -1991,6 +2007,7 @@ class Database {
       if (!wanted.has(banner.id)) continue;
       banner.impressions = (banner.impressions || 0) + 1;
       banner.lastImpressionAt = now;
+      this.bumpDaily(banner, 'i');
       touched += 1;
     }
     if (touched) this.save();
@@ -2005,8 +2022,66 @@ class Database {
     banner.impressions = 0;
     banner.lastClickedAt = undefined;
     banner.lastImpressionAt = undefined;
+    banner.daily = {};
+    banner.statsSince = this.dayKey();
     this.save();
     return banner;
+  }
+
+  /**
+   * Day-by-day performance for one banner, gaps filled with zeros so a report
+   * never has holes. `toDay` is inclusive.
+   */
+  public getMarketBannerReport(
+    id: string,
+    fromDay?: string,
+    toDay?: string
+  ): {
+    banner: MarketBanner;
+    from: string;
+    to: string;
+    days: Array<{ date: string; impressions: number; clicks: number; ctr: number }>;
+    totals: { impressions: number; clicks: number; ctr: number };
+  } | null {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+
+    const today = this.dayKey();
+    const keys = Object.keys(banner.daily || {}).sort();
+    const DAY = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+    const to = toDay && DAY.test(toDay) ? toDay : today;
+    const from = fromDay && DAY.test(fromDay) ? fromDay : keys[0] || banner.statsSince || to;
+
+    const days: Array<{ date: string; impressions: number; clicks: number; ctr: number }> = [];
+    const cursor = new Date(from + 'T00:00:00.000Z');
+    const end = new Date(to + 'T00:00:00.000Z');
+    // guard against absurd ranges (e.g. 1900 → today)
+    for (let guard = 0; cursor <= end && guard < 400; guard++) {
+      const key = cursor.toISOString().slice(0, 10);
+      const row = (banner.daily || {})[key] || { i: 0, c: 0 };
+      days.push({
+        date: key,
+        impressions: row.i,
+        clicks: row.c,
+        ctr: row.i ? Number(((row.c / row.i) * 100).toFixed(1)) : 0,
+      });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    const impressions = days.reduce((a, d) => a + d.impressions, 0);
+    const clicks = days.reduce((a, d) => a + d.clicks, 0);
+
+    return {
+      banner,
+      from: days[0] ? days[0].date : from,
+      to,
+      days,
+      totals: {
+        impressions,
+        clicks,
+        ctr: impressions ? Number(((clicks / impressions) * 100).toFixed(1)) : 0,
+      },
+    };
   }
 
   public deleteMarketBanner(id: string): boolean {

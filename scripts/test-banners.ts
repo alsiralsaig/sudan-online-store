@@ -105,6 +105,39 @@ await call(`/api/admin/market-banners/${measured.id}`, { method: 'DELETE' });
 const resetAll = await call('/api/admin/market-banners/bnr_appliances/reset-clicks', { method: 'POST' });
 ok('reset clears clicks AND views', resetAll.body.banner.clicks === 0 && resetAll.body.banner.impressions === 0);
 
+console.log('\n=== advertiser report ===');
+const today = new Date().toISOString().slice(0, 10);
+const dayAgo = (n: number) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+
+const rb = (await call('/api/admin/market-banners', json({
+  title: 'بانر تقرير', imageUrl: '/assets/images/sanad_pos_hero_1792173270140.jpg', advertiserName: 'محل التجربة',
+}))).body.banner;
+for (let i = 0; i < 5; i++) await call(`/api/market-banners/${rb.id}/impression`, { method: 'POST' });
+await call(`/api/market-banners/${rb.id}/click`, { method: 'POST' });
+await call(`/api/market-banners/${rb.id}/click`, { method: 'POST' });
+
+const rep = await call(`/api/admin/market-banners/${rb.id}/report?from=${dayAgo(6)}&to=${today}`);
+ok('report loads', rep.code === 200, JSON.stringify(rep.body).slice(0, 80));
+ok('7-day window has 7 rows', rep.body.days.length === 7, String(rep.body.days.length));
+ok('totals match counters', rep.body.totals.impressions === 5 && rep.body.totals.clicks === 2,
+  `${rep.body.totals.impressions}/${rep.body.totals.clicks}`);
+ok('today CTR = 40%', rep.body.days[6].ctr === 40, String(rep.body.days[6].ctr));
+ok('empty days filled with zero', rep.body.days[0].impressions === 0 && rep.body.days[0].ctr === 0);
+ok('banner meta in report', rep.body.banner.advertiserName === 'محل التجربة');
+ok('default range starts at first data day',
+  (await call(`/api/admin/market-banners/${rb.id}/report`)).body.from === today);
+ok('report for unknown banner 404',
+  (await call('/api/admin/market-banners/nope/report')).code === 404);
+ok('junk from/to falls back', (await call(`/api/admin/market-banners/${rb.id}/report?from=xx&to=1900-01-01`)).code === 200);
+
+const longRange = await call(`/api/admin/market-banners/${rb.id}/report?from=2020-01-01&to=${today}`);
+ok('absurd range is capped (<=400 rows)', longRange.body.days.length <= 400, String(longRange.body.days.length));
+
+const afterReset = await call(`/api/admin/market-banners/${rb.id}/reset-clicks`, { method: 'POST' });
+const repAfter = await call(`/api/admin/market-banners/${rb.id}/report?from=${dayAgo(6)}&to=${today}`);
+ok('reset wipes report history', afterReset.body.banner.clicks === 0 && repAfter.body.totals.impressions === 0);
+await call(`/api/admin/market-banners/${rb.id}`, { method: 'DELETE' });
+
 console.log('\n=== delete ===');
 ok('deleted', (await call(`/api/admin/market-banners/${id}`, { method: 'DELETE' })).code === 200);
 ok('gone from public feed', !(await call('/api/market-banners')).body.banners.some((b: any) => b.id === id));

@@ -3381,6 +3381,15 @@ apiRouter.put('/admin/market-banners/:id', (req, res) => {
   res.json({ success: true, banner });
 });
 
+/** Advertiser report: day-by-day views, taps and CTR (defaults to this month). */
+apiRouter.get('/admin/market-banners/:id/report', (req, res) => {
+  const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+  const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+  const report = db.getMarketBannerReport(req.params.id, from, to);
+  if (!report) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
+  res.json({ success: true, ...report });
+});
+
 apiRouter.post('/admin/market-banners/:id/reset-clicks', (req, res) => {
   const banner = db.resetMarketBannerClicks(req.params.id);
   if (!banner) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });

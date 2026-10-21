@@ -807,5 +807,9 @@ export interface MarketBanner {
   /** How many times the banner was actually on screen (CTR = clicks / impressions). */
   impressions?: number;
   lastImpressionAt?: string;
+  /** Per-day counters (UTC 'YYYY-MM-DD') so monthly reports are real. */
+  daily?: Record<string, { i: number; c: number }>;
+  /** First day the counters started recording. */
+  statsSince?: string;
   createdAt: string;
 }
