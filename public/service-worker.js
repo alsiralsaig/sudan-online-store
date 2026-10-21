@@ -1,5 +1,5 @@
 // Sanad POS & Commerce Service Worker (PWA)
-const CACHE_NAME = 'sanad-pwa-v6.0';
+const CACHE_NAME = 'sanad-pwa-v7.0';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -51,34 +51,66 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Never let the service worker serve HTML for an asset request
-  const isAsset = /\.(png|jpe?g|gif|svg|ico|webp|css|js|woff2?|ttf|otf)$/i.test(url.pathname);
+  // Only handle same-origin requests
+  if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request)
+  const isAsset = /\/assets\/|\.(png|jpe?g|gif|svg|ico|webp|css|js|woff2?|ttf|otf)$/i.test(url.pathname);
+  const isDocument =
+    event.request.mode === 'navigate' ||
+    url.pathname === '/' ||
+    url.pathname === '/index.html';
+
+  // 1) The HTML shell and the service worker itself must NEVER be served stale,
+  //    otherwise a new deploy keeps loading the previous bundle forever.
+  if (isDocument) {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
+            const copy = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
           }
           return networkResponse;
         })
-        .catch(() => {
-          if (event.request.mode === 'navigate') {
-            return caches.match('/') || caches.match('/index.html');
-          }
-          // For assets: return the cache entry, never the HTML shell
-          return cachedResponse || Response.error();
-        });
+        .catch(() => caches.match('/index.html').then((r) => r || caches.match('/')))
+    );
+    return;
+  }
 
-      if (cachedResponse) {
-        // stale-while-revalidate for assets, cache-first for the shell
-        return cachedResponse || fetchPromise;
-      }
-      return isAsset ? fetchPromise : fetchPromise;
+  // 2) Hashed build assets are immutable: cache-first, refresh in background.
+  if (isAsset) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        const networkFetch = fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              const copy = networkResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            }
+            return networkResponse;
+          })
+          .catch(() => cachedResponse || Response.error());
+
+        return cachedResponse || networkFetch;
+      })
+    );
+    return;
+  }
+
+  // 3) Everything else (manifest, icons, images): stale-while-revalidate.
+  event.respondWith(
+    caches.match(event.request).then((cachedResponse) => {
+      const networkFetch = fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const copy = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return networkResponse;
+        })
+        .catch(() => cachedResponse || Response.error());
+
+      return cachedResponse || networkFetch;
     })
   );
 });

@@ -5,9 +5,48 @@ import './index.css';
 // Register PWA Service Worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+    navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' })
       .then(async (reg) => {
         console.log('[PWA] ✅ Service Worker registered with scope:', reg.scope);
+
+        // ---- Keep installed clients on the newest deploy -------------
+        // A waiting worker means a new build is ready: activate it and
+        // reload once so the user never stays on the old bundle.
+        const activateWaiting = () => {
+          if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        };
+
+        activateWaiting();
+        reg.addEventListener('updatefound', () => {
+          const installing = reg.installing;
+          if (!installing) return;
+          installing.addEventListener('statechange', () => {
+            if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+              installing.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        });
+
+        let hasReloaded = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (hasReloaded) return;
+          hasReloaded = true;
+          console.log('[PWA] 🔄 Updated to the latest version — reloading');
+          window.location.reload();
+        });
+
+        const checkForUpdates = () => {
+          reg.update().catch(() => {
+            /* offline — the cached build keeps working */
+          });
+        };
+
+        checkForUpdates();
+        setInterval(checkForUpdates, 60 * 1000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') checkForUpdates();
+        });
+        window.addEventListener('online', checkForUpdates);
 
         // Ask for background sync rights so offline POS sales flush automatically
         try {
