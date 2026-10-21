@@ -196,7 +196,7 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
             title="طلب فتح متجر على منصة سند"
           >
             <Store className="w-4 h-4 text-emerald-700" />
-            <span className="hidden xs:inline sm:inline">طلب متجر</span>
+            <span>طلب متجر</span>
           </button>
 
           {/* Cart Trigger */}
