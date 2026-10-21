@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { usePwaInstall } from "../../lib/usePwaInstall.ts";
 import type { PlatformAppMode } from "./SanadAppModeBar.tsx";
+import { SanadAppIcon, SANAD_APP_META } from "./SanadAppIcon.tsx";
 
 interface SanadAppDownloadModalProps {
   isOpen: boolean;
@@ -61,7 +62,6 @@ export const SanadAppDownloadModal: React.FC<SanadAppDownloadModalProps> = ({
   };
 
   const currentAppMeta = appsInfo[selectedApp];
-  const AppIcon = currentAppMeta.icon;
 
   const handleInstallClick = async () => {
     if (onSwitchMode && selectedApp !== currentMode) {
@@ -80,9 +80,7 @@ export const SanadAppDownloadModal: React.FC<SanadAppDownloadModalProps> = ({
         {/* Header */}
         <div className={`p-5 bg-gradient-to-r ${currentAppMeta.themeColor} text-white flex items-center justify-between relative`}>
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20 shadow-md">
-              <AppIcon className="w-6 h-6 text-white" />
-            </div>
+            <SanadAppIcon app={selectedApp} size="md" />
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-extrabold text-base text-white">تثبيت التطبيق على جوالك</h3>
@@ -113,8 +111,6 @@ export const SanadAppDownloadModal: React.FC<SanadAppDownloadModalProps> = ({
             </label>
             <div className="grid grid-cols-3 gap-2">
               {(["client", "merchant", "super_admin"] as PlatformAppMode[]).map((mode) => {
-                const info = appsInfo[mode];
-                const Icon = info.icon;
                 return (
                   <button
                     key={mode}
@@ -131,8 +127,8 @@ export const SanadAppDownloadModal: React.FC<SanadAppDownloadModalProps> = ({
                         : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
                     }`}
                   >
-                    <Icon className="w-5 h-5 text-emerald-700" />
-                    <span className="text-xs">{info.shortTitle}</span>
+                    <SanadAppIcon app={mode} size="sm" />
+                    <span className="text-xs font-bold">{SANAD_APP_META[mode].label}</span>
                   </button>
                 );
               })}

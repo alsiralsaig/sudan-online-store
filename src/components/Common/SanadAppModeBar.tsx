@@ -1,12 +1,10 @@
 import React, { useState } from "react";
 import {
-  ShoppingBag,
-  Store,
-  Building,
   Smartphone,
   Download,
 } from "lucide-react";
 import { SanadLogo } from "./SanadLogo.tsx";
+import { SanadAppIcon } from "./SanadAppIcon.tsx";
 import { SanadAppDownloadModal } from "./SanadAppDownloadModal.tsx";
 
 export type PlatformAppMode = "client" | "merchant" | "super_admin";
@@ -54,8 +52,8 @@ export const SanadAppModeBar: React.FC<SanadAppModeBarProps> = ({
                     : "text-slate-400 hover:text-white hover:bg-slate-800"
                 }`}
               >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span>تطبيق الجمهور (الزبائن)</span>
+                <SanadAppIcon app="client" size="xs" />
+                <span>السند</span>
               </button>
 
               {/* App 2: تطبيق التاجر المشترك */}
@@ -67,8 +65,8 @@ export const SanadAppModeBar: React.FC<SanadAppModeBarProps> = ({
                     : "text-slate-400 hover:text-white hover:bg-slate-800"
                 }`}
               >
-                <Store className="w-3.5 h-3.5" />
-                <span>تطبيق التاجر (نقطة البيع)</span>
+                <SanadAppIcon app="merchant" size="xs" />
+                <span>تاجر السند</span>
               </button>
 
               {/* App 3: رابط المنصة الإداري */}
@@ -80,8 +78,8 @@ export const SanadAppModeBar: React.FC<SanadAppModeBarProps> = ({
                     : "text-slate-400 hover:text-white hover:bg-slate-800"
                 }`}
               >
-                <Building className="w-3.5 h-3.5" />
-                <span>رابط المنصة الإداري</span>
+                <SanadAppIcon app="super_admin" size="xs" />
+                <span>إدارة السند</span>
               </button>
             </div>
 
