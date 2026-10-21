@@ -17,6 +17,7 @@ import {
   ExternalLink,
   ShoppingBag,
 } from 'lucide-react';
+import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
 import type { ClientMarketAd, ClientPurchaseRequest } from '../types.ts';
 
 interface ClientMarketHomeViewProps {
@@ -28,6 +29,8 @@ interface ClientMarketHomeViewProps {
   ads: ClientMarketAd[];
   purchaseRequests: ClientPurchaseRequest[];
   onOpenCreateModal: () => void;
+  ownerToken?: string;
+  onNavigateTab?: (tab: string) => void;
 }
 
 export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
@@ -38,6 +41,8 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   onOpenCatalog,
   ads,
   purchaseRequests,
+  ownerToken,
+  onNavigateTab,
   onOpenCreateModal,
 }) => {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
@@ -117,14 +122,12 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
             <Search className="w-4 h-4" />
           </button>
 
-          {/* Notification Bell */}
-          <button
-            className="w-9 h-9 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-slate-50 text-slate-700 flex items-center justify-center transition-colors shadow-2xs relative"
-            title="الإشعارات"
-          >
-            <Bell className="w-4 h-4" />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-emerald-600 rounded-full" />
-          </button>
+          {/* Live notifications: feed + phone push opt-in */}
+          <NotificationBell
+            app="client"
+            ownerToken={ownerToken}
+            onNavigate={onNavigateTab}
+          />
         </div>
       </div>
 

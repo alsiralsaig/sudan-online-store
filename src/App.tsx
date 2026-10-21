@@ -46,6 +46,23 @@ import {
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<string>('pos');
+
+  // Deep links from notifications: /?app=merchant&tab=storefront
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (!tab) return;
+    const timer = setTimeout(() => {
+      setCurrentTab(tab);
+      window.dispatchEvent(new CustomEvent('sanad:open-tab', { detail: tab }));
+      // Clean the URL so a refresh does not re-apply an old tab
+      params.delete('tab');
+      const qs = params.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, []);
+
   // 3-App Architecture: 'client' (Shopper/Public), 'merchant' (Store POS), 'super_admin' (Central SaaS Admin)
   const [appMode, setAppMode] = useState<PlatformAppMode>(() => {
     if (typeof window !== 'undefined') {

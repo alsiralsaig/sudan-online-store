@@ -44,6 +44,8 @@ import type {
   InventoryAuditItem,
   MarketAd,
   TenantApplication,
+  AppNotification,
+  PushSubscriptionRecord,
 } from '../types/index.ts';
 
 export interface DatabaseSchema {
@@ -75,6 +77,9 @@ export interface DatabaseSchema {
   inventoryAudits: InventoryAudit[];
   marketAds: MarketAd[];
   tenantApplications: TenantApplication[];
+  notifications: AppNotification[];
+  pushSubscriptions: PushSubscriptionRecord[];
+  pushKeys: { id: string; publicKey: string; privateKey: string; createdAt: string }[];
 }
 
 // Initial seed data for Sudanese market
@@ -1312,6 +1317,49 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
 
 
 /** Ads that ship with the platform so the market is never empty. */
+const INITIAL_NOTIFICATIONS: AppNotification[] = [
+  {
+    id: 'ntf_seed_ad',
+    app: 'admin',
+    kind: 'new_ad',
+    title: 'إعلان جديد بانتظار الموافقة',
+    body: 'لابتوب وماك بوك مستعمل بحالة ممتازة — رسوم النشر مجانية.',
+    linkTab: 'market_ads',
+    read: false,
+    createdAt: '2026-10-20T08:30:00.000Z',
+  },
+  {
+    id: 'ntf_seed_store',
+    app: 'admin',
+    kind: 'new_store_request',
+    title: 'طلب متجر جديد',
+    body: 'مطعم نيل كسلا (كسلا) — فرعان، قيمة التسجيل 50,000 ج.س.',
+    linkTab: 'tenant_requests',
+    read: false,
+    createdAt: '2026-10-20T07:10:00.000Z',
+  },
+  {
+    id: 'ntf_seed_order',
+    app: 'merchant',
+    kind: 'new_order',
+    title: 'طلب شراء جديد من تطبيق الجمهور',
+    body: 'طلب ORD-2026-101 بقيمة 45,000 ج.س — جاهز للتجهيز.',
+    linkTab: 'storefront',
+    read: false,
+    createdAt: '2026-10-20T09:05:00.000Z',
+  },
+  {
+    id: 'ntf_seed_client',
+    app: 'client',
+    kind: 'order_status',
+    title: 'طلبك في الطريق',
+    body: 'طلبك ORD-2026-101 خرج للتوصيل، يرجى الاستعداد لاستلامه.',
+    linkTab: 'track_order',
+    read: false,
+    createdAt: '2026-10-20T09:40:00.000Z',
+  },
+];
+
 const INITIAL_TENANT_APPLICATIONS: TenantApplication[] = [
   {
     id: 'tapp_demo_pending',
@@ -1701,6 +1749,136 @@ class Database {
     return removed;
   }
 
+  /* ------------------------------------------------------------------ */
+  /*  Notifications                                                      */
+  /* ------------------------------------------------------------------ */
+
+  public getNotifications(filter: {
+    app: 'client' | 'merchant' | 'admin';
+    ownerToken?: string;
+    tenantId?: string;
+    limit?: number;
+  }): AppNotification[] {
+    const all = this.data.notifications || [];
+    const rows = all
+      .filter((n) => n.app === filter.app)
+      .filter((n) => {
+        // Device-targeted notifications only go to their owner
+        if (n.recipientToken) return !!filter.ownerToken && n.recipientToken === filter.ownerToken;
+        return true;
+      })
+      .filter((n) => {
+        if (!n.tenantId) return true;
+        return !filter.tenantId || n.tenantId === filter.tenantId;
+      })
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+    return filter.limit ? rows.slice(0, filter.limit) : rows;
+  }
+
+  public createNotification(
+    input: Omit<AppNotification, 'id' | 'createdAt' | 'read'>
+  ): AppNotification {
+    const notification: AppNotification = {
+      ...input,
+      id: newId('ntf'),
+      read: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Keep the feed bounded — old notifications are dropped automatically.
+    this.data.notifications = [notification, ...(this.data.notifications || [])].slice(0, 300);
+    this.save();
+    return notification;
+  }
+
+  public markNotificationRead(id: string): boolean {
+    const notification = (this.data.notifications || []).find((n) => n.id === id);
+    if (!notification) return false;
+    notification.read = true;
+    this.save();
+    return true;
+  }
+
+  public markAllNotificationsRead(filter: {
+    app: 'client' | 'merchant' | 'admin';
+    ownerToken?: string;
+  }): number {
+    let changed = 0;
+    for (const n of this.data.notifications || []) {
+      if (n.app !== filter.app || n.read) continue;
+      if (n.recipientToken && n.recipientToken !== filter.ownerToken) continue;
+      n.read = true;
+      changed++;
+    }
+    if (changed > 0) this.save();
+    return changed;
+  }
+
+  public deleteNotification(id: string): boolean {
+    const before = (this.data.notifications || []).length;
+    this.data.notifications = (this.data.notifications || []).filter((n) => n.id !== id);
+    const removed = this.data.notifications.length !== before;
+    if (removed) this.save();
+    return removed;
+  }
+
+  /* Push subscriptions (one row per device per app) */
+  public savePushSubscription(
+    input: Omit<PushSubscriptionRecord, 'id' | 'createdAt'>
+  ): PushSubscriptionRecord {
+    const all = this.data.pushSubscriptions || [];
+    const existing = all.find((s) => s.endpoint === input.endpoint && s.app === input.app);
+
+    if (existing) {
+      existing.keys = input.keys;
+      existing.ownerToken = input.ownerToken;
+      existing.lastSeenAt = new Date().toISOString();
+      this.save();
+      return existing;
+    }
+
+    const record: PushSubscriptionRecord = {
+      ...input,
+      id: newId('push'),
+      createdAt: new Date().toISOString(),
+    };
+    this.data.pushSubscriptions = [record, ...all].slice(0, 500);
+    this.save();
+    return record;
+  }
+
+  public getPushSubscriptions(filter: { app?: string; ownerToken?: string }): PushSubscriptionRecord[] {
+    return (this.data.pushSubscriptions || []).filter((s) => {
+      if (filter.app && s.app !== filter.app) return false;
+      if (filter.ownerToken && s.ownerToken !== filter.ownerToken) return false;
+      return true;
+    });
+  }
+
+  /** VAPID keys live in the database so every serverless instance uses the same pair. */
+  public getPushKeys(): { publicKey: string; privateKey: string } | null {
+    const row = (this.data.pushKeys || [])[0];
+    return row ? { publicKey: row.publicKey, privateKey: row.privateKey } : null;
+  }
+
+  public savePushKeys(keys: { publicKey: string; privateKey: string }): void {
+    this.data.pushKeys = [
+      { id: 'push_keys_main', ...keys, createdAt: new Date().toISOString() },
+    ];
+    this.save();
+  }
+
+  public deletePushSubscription(endpoint: string): boolean {
+    const before = (this.data.pushSubscriptions || []).length;
+    this.data.pushSubscriptions = (this.data.pushSubscriptions || []).filter(
+      (s) => s.endpoint !== endpoint
+    );
+    const removed = this.data.pushSubscriptions.length !== before;
+    if (removed) this.save();
+    return removed;
+  }
+
   public isDatabaseEnabled(): boolean {
     return isDbEnabled();
   }
@@ -1744,6 +1922,9 @@ class Database {
       inventoryAudits: [],
       marketAds: INITIAL_MARKET_ADS,
       tenantApplications: INITIAL_TENANT_APPLICATIONS,
+      notifications: INITIAL_NOTIFICATIONS,
+      pushSubscriptions: [],
+      pushKeys: [],
     };
   }
 

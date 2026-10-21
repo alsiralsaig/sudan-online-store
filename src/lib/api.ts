@@ -638,6 +638,54 @@ class ApiClient {
     return this.request(`/admin/tenant-applications/${id}`, { method: 'DELETE' });
   }
 
+  /* Notifications + web push */
+  public async getNotifications(app: string, ownerToken?: string, limit = 50): Promise<{
+    notifications: any[]; unreadCount: number; app: string;
+  }> {
+    return this.request(`/notifications?app=${encodeURIComponent(app)}&limit=${limit}`, {
+      headers: ownerToken ? { 'x-owner-token': ownerToken } : {},
+    });
+  }
+
+  public async markNotificationRead(id: string): Promise<{ success: boolean }> {
+    return this.request(`/notifications/${id}/read`, { method: 'POST', body: '{}' });
+  }
+
+  public async markAllNotificationsRead(app: string, ownerToken?: string): Promise<{ success: boolean; changed: number }> {
+    return this.request('/notifications/read-all', {
+      method: 'POST',
+      body: JSON.stringify({ app }),
+      headers: ownerToken ? { 'x-owner-token': ownerToken } : {},
+    });
+  }
+
+  public async deleteNotification(id: string): Promise<{ success: boolean }> {
+    return this.request(`/notifications/${id}`, { method: 'DELETE' });
+  }
+
+  public async getPushPublicKey(): Promise<{ enabled: boolean; publicKey?: string; message?: string }> {
+    return this.request('/push/public-key');
+  }
+
+  public async subscribePush(subscription: any, app: string, ownerToken?: string): Promise<{ success: boolean }> {
+    return this.request('/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({ subscription, app, ownerToken }),
+    });
+  }
+
+  public async unsubscribePush(endpoint: string): Promise<{ success: boolean }> {
+    return this.request('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) });
+  }
+
+  public async sendTestPush(app: string, ownerToken?: string): Promise<{ success: boolean }> {
+    return this.request('/push/test', {
+      method: 'POST',
+      body: JSON.stringify({ app }),
+      headers: ownerToken ? { 'x-owner-token': ownerToken } : {},
+    });
+  }
+
   public async getAdminTenants(): Promise<{ tenants: any[] }> {
     return this.request('/admin/tenants');
   }

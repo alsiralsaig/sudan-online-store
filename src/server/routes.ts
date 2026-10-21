@@ -16,6 +16,7 @@ import type {
   PromotionRule,
   InventoryAlert,
 } from '../types/index.ts';
+import { getPublicKey as getPushPublicKey, notify as notifyUser } from './notifications.ts';
 
 export const apiRouter = Router();
 
@@ -1407,6 +1408,24 @@ apiRouter.post('/storefront/:slug/order', (req, res) => {
   db.getSchema().storefrontOrders.unshift(newOrder);
   db.commit();
 
+  notifyUser({
+    app: 'merchant',
+    kind: 'new_order',
+    title: 'طلب شراء جديد من تطبيق الجمهور',
+    body: `طلب ${orderNumber} من ${customerName} بقيمة ${totalSdg.toLocaleString('en-US')} ج.س`,
+    linkTab: 'storefront',
+    tenantId: tenant.id,
+  }).catch(() => {});
+
+  notifyUser({
+    app: 'admin',
+    kind: 'new_order',
+    title: 'طلب جديد على المنصة',
+    body: `${tenant.name} — طلب ${orderNumber} بقيمة ${totalSdg.toLocaleString('en-US')} ج.س`,
+    linkTab: 'merchants',
+    tenantId: tenant.id,
+  }).catch(() => {});
+
   res.json({ success: true, order: newOrder });
 });
 
@@ -2647,6 +2666,14 @@ apiRouter.post('/market-ads', (req, res) => {
     paymentRef: paymentRef || undefined,
   });
 
+  notifyUser({
+    app: 'admin',
+    kind: 'new_ad',
+    title: 'إعلان جديد بانتظار الموافقة',
+    body: `${ad.title} — ${ad.location}${ad.feeSdg > 0 ? ` • رسوم ${ad.feeSdg.toLocaleString('en-US')} ج.س` : ' • نشر مجاني'}`,
+    linkTab: 'market_ads',
+  }).catch(() => {});
+
   res.json({
     success: true,
     ad,
@@ -2709,6 +2736,18 @@ apiRouter.post('/admin/market-ads/:id/review', (req, res) => {
   if (!ad) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'الإعلان غير موجود.' });
   }
+
+  notifyUser({
+    app: 'client',
+    kind: 'ad_reviewed',
+    title: decision === 'approved' ? 'تم نشر إعلانك ✅' : 'تم رفض إعلانك',
+    body:
+      decision === 'approved'
+        ? `«${ad.title}» أصبح ظاهراً في السوق${ad.feeSdg > 0 ? ` بعد تأكيد رسوم ${ad.feeSdg.toLocaleString('en-US')} ج.س` : ''}.`
+        : `«${ad.title}» — ${ad.rejectionReason || 'لم يستوف شروط النشر.'}`,
+    linkTab: 'market',
+    recipientToken: ad.ownerToken,
+  }).catch(() => {});
 
   res.json({ success: true, ad });
 });
@@ -2797,7 +2836,16 @@ apiRouter.post('/tenant-applications', (req, res) => {
     notes: notes ? String(notes).trim() : undefined,
     source: source === 'merchant' ? 'merchant' : 'client',
     registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG,
-  });
+    applicantToken: (req.headers['x-owner-token'] as string) || undefined,
+  } as any);
+
+  notifyUser({
+    app: 'admin',
+    kind: 'new_store_request',
+    title: 'طلب متجر جديد',
+    body: `${application.storeName} — ${application.wilaya}/${application.city} • ${application.branchesCount} فرع • رسوم ${application.registrationFeeSdg.toLocaleString('en-US')} ج.س`,
+    linkTab: 'tenant_requests',
+  }).catch(() => {});
 
   res.json({
     success: true,
@@ -2889,6 +2937,18 @@ apiRouter.post('/admin/tenant-applications/:id/review', (req, res) => {
     codeSentVia: codeSentVia === 'whatsapp' || codeSentVia === 'sms' || codeSentVia === 'email' ? codeSentVia : undefined,
   });
 
+  notifyUser({
+    app: application?.source === 'merchant' ? 'merchant' : 'client',
+    kind: 'store_request_reviewed',
+    title: decision === 'approved' ? 'تمت الموافقة على متجرك 🎉' : 'تم رفض طلب المتجر',
+    body:
+      decision === 'approved'
+        ? `«${application?.storeName}» — كود الدخول ${application?.activationCode} • قيمة التسجيل ${(application?.registrationFeeSdg || 0).toLocaleString('en-US')} ج.س`
+        : `«${application?.storeName}» — ${application?.rejectionReason || 'لم يستوف الشروط.'}`,
+    linkTab: undefined,
+    recipientToken: (application as any)?.applicantToken,
+  }).catch(() => {});
+
   res.json({
     success: true,
     application,
@@ -2918,4 +2978,103 @@ apiRouter.delete('/admin/tenant-applications/:id', (req, res) => {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'الطلب غير موجود.' });
   }
   res.json({ success: true });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Notifications — in-app feed + web push subscriptions               */
+/* ------------------------------------------------------------------ */
+
+const notificationAppOf = (value: unknown): 'client' | 'merchant' | 'admin' => {
+  if (value === 'merchant' || value === 'admin' || value === 'client') return value;
+  return 'client';
+};
+
+apiRouter.get('/push/public-key', (_req, res) => {
+  const key = getPushPublicKey();
+  res.json({
+    enabled: !!key,
+    publicKey: key,
+    message: key
+      ? undefined
+      : 'إشعارات الهاتف غير مهيأة على الخادم بعد.',
+  });
+});
+
+apiRouter.get('/notifications', (req, res) => {
+  const app = notificationAppOf(req.query.app);
+  const ownerToken = (req.headers['x-owner-token'] as string) || undefined;
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+
+  const rows = db.getNotifications({ app, ownerToken, limit });
+  const unread = db
+    .getNotifications({ app, ownerToken })
+    .filter((n) => !n.read).length;
+
+  res.json({ notifications: rows, unreadCount: unread, app });
+});
+
+apiRouter.post('/notifications/:id/read', (req, res) => {
+  const ok = db.markNotificationRead(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'NOT_FOUND', message: 'الإشعار غير موجود.' });
+  res.json({ success: true });
+});
+
+apiRouter.post('/notifications/read-all', (req, res) => {
+  const app = notificationAppOf(req.body?.app);
+  const ownerToken = (req.headers['x-owner-token'] as string) || undefined;
+  const changed = db.markAllNotificationsRead({ app, ownerToken });
+  res.json({ success: true, changed });
+});
+
+apiRouter.delete('/notifications/:id', (req, res) => {
+  const ok = db.deleteNotification(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'NOT_FOUND', message: 'الإشعار غير موجود.' });
+  res.json({ success: true });
+});
+
+/** Register a device for phone notifications. */
+apiRouter.post('/push/subscribe', (req, res) => {
+  const { subscription, app, ownerToken } = req.body || {};
+  const endpoint = subscription?.endpoint;
+  const p256dh = subscription?.keys?.p256dh;
+  const auth = subscription?.keys?.auth;
+
+  if (!endpoint || !p256dh || !auth) {
+    return res.status(400).json({ error: 'BAD_SUBSCRIPTION', message: 'بيانات الاشتراك غير مكتملة.' });
+  }
+
+  const saved = db.savePushSubscription({
+    endpoint,
+    app: notificationAppOf(app),
+    ownerToken: ownerToken || undefined,
+    keys: { p256dh, auth },
+  });
+
+  res.json({ success: true, id: saved.id });
+});
+
+apiRouter.post('/push/unsubscribe', (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (!endpoint) {
+    return res.status(400).json({ error: 'ENDPOINT_REQUIRED', message: 'الرابط مطلوب.' });
+  }
+  db.deletePushSubscription(endpoint);
+  res.json({ success: true });
+});
+
+/** Send yourself a test notification — used by the bell panel. */
+apiRouter.post('/push/test', async (req, res) => {
+  const app = notificationAppOf(req.body?.app);
+  const ownerToken = (req.headers['x-owner-token'] as string) || undefined;
+
+  const notification = await notifyUser({
+    app,
+    kind: 'system',
+    title: 'إشعار تجريبي من سند',
+    body: 'إن وصلتك هذه الرسالة فإشعارات الهاتف تعمل بنجاح ✅',
+    linkTab: undefined,
+    recipientToken: ownerToken,
+  });
+
+  res.json({ success: true, notification });
 });

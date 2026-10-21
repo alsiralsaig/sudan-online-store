@@ -28,6 +28,7 @@ import {
 import type { InventoryAlert } from '../types/index.ts';
 import { SanadLogo } from './Common/SanadLogo.tsx';
 import { TenantApplicationModal } from './Common/TenantApplicationModal.tsx';
+import { NotificationBell } from './Common/NotificationBell.tsx';
 
 interface HeaderProps {
   currentTab: string;
@@ -256,6 +257,12 @@ export const Header: React.FC<HeaderProps> = ({
             <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
             <span>جرد بالهاتف</span>
           </button>
+
+          {/* Platform notifications (orders, reviews, system) */}
+          <NotificationBell
+            app="merchant"
+            onNavigate={(tab) => onTabChange(tab as any)}
+          />
 
           {/* Inventory Reorder Point Alerts Notification Bell */}
           <div className="relative">

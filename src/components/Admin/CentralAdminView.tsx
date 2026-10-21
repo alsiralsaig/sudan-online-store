@@ -26,9 +26,23 @@ import { ThermalReceiptSettingsView } from './ThermalReceiptSettingsView.tsx';
 import { PromotionsSettingsView } from './PromotionsSettingsView.tsx';
 import { MarketAdsAdminView } from './MarketAdsAdminView.tsx';
 import { TenantApplicationsAdminView } from './TenantApplicationsAdminView.tsx';
+import { NotificationBell } from '../Common/NotificationBell.tsx';
 
 export const CentralAdminView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads' | 'tenant_requests'>('merchants');
+
+  // Notification taps can open a specific admin tab via ?tab=
+  useEffect(() => {
+    const applyTab = (tab: string) => {
+      const allowed = ['merchants', 'payments_queue', 'audit_trail', 'receipt_settings', 'promotions', 'market_ads', 'tenant_requests'];
+      if (allowed.includes(tab)) setActiveTab(tab as any);
+    };
+    const fromUrl = new URLSearchParams(window.location.search).get('tab');
+    if (fromUrl) applyTab(fromUrl);
+    const handler = (e: any) => applyTab(e?.detail || '');
+    window.addEventListener('sanad:open-tab', handler);
+    return () => window.removeEventListener('sanad:open-tab', handler);
+  }, []);
   const [tenants, setTenants] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
@@ -116,6 +130,12 @@ export const CentralAdminView: React.FC = () => {
           </p>
         </div>
 
+        <div className="flex items-center gap-2">
+          <NotificationBell
+            app="admin"
+            onNavigate={(tab) => setActiveTab(tab as any)}
+          />
+
         {/* Tab switcher */}
         <div className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-semibold">
           <button
@@ -177,6 +197,7 @@ export const CentralAdminView: React.FC = () => {
             <Store className="w-3.5 h-3.5 text-emerald-600" />
             <span>طلبات المتاجر</span>
           </button>
+        </div>
         </div>
       </div>
 

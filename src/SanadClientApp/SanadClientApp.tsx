@@ -501,6 +501,8 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
             ads={marketAds}
             purchaseRequests={purchaseRequests}
             onOpenCreateModal={() => setIsCreateModalOpen(true)}
+            ownerToken={getOwnerToken()}
+            onNavigateTab={(tab) => setActiveTab(tab as any)}
           />
         )}
 

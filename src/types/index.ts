@@ -697,6 +697,8 @@ export interface MarketAd {
   reviewedBy?: string;
   reviewedAt?: string;
   createdAt: string;
+  /** Device token of the applicant, so the outcome can reach their phone. */
+  applicantToken?: string;
 }
 
 export interface MarketAdPricing {
@@ -735,4 +737,47 @@ export interface TenantApplication {
   reviewedBy?: string;
   reviewedAt?: string;
   createdAt: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Notifications — in-app feed + web push                             */
+/* ------------------------------------------------------------------ */
+
+export type NotificationApp = 'client' | 'merchant' | 'admin';
+
+export type NotificationKind =
+  | 'new_ad'
+  | 'ad_reviewed'
+  | 'new_store_request'
+  | 'store_request_reviewed'
+  | 'new_order'
+  | 'order_status'
+  | 'low_stock'
+  | 'subscription'
+  | 'system';
+
+export interface AppNotification {
+  id: string;
+  /** Which app(s) should see it. */
+  app: NotificationApp;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  /** Optional in-app destination, e.g. `market_ads` or `track_order`. */
+  linkTab?: string;
+  /** Restricts delivery to one device (the shopper who owns the ad/order). */
+  recipientToken?: string;
+  tenantId?: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface PushSubscriptionRecord {
+  id: string;
+  endpoint: string;
+  app: NotificationApp;
+  ownerToken?: string;
+  keys: { p256dh: string; auth: string };
+  createdAt: string;
+  lastSeenAt?: string;
 }
