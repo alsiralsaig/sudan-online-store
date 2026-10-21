@@ -25,6 +25,7 @@ import {
 import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
 import { api } from '../../lib/api.ts';
 import { useImpressionTracker } from '../../lib/useImpressionTracker.ts';
+import { SanadContactSection } from '../../components/Common/SanadContactSection.tsx';
 import type { ClientMarketAd, ClientPurchaseRequest } from '../types.ts';
 
 interface ClientMarketHomeViewProps {
@@ -469,6 +470,8 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
         )}
 
         {/* Store application shortcut, kept visible at the end of the feed */}
+        <SanadContactSection compact className="mb-3" />
+
         <button
           onClick={() => onNavigateTab?.('market_home')}
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-bold"

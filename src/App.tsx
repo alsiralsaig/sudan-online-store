@@ -12,6 +12,7 @@ import { BranchesEmployeesView } from './components/BranchesEmployees/BranchesEm
 import { StorefrontView } from './components/Storefront/StorefrontView.tsx';
 import { SubscriptionView } from './components/Subscription/SubscriptionView.tsx';
 import { MerchantAdsView } from './components/Merchant/MerchantAdsView.tsx';
+import { SanadContactSection } from './components/Common/SanadContactSection.tsx';
 import { CentralAdminView } from './components/Admin/CentralAdminView.tsx';
 import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx';
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
@@ -345,6 +346,7 @@ export default function App() {
             </div>
 
             <CentralAdminView />
+            <SanadContactSection variant="dark" title="تواصل مع فريق سند" />
           </div>
         </div>
         <SanadAIAssistant
@@ -646,6 +648,13 @@ export default function App() {
         )}
         {currentTab === 'admin' && <CentralAdminView />}
       </main>
+
+      {/* Reach-us: phones / WhatsApp / e-mail / social pages */}
+      <footer className="mt-6 px-4 pb-6 sm:px-6">
+        <div className="max-w-5xl mx-auto">
+          <SanadContactSection variant="light" />
+        </div>
+      </footer>
 
       {/* Floating Sudanese AI Assistant for Admin Mode */}
       <SanadAIAssistant
