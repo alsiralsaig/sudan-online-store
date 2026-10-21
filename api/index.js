@@ -3247,6 +3247,98 @@ var RATES_SOURCE = {
 
 // src/server/notifications.ts
 import webpush from "web-push";
+
+// src/server/telegram.ts
+var TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+var CHAT_IDS = String(process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
+var KIND_LIST = String(process.env.TELEGRAM_KINDS || "system").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+var telegramConfigured = () => !!TOKEN && CHAT_IDS.length > 0;
+var telegramChatCount = () => CHAT_IDS.length;
+var telegramEnabledFor = (kind) => {
+  if (!telegramConfigured()) return false;
+  if (KIND_LIST.includes("all")) return true;
+  return !!kind && KIND_LIST.includes(String(kind).toLowerCase());
+};
+var api = (method) => `https://api.telegram.org/bot${TOKEN}/${method}`;
+var withTimeout = async (url, init, ms = 8e3) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+async function sendTelegram(text, opts = {}) {
+  if (!TOKEN) return { sent: 0, skipped: "NOT_CONFIGURED" };
+  if (CHAT_IDS.length === 0) return { sent: 0, skipped: "NO_CHAT_ID" };
+  let sent = 0;
+  let skipped = "";
+  for (const chatId of CHAT_IDS) {
+    try {
+      const res = await withTimeout(api("sendMessage"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          disable_web_page_preview: true,
+          ...opts.markdown === false ? {} : { parse_mode: "Markdown" }
+        })
+      });
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok) sent += 1;
+      else if (!skipped) skipped = `API_${payload?.error_code ?? res.status}`;
+    } catch (err) {
+      if (!skipped) skipped = err.name === "AbortError" ? "TIMEOUT" : "NETWORK";
+    }
+  }
+  return { sent, skipped };
+}
+async function discoverChats() {
+  if (!TOKEN) {
+    return { ok: false, hint: "TELEGRAM_BOT_TOKEN \u063A\u064A\u0631 \u0645\u0636\u0628\u0648\u0637 \u0641\u064A \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u062E\u0627\u062F\u0645.", chats: [] };
+  }
+  try {
+    const res = await withTimeout(api("getUpdates?timeout=0"));
+    const payload = await res.json().catch(() => null);
+    if (!payload?.ok) {
+      return {
+        ok: false,
+        hint: payload?.description || "\u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u0631\u0641\u0636 \u0627\u0644\u0637\u0644\u0628 \u2014 \u062A\u0623\u0643\u062F \u0625\u0646 \u0627\u0644\u062A\u0648\u0643\u0646 \u0635\u062D\u064A\u062D \u0648\u0625\u0646\u0643 \u0623\u0631\u0633\u0644\u062A /start \u0644\u0644\u0628\u0648\u062A.",
+        chats: []
+      };
+    }
+    const seen = /* @__PURE__ */ new Map();
+    for (const update of payload.result || []) {
+      const chat = update?.message?.chat || update?.channel_post?.chat || update?.my_chat_member?.chat;
+      if (!chat?.id) continue;
+      seen.set(String(chat.id), {
+        id: String(chat.id),
+        name: [chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.title || chat.username || "\u2014",
+        username: chat.username
+      });
+    }
+    return {
+      ok: true,
+      hint: seen.size ? "\u0627\u0646\u0633\u062E \u0627\u0644\u0640 id \u0648\u062D\u0637\u0651\u0647 \u0641\u064A TELEGRAM_CHAT_IDS." : "\u0645\u0627 \u0641\u064A \u0645\u062D\u0627\u062F\u062B\u0627\u062A \u0628\u0639\u062F \u2014 \u0627\u0641\u062A\u062D \u0627\u0644\u0628\u0648\u062A \u0641\u064A \u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u0648\u0627\u0636\u063A\u0637 Start \u0623\u0648 \u0623\u0631\u0633\u0644 /start \u062B\u0645 \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
+      chats: [...seen.values()]
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      hint: err.name === "AbortError" ? "\u0627\u0646\u062A\u0647\u0649 \u0648\u0642\u062A \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u062A\u0644\u064A\u062C\u0631\u0627\u0645." : "\u0641\u0634\u0644 \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u062A\u0644\u064A\u062C\u0631\u0627\u0645.",
+      chats: []
+    };
+  }
+}
+var telegramStatus = () => ({
+  configured: telegramConfigured(),
+  chats: telegramChatCount(),
+  kinds: KIND_LIST
+});
+
+// src/server/notifications.ts
 var CONTACT = process.env.VAPID_CONTACT || "mailto:admin@sanad.sd";
 var configured = false;
 function initPush() {
@@ -3292,6 +3384,13 @@ async function notify(input) {
   await sendPush(input, notification).catch((err) => {
     console.warn("[push] send failed:", err?.message || err);
   });
+  if (input.telegram !== false && telegramEnabledFor(input.kind)) {
+    await sendTelegram(`*${input.title}*
+
+${input.body}`).catch((err) => {
+      console.warn("[telegram] send failed:", err?.message || err);
+    });
+  }
   return notification;
 }
 async function sendPush(input, notification) {
@@ -3445,7 +3544,8 @@ var checkRateMoves = async (moves = detectMoves()) => {
   const result = {
     triggered: [],
     inApp: 0,
-    whatsapp: { sent: 0, skipped: !PHONE || !CALLMEBOT_KEY ? "NOT_CONFIGURED" : "" }
+    whatsapp: { sent: 0, skipped: !PHONE || !CALLMEBOT_KEY ? "NOT_CONFIGURED" : "" },
+    telegram: { sent: 0, skipped: telegramConfigured() ? "" : "NOT_CONFIGURED" }
   };
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   for (const move of moves) {
@@ -3462,7 +3562,8 @@ var checkRateMoves = async (moves = detectMoves()) => {
         title,
         body,
         linkTab: "currencies",
-        dedupeKey: `rate_move_${move.code}_${today}`
+        dedupeKey: `rate_move_${move.code}_${today}`,
+        telegram: false
       });
       await notify({
         app: "admin",
@@ -3470,7 +3571,8 @@ var checkRateMoves = async (moves = detectMoves()) => {
         title,
         body,
         linkTab: "currencies",
-        dedupeKey: `rate_move_admin_${move.code}_${today}`
+        dedupeKey: `rate_move_admin_${move.code}_${today}`,
+        telegram: false
       });
       result.inApp += 2;
     } catch (err) {
@@ -3482,6 +3584,19 @@ var checkRateMoves = async (moves = detectMoves()) => {
 ${body}`);
       if (verdict.ok) result.whatsapp.sent += 1;
       else if (!result.whatsapp.skipped) result.whatsapp.skipped = verdict.reason;
+    }
+    if (telegramConfigured()) {
+      const arrow = move.percent > 0 ? "\u{1F4C8}" : "\u{1F4C9}";
+      const verdict = await sendTelegram(
+        `${arrow} *\u062A\u0646\u0628\u064A\u0647 \u0633\u0639\u0631 \u2014 \u0645\u0646\u0635\u0629 \u0633\u0646\u062F*
+
+*${move.name}* (${move.code})
+\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A: ${fmt(move.current)} \u062C.\u0633
+\u0627\u0644\u0633\u0627\u0628\u0642: ${fmt(move.previous)} \u062C.\u0633
+\u0627\u0644\u062A\u063A\u064A\u0651\u0631: ${move.percent > 0 ? "+" : ""}${move.percent}%`
+      );
+      if (verdict.sent) result.telegram.sent += verdict.sent;
+      else if (!result.telegram.skipped) result.telegram.skipped = verdict.skipped;
     }
     db.markRateAlerted(move.code, move.percent, move.current);
   }
@@ -4872,10 +4987,31 @@ apiRouter.get("/currency/alerts/status", (_req, res) => {
     thresholdPercent: THRESHOLD_PERCENT,
     whatsappConfigured: whatsappConfigured(),
     whatsappProvider: whatsappProviderHost(),
+    telegram: telegramStatus(),
     whatsappRecipient: process.env.WHATSAPP_ALERT_PHONE ? "\u2022\u2022\u2022" + String(process.env.WHATSAPP_ALERT_PHONE).slice(-4) : null,
     todayAlerts: db.getRateAlertLog().filter((a) => a.day === today),
     recentAlerts: db.getRateAlertLog().slice(0, 20)
   });
+});
+apiRouter.get("/integrations/telegram/status", (_req, res) => {
+  res.json({ success: true, ...telegramStatus() });
+});
+apiRouter.get("/admin/telegram/discover", async (_req, res) => {
+  const result = await discoverChats();
+  res.json({ success: result.ok, ...result, configured: telegramConfigured() });
+});
+apiRouter.post("/admin/telegram/test", async (_req, res) => {
+  if (!telegramConfigured()) {
+    return res.status(400).json({
+      success: false,
+      message: "\u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u063A\u064A\u0631 \u0645\u0647\u064A\u0651\u0623: \u0636\u0639 TELEGRAM_BOT_TOKEN \u0648 TELEGRAM_CHAT_IDS \u0641\u064A \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u062E\u0627\u062F\u0645.",
+      ...telegramStatus()
+    });
+  }
+  const verdict = await sendTelegram(
+    "\u2705 *\u0645\u0646\u0635\u0629 \u0633\u0646\u062F* \u2014 \u062A\u0645 \u0631\u0628\u0637 \u0642\u0646\u0627\u0629 \u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u0628\u0646\u062C\u0627\u062D.\n\u0647\u0630\u0647 \u0631\u0633\u0627\u0644\u0629 \u062A\u062C\u0631\u064A\u0628\u064A\u0629: \u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0628\u062A\u0648\u0635\u0644\u0643 \u0647\u0646\u0627 \u0645\u062C\u0627\u0646\u0627\u064B."
+  );
+  res.json({ success: verdict.sent > 0, ...verdict, ...telegramStatus() });
 });
 apiRouter.post("/admin/currency/alerts/run", async (_req, res) => {
   const result = await checkRateMoves(detectMoves());

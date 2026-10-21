@@ -67,6 +67,20 @@ ok('status exposes the gateway host (swappable via env)', status.body.whatsappPr
 ok('provider host helper matches', whatsappProviderHost() === 'api.callmebot.com', whatsappProviderHost());
 ok('status never leaks the recipient number', !JSON.stringify(status.body).includes('249966704757'));
 
+console.log('\n=== telegram (card-free channel) ===');
+const tgStatus = await get('/api/integrations/telegram/status');
+ok('telegram status endpoint', tgStatus.code === 200 && typeof tgStatus.body.configured === 'boolean');
+ok('telegram off until a token is set', tgStatus.body.configured === false, JSON.stringify(tgStatus.body));
+const tgDiscover = await get('/api/admin/telegram/discover');
+ok('discover explains the missing token in Arabic', tgDiscover.body.success === false && /TELEGRAM_BOT_TOKEN/.test(tgDiscover.body.hint || ''));
+const tgTest = await fetch(B + '/api/admin/telegram/test', { method: 'POST', headers: { 'x-tenant-id': 'tenant_alrowad' } });
+const tgTestBody: any = await tgTest.json();
+ok('test refuses politely when unconfigured', tgTest.status === 400 && tgTestBody.success === false);
+ok('test message names the two env vars', /TELEGRAM_BOT_TOKEN/.test(tgTestBody.message || '') && /TELEGRAM_CHAT_IDS/.test(tgTestBody.message || ''));
+ok('alerts report telegram as not configured', first.telegram.skipped === 'NOT_CONFIGURED', JSON.stringify(first.telegram));
+const { telegramConfigured } = await import('../src/server/telegram.ts');
+ok('no token means no telegram attempt', telegramConfigured() === false);
+
 const rates = await get('/api/assistant/rates');
 ok('assistant rates endpoint answers in Arabic', /السوق الموازي/.test(rates.body?.answer || ''), (rates.body?.answer || '').slice(0, 60));
 ok('answer carries the live USD price', /10,386|9,000/.test(rates.body?.answer || ''));

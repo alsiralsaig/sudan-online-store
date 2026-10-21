@@ -37,6 +37,7 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
   const [alertStatus, setAlertStatus] = useState<{
     thresholdPercent: number;
     whatsappConfigured: boolean;
+    telegram?: { configured: boolean; chats: number; kinds: string[] };
     recentAlerts: Array<{ id: string; code: string; day: string; percent: number; rate: number }>;
   } | null>(null);
 
@@ -200,13 +201,16 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
                 تنبيه تلقائي عند تحرك السعر أكثر من {alertStatus?.thresholdPercent ?? 3}% في اليوم
               </p>
               <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
-                الإشعار داخل التطبيق وعلى الهاتف —
-                {alertStatus?.whatsappConfigured ? (
-                  <span className="text-emerald-700 font-bold"> وواتساب مفعّل ✅</span>
+                الإشعار داخل التطبيق وعلى الهاتف شغّال دائماً
+                {alertStatus?.whatsappConfigured && (
+                  <span className="text-emerald-700 font-bold"> + واتساب ✅</span>
+                )}
+                {alertStatus?.telegram?.configured ? (
+                  <span className="text-emerald-700 font-bold"> + تليجرام ✅</span>
                 ) : (
-                  <span className="text-amber-700">
-                    {' '}والواتساب قيد التهيئة (مزوّد الرسائل الجديد) — الإشعار
-                    داخل التطبيق وعلى الهاتف شغّال عادي
+                  <span className="text-slate-500">
+                    {' '}· قناة تليجرام اختيارية ومجانية (بدون فيزا) — تُفعّل بتوكن
+                    من @BotFather
                   </span>
                 )}
                 {!!alertStatus?.recentAlerts?.length && (

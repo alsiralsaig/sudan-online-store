@@ -7,6 +7,7 @@
  */
 import webpush from 'web-push';
 import { db } from './db.ts';
+import { sendTelegram, telegramEnabledFor } from './telegram.ts';
 import type { AppNotification, NotificationApp, NotificationKind } from '../types/index.ts';
 
 const CONTACT = process.env.VAPID_CONTACT || 'mailto:admin@sanad.sd';
@@ -64,6 +65,8 @@ interface NotifyInput {
   pushData?: Record<string, any>;
   /** Skip creating a duplicate when this key was already used. */
   dedupeKey?: string;
+  /** Set false when the caller delivers to Telegram itself (avoids doubles). */
+  telegram?: boolean;
 }
 
 /** Create the in-app notification and fire the push to matching devices. */
@@ -82,6 +85,13 @@ export async function notify(input: NotifyInput): Promise<AppNotification> {
   await sendPush(input, notification).catch((err) => {
     console.warn('[push] send failed:', err?.message || err);
   });
+
+  // Third channel: Telegram (free, no card). Best-effort, never blocks the feed.
+  if (input.telegram !== false && telegramEnabledFor(input.kind)) {
+    await sendTelegram(`*${input.title}*\n\n${input.body}`).catch((err) => {
+      console.warn('[telegram] send failed:', err?.message || err);
+    });
+  }
 
   return notification;
 }

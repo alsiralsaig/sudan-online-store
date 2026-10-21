@@ -1,5 +1,6 @@
 import { db } from './db.ts';
 import { notify } from './notifications.ts';
+import { sendTelegram, telegramConfigured } from './telegram.ts';
 
 /**
  * Rate-move alerts.
@@ -42,6 +43,7 @@ export interface AlertResult {
   triggered: MoveAlert[];
   inApp: number;
   whatsapp: { sent: number; skipped: string };
+  telegram: { sent: number; skipped: string };
 }
 
 /** Sends one WhatsApp text. Returns the provider verdict, never throws. */
@@ -77,6 +79,7 @@ export const checkRateMoves = async (
     triggered: [],
     inApp: 0,
     whatsapp: { sent: 0, skipped: !PHONE || !CALLMEBOT_KEY ? 'NOT_CONFIGURED' : '' },
+    telegram: { sent: 0, skipped: telegramConfigured() ? '' : 'NOT_CONFIGURED' },
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -104,6 +107,7 @@ export const checkRateMoves = async (
         body,
         linkTab: 'currencies',
         dedupeKey: `rate_move_${move.code}_${today}`,
+        telegram: false,
       });
       await notify({
         app: 'admin',
@@ -112,6 +116,7 @@ export const checkRateMoves = async (
         body,
         linkTab: 'currencies',
         dedupeKey: `rate_move_admin_${move.code}_${today}`,
+        telegram: false,
       });
       result.inApp += 2;
     } catch (err) {
@@ -122,6 +127,20 @@ export const checkRateMoves = async (
       const verdict = await sendWhatsApp(`📉 *منصة سند* — تنبيه سعر\n\n${body}`);
       if (verdict.ok) result.whatsapp.sent += 1;
       else if (!result.whatsapp.skipped) result.whatsapp.skipped = verdict.reason;
+    }
+
+    // Telegram is the card-free channel: sent once per move (not per app).
+    if (telegramConfigured()) {
+      const arrow = move.percent > 0 ? '📈' : '📉';
+      const verdict = await sendTelegram(
+        `${arrow} *تنبيه سعر — منصة سند*\n\n` +
+          `*${move.name}* (${move.code})\n` +
+          `السوق الموازي: ${fmt(move.current)} ج.س\n` +
+          `السابق: ${fmt(move.previous)} ج.س\n` +
+          `التغيّر: ${move.percent > 0 ? '+' : ''}${move.percent}%`
+      );
+      if (verdict.sent) result.telegram.sent += verdict.sent;
+      else if (!result.telegram.skipped) result.telegram.skipped = verdict.skipped;
     }
 
     db.markRateAlerted(move.code, move.percent, move.current);

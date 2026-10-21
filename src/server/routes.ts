@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
 import { fetchLiveRates, ageHours, isStale, RATES_SOURCE } from './rates.ts';
 import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
+import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
 import { newId, newCode } from './ids.ts';
 import { saveMedia, getMedia, deleteMedia, HttpError, MAX_RAW_BYTES } from './media.ts';
 import type {
@@ -1613,10 +1614,37 @@ apiRouter.get('/currency/alerts/status', (_req, res) => {
     thresholdPercent: THRESHOLD_PERCENT,
     whatsappConfigured: whatsappConfigured(),
     whatsappProvider: whatsappProviderHost(),
+    telegram: telegramStatus(),
     whatsappRecipient: process.env.WHATSAPP_ALERT_PHONE ? '•••' + String(process.env.WHATSAPP_ALERT_PHONE).slice(-4) : null,
     todayAlerts: db.getRateAlertLog().filter((a) => a.day === today),
     recentAlerts: db.getRateAlertLog().slice(0, 20),
   });
+});
+
+/** Telegram channel: card-free delivery, so it works without Visa/Mastercard. */
+apiRouter.get('/integrations/telegram/status', (_req, res) => {
+  res.json({ success: true, ...telegramStatus() });
+});
+
+/** Reads the bot's getUpdates so the owner can copy their chat id. */
+apiRouter.get('/admin/telegram/discover', async (_req, res) => {
+  const result = await discoverChats();
+  res.json({ success: result.ok, ...result, configured: telegramConfigured() });
+});
+
+/** Sends one real test message; surfaces the exact Telegram error when any. */
+apiRouter.post('/admin/telegram/test', async (_req, res) => {
+  if (!telegramConfigured()) {
+    return res.status(400).json({
+      success: false,
+      message: 'تليجرام غير مهيّأ: ضع TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_IDS في إعدادات الخادم.',
+      ...telegramStatus(),
+    });
+  }
+  const verdict = await sendTelegram(
+    '✅ *منصة سند* — تم ربط قناة تليجرام بنجاح.\nهذه رسالة تجريبية: تنبيهات الأسعار بتوصلك هنا مجاناً.'
+  );
+  res.json({ success: verdict.sent > 0, ...verdict, ...telegramStatus() });
 });
 
 /** Run the check on demand (used after a manual refresh / for testing). */
