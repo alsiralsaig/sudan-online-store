@@ -188,7 +188,7 @@ export const MarketBannersAdminView: React.FC = () => {
 
   const totalClicks = banners.reduce((sum, b) => sum + (b.clicks || 0), 0);
   const totalImpressions = banners.reduce((sum, b) => sum + (b.impressions || 0), 0);
-  const overallCtr = totalImpressions ? ((totalClicks / totalImpressions) * 100).toFixed(1) : '—';
+  const overallCtr = totalImpressions ? `${((totalClicks / totalImpressions) * 100).toFixed(1)}%` : '—';
   const topBanner = banners.reduce<Banner | null>(
     (best, b) => ((b.clicks || 0) > (best?.clicks || 0) ? b : best),
     null
