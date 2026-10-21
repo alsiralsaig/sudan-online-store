@@ -258,6 +258,19 @@ export const Header: React.FC<HeaderProps> = ({
             <span>جرد بالهاتف</span>
           </button>
 
+          {/* Central admin is in the desktop nav only — keep it reachable on phones */}
+          <button
+            onClick={() => onTabChange('admin')}
+            title="إدارة المنصة المركزية — المتاجر والإعلانات والبانرات"
+            className={`xl:hidden flex items-center justify-center w-9 h-9 rounded-lg border transition-all ${
+              currentTab === 'admin'
+                ? 'bg-emerald-600 text-white border-emerald-600'
+                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <ShieldAlert className="w-4 h-4" />
+          </button>
+
           {/* Platform notifications (orders, reviews, system) */}
           <NotificationBell
             app="merchant"
