@@ -2532,9 +2532,11 @@ const GEMINI_KEY = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KE
 /** Models tried in order; override with GEMINI_MODEL. */
 const ASSISTANT_MODELS = [
   process.env.GEMINI_MODEL,
-  'gemini-2.5-flash',
+  // `flash-latest` always points at the newest stable flash model
   'gemini-flash-latest',
-  'gemini-2.5-flash-lite',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
 ].filter(Boolean) as string[];
 
 function buildSystemInstruction(mode: string, context: any): string {
@@ -2620,9 +2622,10 @@ async function geminiGenerate(opts: {
       const data: any = await res.json().catch(() => null);
 
       if (!res.ok) {
-        lastError = `HTTP_${res.status}: ${data?.error?.message?.slice(0, 140) || 'unknown'}`;
-        // Only a missing model justifies trying the next one
-        if (res.status === 404) continue;
+        lastError = `HTTP_${res.status}: ${data?.error?.message?.slice(0, 160) || 'unknown'}`;
+        // 404 = model gone, 429/503 = overloaded → try the next model.
+        // Anything else (bad key, safety) stops immediately.
+        if (res.status === 404 || res.status === 429 || res.status === 503) continue;
         return { text: null, error: lastError, model };
       }
 

@@ -5094,9 +5094,11 @@ apiRouter.delete("/promotions/:id", requireTenant, (req, res) => {
 var GEMINI_KEY = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
 var ASSISTANT_MODELS = [
   process.env.GEMINI_MODEL,
-  "gemini-2.5-flash",
+  // `flash-latest` always points at the newest stable flash model
   "gemini-flash-latest",
-  "gemini-2.5-flash-lite"
+  "gemini-3-flash-preview",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash"
 ].filter(Boolean);
 function buildSystemInstruction(mode, context) {
   const now = /* @__PURE__ */ new Date();
@@ -5156,8 +5158,8 @@ async function geminiGenerate(opts) {
       );
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        lastError = `HTTP_${res.status}: ${data?.error?.message?.slice(0, 140) || "unknown"}`;
-        if (res.status === 404) continue;
+        lastError = `HTTP_${res.status}: ${data?.error?.message?.slice(0, 160) || "unknown"}`;
+        if (res.status === 404 || res.status === 429 || res.status === 503) continue;
         return { text: null, error: lastError, model };
       }
       const parts = data?.candidates?.[0]?.content?.parts || [];
