@@ -542,6 +542,52 @@ class ApiClient {
   }
 
   /* Central SaaS Admin */
+  /* ---------------- Market ads ---------------- */
+
+  public async getMarketAds(ownerToken?: string): Promise<{
+    ads: any[]; mine: any[]; pricing: { standardFeeSdg: number; vipFeeSdg: number; currency: string };
+  }> {
+    return this.request('/market-ads', {
+      headers: ownerToken ? { 'x-owner-token': ownerToken } : {},
+    });
+  }
+
+  public async createMarketAd(payload: any): Promise<{ success: boolean; ad: any; message: string }> {
+    return this.request('/market-ads', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteMyMarketAd(id: string, ownerToken: string): Promise<{ success: boolean }> {
+    return this.request(`/market-ads/${id}`, {
+      method: 'DELETE',
+      headers: { 'x-owner-token': ownerToken },
+    });
+  }
+
+  public async getAdminMarketAds(status: string = 'all'): Promise<{
+    ads: any[]; counts: any; pricing: any;
+  }> {
+    return this.request(`/admin/market-ads?status=${encodeURIComponent(status)}`);
+  }
+
+  public async reviewMarketAd(
+    id: string,
+    decision: 'approved' | 'rejected',
+    note?: string,
+    paymentConfirmed?: boolean
+  ): Promise<{ success: boolean; ad: any }> {
+    return this.request(`/admin/market-ads/${id}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, note, paymentConfirmed }),
+    });
+  }
+
+  public async adminDeleteMarketAd(id: string): Promise<{ success: boolean }> {
+    return this.request(`/admin/market-ads/${id}`, { method: 'DELETE' });
+  }
+
   public async getAdminTenants(): Promise<{ tenants: any[] }> {
     return this.request('/admin/tenants');
   }

@@ -2567,3 +2567,147 @@ apiRouter.delete('/media/:id', async (req, res) => {
     res.status(500).json({ error: 'DELETE_FAILED' });
   }
 });
+
+/* =========================================================================
+   Market ads — publishing fee + admin moderation + deletion
+   ========================================================================= */
+
+/** Publishing fees. Admins can see them; publishers accept them on submit. */
+const AD_PRICING = {
+  standardFeeSdg: Number(process.env.AD_FEE_STANDARD_SDG ?? 0),
+  vipFeeSdg: Number(process.env.AD_FEE_VIP_SDG ?? 5000),
+  currency: 'SDG',
+};
+
+function feeFor(isVip: boolean): number {
+  return isVip ? AD_PRICING.vipFeeSdg : AD_PRICING.standardFeeSdg;
+}
+
+apiRouter.get('/market-ads/pricing', (_req, res) => {
+  res.json({ pricing: AD_PRICING });
+});
+
+/** Public feed — approved ads only. */
+apiRouter.get('/market-ads', (req, res) => {
+  const ownerToken = String(req.headers['x-owner-token'] || '');
+  const all = db.getMarketAds();
+
+  const approved = all.filter((a) => a.status === 'approved');
+  // Publishers also see their own ads whatever the status, so they can track
+  // review progress and remove them.
+  const mine = ownerToken
+    ? all.filter((a) => a.ownerToken === ownerToken && a.status !== 'approved')
+    : [];
+
+  res.json({ ads: approved, mine, pricing: AD_PRICING });
+});
+
+apiRouter.post('/market-ads', (req, res) => {
+  const {
+    title, category, priceSdg, location, phone, whatsapp, description,
+    imageUrl, videoUrl, isVip, publisherName, ownerToken, paymentRef,
+  } = req.body || {};
+
+  if (!title || String(title).trim().length < 4) {
+    return res.status(400).json({ error: 'TITLE_REQUIRED', message: 'عنوان الإعلان مطلوب (4 أحرف على الأقل).' });
+  }
+  if (!phone || String(phone).trim().length < 9) {
+    return res.status(400).json({ error: 'PHONE_REQUIRED', message: 'رقم الهاتف أو الواتساب مطلوب.' });
+  }
+  if (!imageUrl && !videoUrl) {
+    return res.status(400).json({ error: 'MEDIA_REQUIRED', message: 'أضف صورة أو فيديو للإعلان.' });
+  }
+  if (!ownerToken || String(ownerToken).length < 8) {
+    return res.status(400).json({ error: 'OWNER_TOKEN_REQUIRED', message: 'تعذر التعرف على جهازك، أعد فتح التطبيق.' });
+  }
+
+  const ad = db.createMarketAd({
+    title: String(title).trim(),
+    category: category || 'عام',
+    priceSdg: Number(priceSdg) || 0,
+    location: location || 'الخرطوم',
+    phone: String(phone).trim(),
+    whatsapp: whatsapp || phone,
+    description: description || '',
+    imageUrl: imageUrl || '',
+    videoUrl: videoUrl || undefined,
+    isVip: !!isVip,
+    publisherName: publisherName || 'زبون منصة سند',
+    ownerToken: String(ownerToken),
+    feeSdg: feeFor(!!isVip),
+    paymentRef: paymentRef || undefined,
+  });
+
+  res.json({
+    success: true,
+    ad,
+    message: 'تم إرسال إعلانك للمراجعة. سيظهر في السوق بعد موافقة الإدارة.',
+  });
+});
+
+/** Publisher deletes their own ad — the owner token must match. */
+apiRouter.delete('/market-ads/:id', (req, res) => {
+  const ownerToken = String(req.headers['x-owner-token'] || '');
+  const result = db.deleteMarketAd(req.params.id, { ownerToken });
+
+  if (!result.ok) {
+    return res.status(result.reason === 'NOT_FOUND' ? 404 : 403).json({
+      error: result.reason,
+      message: result.reason === 'NOT_FOUND' ? 'الإعلان غير موجود.' : 'لا تملك صلاحية حذف هذا الإعلان.',
+    });
+  }
+  res.json({ success: true });
+});
+
+/* ---------------------------- Admin side ---------------------------- */
+
+apiRouter.get('/admin/market-ads', (req, res) => {
+  const status = String(req.query.status || 'all');
+  const ads = db.getMarketAds();
+  const filtered = status === 'all' ? ads : ads.filter((a) => a.status === status);
+
+  res.json({
+    ads: filtered.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
+    counts: {
+      pending: ads.filter((a) => a.status === 'pending').length,
+      approved: ads.filter((a) => a.status === 'approved').length,
+      rejected: ads.filter((a) => a.status === 'rejected').length,
+      feesDueSdg: ads
+        .filter((a) => a.status === 'pending' && a.feeSdg > 0)
+        .reduce((sum, a) => sum + a.feeSdg, 0),
+      feesCollectedSdg: ads
+        .filter((a) => a.status === 'approved')
+        .reduce((sum, a) => sum + (a.feeSdg || 0), 0),
+    },
+    pricing: AD_PRICING,
+  });
+});
+
+apiRouter.post('/admin/market-ads/:id/review', (req, res) => {
+  const { decision, note, reviewedBy, paymentConfirmed } = req.body || {};
+
+  if (decision !== 'approved' && decision !== 'rejected') {
+    return res.status(400).json({ error: 'BAD_DECISION', message: 'القرار يجب أن يكون approved أو rejected.' });
+  }
+
+  const ad = db.reviewMarketAd(req.params.id, {
+    decision,
+    note,
+    reviewedBy: reviewedBy || 'إدارة سند',
+    paymentConfirmed: !!paymentConfirmed,
+  });
+
+  if (!ad) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'الإعلان غير موجود.' });
+  }
+
+  res.json({ success: true, ad });
+});
+
+apiRouter.delete('/admin/market-ads/:id', (req, res) => {
+  const result = db.deleteMarketAd(req.params.id, { admin: true });
+  if (!result.ok) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'الإعلان غير موجود.' });
+  }
+  res.json({ success: true });
+});

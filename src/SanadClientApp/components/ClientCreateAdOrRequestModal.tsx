@@ -17,11 +17,14 @@ import {
 } from 'lucide-react';
 import type { ClientMarketAd, ClientPurchaseRequest } from '../types.ts';
 import { MediaUploader, type UploadedMedia } from './MediaUploader.tsx';
+import { api } from '../../lib/api.ts';
+import { getOwnerToken } from '../lib/ownerToken.ts';
 
 interface ClientCreateAdOrRequestModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAdCreated: (ad: ClientMarketAd) => void;
+  pricing?: { standardFeeSdg: number; vipFeeSdg: number; currency: string };
   onRequestCreated: (request: ClientPurchaseRequest) => void;
 }
 
@@ -30,6 +33,7 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
   onClose,
   onAdCreated,
   onRequestCreated,
+  pricing = { standardFeeSdg: 0, vipFeeSdg: 5000, currency: 'SDG' },
 }) => {
   const [activeTab, setActiveTab] = useState<'ad' | 'request'>('ad');
   const [isSuccess, setIsSuccess] = useState(false);
@@ -71,35 +75,48 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
     { label: 'مواد تموينية وغذائية', url: '/assets/images/product_cooking_oil_1792173269992.jpg' },
   ];
 
-  const handleCreateAd = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const feeSdg = adForm.isVip ? pricing.vipFeeSdg : pricing.standardFeeSdg;
+
+  const handleCreateAd = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
+
     if (!adForm.title.trim() || !adForm.phone.trim()) return;
+    if (!adMedia) {
+      setSubmitError('أضف صورة أو فيديو للإعلان أولاً.');
+      return;
+    }
 
-    const newAd: ClientMarketAd = {
-      id: `ad_${Date.now()}`,
-      title: adForm.title,
-      category: adForm.category,
-      priceSdg: Number(adForm.priceSdg) || 0,
-      location: adForm.location,
-      timeAgo: 'الآن',
-      imageUrl: adMedia?.kind === 'image' ? adMedia.url : '',
-      videoUrl: adMedia?.kind === 'video' ? adMedia.url : videoUrl || undefined,
-      isVip: adForm.isVip,
-      tag: adForm.isVip ? 'VIP' : 'service',
-      phone: adForm.phone,
-      whatsapp: adForm.phone,
-      description: adForm.description,
-      publisherName: 'زبون منصة سند',
-      createdAt: new Date().toISOString(),
-    };
+    setIsSubmitting(true);
+    try {
+      const res = await api.createMarketAd({
+        title: adForm.title,
+        category: adForm.category,
+        priceSdg: Number(adForm.priceSdg) || 0,
+        location: adForm.location,
+        phone: adForm.phone,
+        whatsapp: adForm.phone,
+        description: adForm.description,
+        imageUrl: adMedia.kind === 'image' ? adMedia.url : '',
+        videoUrl: adMedia.kind === 'video' ? adMedia.url : undefined,
+        isVip: adForm.isVip,
+        ownerToken: getOwnerToken(),
+      });
 
-    onAdCreated(newAd);
-    setIsSuccess(true);
-    setSuccessMessage('تم نشر إعلانك بنجاح في السوق! سيظهر للجميع في الصفحة الرئيسية.');
-    setTimeout(() => {
-      setIsSuccess(false);
-      onClose();
-    }, 1800);
+      setIsSuccess(true);
+      setSuccessMessage(
+        res.ad.feeSdg > 0
+          ? `تم إرسال إعلانك للإدارة. رسوم النشر ${res.ad.feeSdg.toLocaleString('en-US')} ج.س — سيظهر في السوق بعد الموافقة وتأكيد السداد.`
+          : 'تم إرسال إعلانك للإدارة. سيظهر في السوق بعد الموافقة.'
+      );
+    } catch (err) {
+      setSubmitError((err as Error).message || 'تعذر إرسال الإعلان. تحقق من الاتصال وحاول مرة أخرى.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCreateRequest = (e: React.FormEvent) => {
@@ -313,17 +330,48 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
                 onChange={(e) => setAdForm({ ...adForm, isVip: e.target.checked })}
                 className="w-4 h-4 text-amber-600 rounded"
               />
-              <label htmlFor="isVipAd" className="text-xs text-amber-950 font-bold flex items-center gap-1 cursor-pointer">
+              <label htmlFor="isVipAd" className="text-xs text-amber-950 font-bold flex items-center gap-1 cursor-pointer flex-1">
                 <span>👑 تمييز كإعلان VIP في واجهة المتجر الرئيسية</span>
               </label>
+              <span className="text-[11px] font-black text-amber-700 shrink-0">
+                {pricing.vipFeeSdg > 0
+                  ? `+${pricing.vipFeeSdg.toLocaleString('en-US')} ج.س`
+                  : 'مجاني'}
+              </span>
             </div>
+
+            {/* Publishing fee — the amount the admin will confirm */}
+            <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+              <span className="text-[11px] font-bold text-slate-600">رسوم نشر الإعلان:</span>
+              <span className="text-xs font-black text-emerald-700">
+                {feeSdg > 0 ? `${feeSdg.toLocaleString('en-US')} ج.س` : 'مجاناً'}
+              </span>
+            </div>
+
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              يُرسل الإعلان إلى الإدارة للمراجعة. لا يظهر في السوق إلا بعد الموافقة،
+              {feeSdg > 0 ? ' ويُطلب سداد الرسوم قبل النشر.' : ' والنشر مجاني.'}
+            </p>
+
+            {submitError && (
+              <p className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
+                {submitError}
+              </p>
+            )}
 
             <button
               type="submit"
-              className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-bold rounded-xl text-xs transition-all shadow-md flex items-center justify-center gap-2"
+              disabled={isSubmitting}
+              className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-bold rounded-xl text-xs transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60"
             >
-              <Plus className="w-4 h-4" />
-              <span>نشر الإعلان في السوق الآن</span>
+              {isSubmitting ? (
+                <span className="animate-pulse">جارٍ الإرسال للمراجعة…</span>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" />
+                  <span>إرسال الإعلان للمراجعة</span>
+                </>
+              )}
             </button>
           </form>
         ) : (

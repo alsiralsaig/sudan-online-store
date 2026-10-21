@@ -98,6 +98,10 @@ export interface ClientMarketAd {
   description?: string;
   publisherName?: string;
   createdAt: string;
+  /** Review state — present on ads fetched from the server. */
+  status?: 'pending' | 'approved' | 'rejected';
+  feeSdg?: number;
+  rejectionReason?: string;
 }
 
 // Customer Custom Purchase Requests (RFQ from registered stores)

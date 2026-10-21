@@ -27,6 +27,7 @@ import type {
 } from './types.ts';
 import type { Product, Branch, Tenant } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { getOwnerToken } from './lib/ownerToken.ts';
 import {
   MapPin,
   Phone,
@@ -45,6 +46,7 @@ import {
   Mail,
   Send,
   MessageCircle,
+  Trash2,
 } from 'lucide-react';
 
 interface SanadClientAppProps {
@@ -363,10 +365,44 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
     localStorage.setItem('sanad_client_wishlist', JSON.stringify(wishlist));
   }, [wishlist]);
 
-  // Save Market Ads
+  // Market ads live on the server so the admin can moderate them.
+  const [myAds, setMyAds] = useState<ClientMarketAd[]>([]);
+  const [adPricing, setAdPricing] = useState({ standardFeeSdg: 0, vipFeeSdg: 5000, currency: 'SDG' });
+
+  const loadMarketAds = React.useCallback(async () => {
+    try {
+      const res = await api.getMarketAds(getOwnerToken());
+      const toAd = (a: any): ClientMarketAd => ({
+        id: a.id,
+        title: a.title,
+        category: a.category,
+        priceSdg: a.priceSdg,
+        location: a.location,
+        timeAgo: a.createdAt ? new Date(a.createdAt).toLocaleDateString('ar-EG') : 'الآن',
+        imageUrl: a.imageUrl,
+        videoUrl: a.videoUrl,
+        isVip: a.isVip,
+        tag: a.isVip ? 'VIP' : undefined,
+        phone: a.phone,
+        whatsapp: a.whatsapp,
+        description: a.description,
+        publisherName: a.publisherName,
+        createdAt: a.createdAt,
+        // extra fields used by the owner panel
+        ...(a.status ? { status: a.status, feeSdg: a.feeSdg, rejectionReason: a.rejectionReason } : {}),
+      } as ClientMarketAd);
+
+      setMarketAds(res.ads.map(toAd));
+      setMyAds(res.mine.map(toAd));
+      if (res.pricing) setAdPricing(res.pricing);
+    } catch (err) {
+      console.warn('[ads] تعذر تحميل إعلانات السوق:', err);
+    }
+  }, []);
+
   useEffect(() => {
-    localStorage.setItem('sanad_market_ads', JSON.stringify(marketAds));
-  }, [marketAds]);
+    loadMarketAds();
+  }, [loadMarketAds]);
 
   // Save Purchase Requests
   useEffect(() => {
@@ -405,8 +441,22 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
     });
   };
 
-  const handleNewAdCreated = (ad: ClientMarketAd) => {
-    setMarketAds((prev) => [ad, ...prev]);
+  const handleNewAdCreated = () => {
+    // The ad is pending review, so it is not in the public feed yet.
+    // Reload so the owner panel reflects it immediately.
+    loadMarketAds();
+  };
+
+  const handleDeleteMyAd = async (id: string) => {
+    try {
+      await api.deleteMyMarketAd(id, getOwnerToken());
+      setMyAds((prev) => prev.filter((a) => a.id !== id));
+      setMarketAds((prev) => prev.filter((a) => a.id !== id));
+      return true;
+    } catch (err) {
+      console.warn('[ads] delete failed:', err);
+      return false;
+    }
   };
 
   const handleNewRequestCreated = (req: ClientPurchaseRequest) => {
@@ -781,7 +831,52 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         onClose={() => setIsCreateModalOpen(false)}
         onAdCreated={handleNewAdCreated}
         onRequestCreated={handleNewRequestCreated}
+        pricing={adPricing}
       />
+
+      {/* Owner panel: ads awaiting review, with delete */}
+      {myAds.length > 0 && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-3">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-black text-amber-950">إعلاناتك</h3>
+              <span className="text-[10px] text-amber-700">{myAds.length} إعلان</span>
+            </div>
+            <div className="space-y-2">
+              {myAds.map((ad) => (
+                <div key={ad.id} className="flex items-center gap-2 bg-white rounded-xl p-2 border border-amber-100">
+                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 shrink-0">
+                    {ad.imageUrl ? (
+                      <img src={ad.imageUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full bg-slate-200" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-bold text-slate-800 truncate">{ad.title}</p>
+                    <p className="text-[10px] text-slate-500">
+                      {ad.status === 'pending'
+                        ? `قيد المراجعة${ad.feeSdg ? ` • رسوم ${ad.feeSdg.toLocaleString('en-US')} ج.س` : ''}`
+                        : ad.status === 'rejected'
+                        ? `مرفوض: ${ad.rejectionReason || 'لم يستوف الشروط'}`
+                        : 'منشور'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (confirm('حذف هذا الإعلان نهائياً؟')) await handleDeleteMyAd(ad.id);
+                    }}
+                    className="shrink-0 p-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100"
+                    title="حذف الإعلان"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 5. Ad Detail Modal with WhatsApp */}
       <ClientAdDetailModal

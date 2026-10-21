@@ -128,6 +128,17 @@ async function closePool() {
   }
 }
 
+// src/server/ids.ts
+import { randomUUID } from "crypto";
+function newId(prefix) {
+  const ts = Date.now().toString(36);
+  return `${prefix}_${ts}_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+}
+function newCode(prefix, pad = 6) {
+  const rand = randomUUID().replace(/-/g, "").slice(0, pad).toUpperCase();
+  return `${prefix}-${rand}`;
+}
+
 // src/server/repository.ts
 var PRIMARY_KEY_OVERRIDES = {
   currencies: "code"
@@ -1649,6 +1660,62 @@ var INITIAL_ALBANDAR_LISTINGS = [
     locationDetails: "\u0628\u0648\u0631\u062A\u0633\u0648\u062F\u0627\u0646 - \u0642\u0631\u0628 \u0631\u0626\u0627\u0633\u0629 \u0647\u064A\u0626\u0629 \u0627\u0644\u0645\u0648\u0627\u0646\u0626 \u0627\u0644\u0628\u062D\u0631\u064A\u0629"
   }
 ];
+var INITIAL_MARKET_ADS = [
+  {
+    id: "mkt_ad_aircon",
+    title: "\u0645\u0643\u064A\u0641\u0627\u062A \u0622\u064A\u0633 \u0641\u062E\u0627\u0645\u0629 \u0648\u062C\u0648\u062F\u0629",
+    category: "\u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A\u0627\u062A",
+    priceSdg: 135e4,
+    location: "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+    phone: "0912345678",
+    whatsapp: "0912345678",
+    description: "\u0645\u0643\u064A\u0641\u0627\u062A \u0645\u0627\u0621 \u0643\u0631\u062A\u064A\u0646 \u0623\u0635\u0644\u064A\u0629 \u0648\u0645\u0648\u0641\u0631\u0629 \u0644\u0644\u0637\u0627\u0642\u0629 \u0645\u0639 \u0643\u0641\u0627\u0644\u0629 \u0633\u0646\u062A\u064A\u0646 \u0648\u062A\u0631\u0643\u064A\u0628 \u0641\u0648\u0631\u064A.",
+    imageUrl: "/assets/images/product_cooking_oil_1792173269992.jpg",
+    isVip: true,
+    publisherName: "\u0645\u0639\u0631\u0636 \u0627\u0644\u0623\u062C\u0647\u0632\u0629 \u0627\u0644\u0645\u0639\u062A\u0645\u062F",
+    ownerToken: "seed-owner-aircon",
+    feeSdg: 5e3,
+    status: "approved",
+    reviewedBy: "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F",
+    reviewedAt: new Date(Date.now() - 3 * 3600 * 1e3).toISOString(),
+    createdAt: new Date(Date.now() - 4 * 3600 * 1e3).toISOString()
+  },
+  {
+    id: "mkt_ad_car",
+    title: "\u0623\u0639\u0644\u0646 \u0639\u0646 \u0645\u0639\u0631\u0636 \u0633\u064A\u0627\u0631\u0627\u062A\u0643 \u0647\u0646\u0627",
+    category: "\u0627\u0644\u0633\u064A\u0627\u0631\u0627\u062A \u0648\u0627\u0644\u0645\u0631\u0643\u0628\u0627\u062A",
+    priceSdg: 0,
+    location: "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+    phone: "0913009060",
+    whatsapp: "0913009060",
+    description: "\u0643\u0646 \u0645\u0646 \u0623\u0648\u0627\u0626\u0644 \u0627\u0644\u0645\u0639\u0644\u0646\u064A\u0646 \u0641\u064A \u0627\u0644\u0628\u0646\u062F\u0631 \u0648\u0633\u0646\u062F.",
+    imageUrl: "/assets/images/albander_hyundai_car_1792184093653.jpg",
+    isVip: false,
+    publisherName: "\u0645\u0646\u0635\u0629 \u0633\u0646\u062F",
+    ownerToken: "seed-owner-cars",
+    feeSdg: 0,
+    status: "approved",
+    reviewedBy: "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F",
+    reviewedAt: new Date(Date.now() - 26 * 3600 * 1e3).toISOString(),
+    createdAt: new Date(Date.now() - 30 * 3600 * 1e3).toISOString()
+  },
+  {
+    id: "mkt_ad_laptop",
+    title: "\u0644\u0627\u0628\u062A\u0648\u0628 \u0648\u0645\u0627\u0643 \u0628\u0648\u0643 \u0645\u0633\u062A\u0639\u0645\u0644 \u0628\u062D\u0627\u0644\u0629 \u0645\u0645\u062A\u0627\u0632\u0629",
+    category: "\u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A\u0627\u062A",
+    priceSdg: 85e4,
+    location: "\u0628\u0648\u0631\u062A\u0633\u0648\u062F\u0627\u0646",
+    phone: "0912556677",
+    description: "\u0645\u0627\u0643 \u0628\u0648\u0643 \u0628\u0631\u0648 2021\u060C \u0630\u0627\u0643\u0631\u0629 16 \u062C\u064A\u062C\u0627\u060C \u0628\u0637\u0627\u0631\u064A\u0629 \u0623\u0635\u0644\u064A\u0629.",
+    imageUrl: "/assets/images/albander_macbook_laptop_1792184108039.jpg",
+    isVip: false,
+    publisherName: "\u0633\u0627\u0631\u0629 \u062E\u0627\u0644\u062F",
+    ownerToken: "seed-owner-laptop",
+    feeSdg: 0,
+    status: "pending",
+    createdAt: new Date(Date.now() - 40 * 60 * 1e3).toISOString()
+  }
+];
 var Database = class {
   constructor() {
     this.tableDefs = [];
@@ -1675,6 +1742,23 @@ var Database = class {
         const hasTenants = (loaded.tenants || []).length > 0;
         if (hasTenants) {
           this.data = { ...this.data, ...loaded };
+          const missing = Object.entries(seed).filter(
+            ([collection, rows]) => rows.length > 0 && (loaded[collection] || []).length === 0
+          );
+          for (const [collection, rows] of missing) {
+            this.data[collection] = rows;
+          }
+          if (missing.length > 0) {
+            await persistAll(
+              this.tableDefs,
+              this.data,
+              new Set(missing.map(([c]) => c))
+            );
+            for (const [collection] of missing) {
+              loaded[collection] = this.data[collection];
+            }
+            console.log("[DB] Seeded new collections:", missing.map(([c]) => c).join(", "));
+          }
           this.captureBaseline();
           console.log("[DB] Loaded from Postgres:", Object.entries(loaded).map(([k, v]) => `${k}=${v.length}`).join(" "));
         } else {
@@ -1736,6 +1820,60 @@ var Database = class {
   async shutdown() {
     await closePool();
   }
+  /* ------------------------------------------------------------------ */
+  /*  Market ads (public listings with admin moderation)                 */
+  /* ------------------------------------------------------------------ */
+  getMarketAds() {
+    return this.data.marketAds || [];
+  }
+  getMarketAd(id) {
+    return (this.data.marketAds || []).find((a) => a.id === id);
+  }
+  /** New ads always enter as `pending` — nothing reaches the market unreviewed. */
+  createMarketAd(input) {
+    const ad = {
+      ...input,
+      id: newId("mkt"),
+      status: "pending",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.marketAds = [ad, ...this.data.marketAds || []];
+    this.save();
+    return ad;
+  }
+  reviewMarketAd(id, decision) {
+    const ad = this.getMarketAd(id);
+    if (!ad) return null;
+    ad.status = decision.decision;
+    ad.reviewedBy = decision.reviewedBy || "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F";
+    ad.reviewedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (decision.decision === "rejected") {
+      ad.rejectionReason = decision.note || "\u0644\u0645 \u064A\u0633\u062A\u0648\u0641 \u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u0634\u0631\u0648\u0637 \u0627\u0644\u0646\u0634\u0631.";
+    } else {
+      ad.rejectionReason = void 0;
+      if (decision.paymentConfirmed) {
+        ad.paymentRef = ad.paymentRef || `PAID-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`;
+      }
+    }
+    this.save();
+    return ad;
+  }
+  /**
+   * Deletion rules:
+   *  - the publisher must present the token issued to their device
+   *  - an admin can delete anything
+   */
+  deleteMarketAd(id, auth) {
+    const ad = this.getMarketAd(id);
+    if (!ad) return { ok: false, reason: "NOT_FOUND" };
+    const isOwner = !!auth.ownerToken && ad.ownerToken === auth.ownerToken;
+    if (!isOwner && !auth.admin) {
+      return { ok: false, reason: "FORBIDDEN" };
+    }
+    this.data.marketAds = (this.data.marketAds || []).filter((a) => a.id !== id);
+    this.save();
+    return { ok: true };
+  }
   isDatabaseEnabled() {
     return isDbEnabled();
   }
@@ -1773,7 +1911,8 @@ var Database = class {
       promotions: INITIAL_PROMOTIONS,
       kitchenTickets: INITIAL_KITCHEN_TICKETS,
       inventoryAlerts: [],
-      inventoryAudits: []
+      inventoryAudits: [],
+      marketAds: INITIAL_MARKET_ADS
     };
   }
   /** Mark the snapshot as changed; the request pipeline flushes it. */
@@ -2467,17 +2606,6 @@ var Database = class {
   }
 };
 var db = new Database();
-
-// src/server/ids.ts
-import { randomUUID } from "crypto";
-function newId(prefix) {
-  const ts = Date.now().toString(36);
-  return `${prefix}_${ts}_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
-}
-function newCode(prefix, pad = 6) {
-  const rand = randomUUID().replace(/-/g, "").slice(0, pad).toUpperCase();
-  return `${prefix}-${rand}`;
-}
 
 // src/server/media.ts
 var TABLE = "sanad_media";
@@ -4580,6 +4708,124 @@ apiRouter.delete("/media/:id", async (req, res) => {
     console.error("[media] delete failed:", err);
     res.status(500).json({ error: "DELETE_FAILED" });
   }
+});
+var AD_PRICING = {
+  standardFeeSdg: Number(process.env.AD_FEE_STANDARD_SDG ?? 0),
+  vipFeeSdg: Number(process.env.AD_FEE_VIP_SDG ?? 5e3),
+  currency: "SDG"
+};
+function feeFor(isVip) {
+  return isVip ? AD_PRICING.vipFeeSdg : AD_PRICING.standardFeeSdg;
+}
+apiRouter.get("/market-ads/pricing", (_req, res) => {
+  res.json({ pricing: AD_PRICING });
+});
+apiRouter.get("/market-ads", (req, res) => {
+  const ownerToken = String(req.headers["x-owner-token"] || "");
+  const all = db.getMarketAds();
+  const approved = all.filter((a) => a.status === "approved");
+  const mine = ownerToken ? all.filter((a) => a.ownerToken === ownerToken && a.status !== "approved") : [];
+  res.json({ ads: approved, mine, pricing: AD_PRICING });
+});
+apiRouter.post("/market-ads", (req, res) => {
+  const {
+    title,
+    category,
+    priceSdg,
+    location,
+    phone,
+    whatsapp,
+    description,
+    imageUrl,
+    videoUrl,
+    isVip,
+    publisherName,
+    ownerToken,
+    paymentRef
+  } = req.body || {};
+  if (!title || String(title).trim().length < 4) {
+    return res.status(400).json({ error: "TITLE_REQUIRED", message: "\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u0645\u0637\u0644\u0648\u0628 (4 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644)." });
+  }
+  if (!phone || String(phone).trim().length < 9) {
+    return res.status(400).json({ error: "PHONE_REQUIRED", message: "\u0631\u0642\u0645 \u0627\u0644\u0647\u0627\u062A\u0641 \u0623\u0648 \u0627\u0644\u0648\u0627\u062A\u0633\u0627\u0628 \u0645\u0637\u0644\u0648\u0628." });
+  }
+  if (!imageUrl && !videoUrl) {
+    return res.status(400).json({ error: "MEDIA_REQUIRED", message: "\u0623\u0636\u0641 \u0635\u0648\u0631\u0629 \u0623\u0648 \u0641\u064A\u062F\u064A\u0648 \u0644\u0644\u0625\u0639\u0644\u0627\u0646." });
+  }
+  if (!ownerToken || String(ownerToken).length < 8) {
+    return res.status(400).json({ error: "OWNER_TOKEN_REQUIRED", message: "\u062A\u0639\u0630\u0631 \u0627\u0644\u062A\u0639\u0631\u0641 \u0639\u0644\u0649 \u062C\u0647\u0627\u0632\u0643\u060C \u0623\u0639\u062F \u0641\u062A\u062D \u0627\u0644\u062A\u0637\u0628\u064A\u0642." });
+  }
+  const ad = db.createMarketAd({
+    title: String(title).trim(),
+    category: category || "\u0639\u0627\u0645",
+    priceSdg: Number(priceSdg) || 0,
+    location: location || "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+    phone: String(phone).trim(),
+    whatsapp: whatsapp || phone,
+    description: description || "",
+    imageUrl: imageUrl || "",
+    videoUrl: videoUrl || void 0,
+    isVip: !!isVip,
+    publisherName: publisherName || "\u0632\u0628\u0648\u0646 \u0645\u0646\u0635\u0629 \u0633\u0646\u062F",
+    ownerToken: String(ownerToken),
+    feeSdg: feeFor(!!isVip),
+    paymentRef: paymentRef || void 0
+  });
+  res.json({
+    success: true,
+    ad,
+    message: "\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0625\u0639\u0644\u0627\u0646\u0643 \u0644\u0644\u0645\u0631\u0627\u062C\u0639\u0629. \u0633\u064A\u0638\u0647\u0631 \u0641\u064A \u0627\u0644\u0633\u0648\u0642 \u0628\u0639\u062F \u0645\u0648\u0627\u0641\u0642\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629."
+  });
+});
+apiRouter.delete("/market-ads/:id", (req, res) => {
+  const ownerToken = String(req.headers["x-owner-token"] || "");
+  const result = db.deleteMarketAd(req.params.id, { ownerToken });
+  if (!result.ok) {
+    return res.status(result.reason === "NOT_FOUND" ? 404 : 403).json({
+      error: result.reason,
+      message: result.reason === "NOT_FOUND" ? "\u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." : "\u0644\u0627 \u062A\u0645\u0644\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u062D\u0630\u0641 \u0647\u0630\u0627 \u0627\u0644\u0625\u0639\u0644\u0627\u0646."
+    });
+  }
+  res.json({ success: true });
+});
+apiRouter.get("/admin/market-ads", (req, res) => {
+  const status = String(req.query.status || "all");
+  const ads = db.getMarketAds();
+  const filtered = status === "all" ? ads : ads.filter((a) => a.status === status);
+  res.json({
+    ads: filtered.sort((a, b) => a.createdAt < b.createdAt ? 1 : -1),
+    counts: {
+      pending: ads.filter((a) => a.status === "pending").length,
+      approved: ads.filter((a) => a.status === "approved").length,
+      rejected: ads.filter((a) => a.status === "rejected").length,
+      feesDueSdg: ads.filter((a) => a.status === "pending" && a.feeSdg > 0).reduce((sum, a) => sum + a.feeSdg, 0),
+      feesCollectedSdg: ads.filter((a) => a.status === "approved").reduce((sum, a) => sum + (a.feeSdg || 0), 0)
+    },
+    pricing: AD_PRICING
+  });
+});
+apiRouter.post("/admin/market-ads/:id/review", (req, res) => {
+  const { decision, note, reviewedBy, paymentConfirmed } = req.body || {};
+  if (decision !== "approved" && decision !== "rejected") {
+    return res.status(400).json({ error: "BAD_DECISION", message: "\u0627\u0644\u0642\u0631\u0627\u0631 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 approved \u0623\u0648 rejected." });
+  }
+  const ad = db.reviewMarketAd(req.params.id, {
+    decision,
+    note,
+    reviewedBy: reviewedBy || "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F",
+    paymentConfirmed: !!paymentConfirmed
+  });
+  if (!ad) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  }
+  res.json({ success: true, ad });
+});
+apiRouter.delete("/admin/market-ads/:id", (req, res) => {
+  const result = db.deleteMarketAd(req.params.id, { admin: true });
+  if (!result.ok) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  }
+  res.json({ success: true });
 });
 
 // server.ts

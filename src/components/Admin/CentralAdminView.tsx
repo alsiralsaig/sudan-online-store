@@ -16,15 +16,17 @@ import {
   DollarSign,
   X,
   Sparkles,
+  Megaphone,
   Tag,
 } from 'lucide-react';
 import type { AuditLog, Product } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
 import { ThermalReceiptSettingsView } from './ThermalReceiptSettingsView.tsx';
 import { PromotionsSettingsView } from './PromotionsSettingsView.tsx';
+import { MarketAdsAdminView } from './MarketAdsAdminView.tsx';
 
 export const CentralAdminView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions'>('merchants');
+  const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads'>('merchants');
   const [tenants, setTenants] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
@@ -154,6 +156,15 @@ export const CentralAdminView: React.FC = () => {
           >
             <Sparkles className="w-3.5 h-3.5 text-orange-600" />
             <span>نظام العروض الترويجية</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('market_ads')}
+            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 relative ${
+              activeTab === 'market_ads' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
+            }`}
+          >
+            <Megaphone className="w-3.5 h-3.5 text-emerald-600" />
+            <span>إعلانات السوق</span>
           </button>
         </div>
       </div>
@@ -370,6 +381,7 @@ export const CentralAdminView: React.FC = () => {
 
       {/* Tab 5: Promotional Offers Management */}
       {activeTab === 'promotions' && <PromotionsSettingsView products={products} />}
+      {activeTab === 'market_ads' && <MarketAdsAdminView />}
 
       {/* =========================================================================
           REVIEW PAYMENT MODAL

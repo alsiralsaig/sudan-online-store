@@ -3,6 +3,7 @@ import {
   acquireWriteLock,
   closePool,
 } from './pg.ts';
+import { newId } from './ids.ts';
 import {
   ensureSchema,
   loadAll,
@@ -41,6 +42,7 @@ import type {
   InventoryAlert,
   InventoryAudit,
   InventoryAuditItem,
+  MarketAd,
 } from '../types/index.ts';
 
 export interface DatabaseSchema {
@@ -70,6 +72,7 @@ export interface DatabaseSchema {
   promotions: PromotionRule[];
   inventoryAlerts: InventoryAlert[];
   inventoryAudits: InventoryAudit[];
+  marketAds: MarketAd[];
 }
 
 // Initial seed data for Sudanese market
@@ -1305,6 +1308,65 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
   },
 ];
 
+
+/** Ads that ship with the platform so the market is never empty. */
+const INITIAL_MARKET_ADS: MarketAd[] = [
+  {
+    id: 'mkt_ad_aircon',
+    title: 'مكيفات آيس فخامة وجودة',
+    category: 'الإلكترونيات',
+    priceSdg: 1350000,
+    location: 'الخرطوم',
+    phone: '0912345678',
+    whatsapp: '0912345678',
+    description: 'مكيفات ماء كرتين أصلية وموفرة للطاقة مع كفالة سنتين وتركيب فوري.',
+    imageUrl: '/assets/images/product_cooking_oil_1792173269992.jpg',
+    isVip: true,
+    publisherName: 'معرض الأجهزة المعتمد',
+    ownerToken: 'seed-owner-aircon',
+    feeSdg: 5000,
+    status: 'approved',
+    reviewedBy: 'إدارة سند',
+    reviewedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 4 * 3600 * 1000).toISOString(),
+  },
+  {
+    id: 'mkt_ad_car',
+    title: 'أعلن عن معرض سياراتك هنا',
+    category: 'السيارات والمركبات',
+    priceSdg: 0,
+    location: 'الخرطوم',
+    phone: '0913009060',
+    whatsapp: '0913009060',
+    description: 'كن من أوائل المعلنين في البندر وسند.',
+    imageUrl: '/assets/images/albander_hyundai_car_1792184093653.jpg',
+    isVip: false,
+    publisherName: 'منصة سند',
+    ownerToken: 'seed-owner-cars',
+    feeSdg: 0,
+    status: 'approved',
+    reviewedBy: 'إدارة سند',
+    reviewedAt: new Date(Date.now() - 26 * 3600 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 30 * 3600 * 1000).toISOString(),
+  },
+  {
+    id: 'mkt_ad_laptop',
+    title: 'لابتوب وماك بوك مستعمل بحالة ممتازة',
+    category: 'الإلكترونيات',
+    priceSdg: 850000,
+    location: 'بورتسودان',
+    phone: '0912556677',
+    description: 'ماك بوك برو 2021، ذاكرة 16 جيجا، بطارية أصلية.',
+    imageUrl: '/assets/images/albander_macbook_laptop_1792184108039.jpg',
+    isVip: false,
+    publisherName: 'سارة خالد',
+    ownerToken: 'seed-owner-laptop',
+    feeSdg: 0,
+    status: 'pending',
+    createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+  },
+];
+
 class Database {
   private data: DatabaseSchema;
   private tableDefs: TableDef[] = [];
@@ -1339,6 +1401,28 @@ class Database {
 
         if (hasTenants) {
           this.data = { ...this.data, ...loaded } as DatabaseSchema;
+
+          // A collection added after the database was first created starts
+          // empty; seed it so new features ship with sensible defaults.
+          const missing = Object.entries(seed).filter(
+            ([collection, rows]) =>
+              rows.length > 0 && (loaded[collection] || []).length === 0
+          );
+          for (const [collection, rows] of missing) {
+            (this.data as any)[collection] = rows;
+          }
+          if (missing.length > 0) {
+            await persistAll(
+              this.tableDefs,
+              this.data as unknown as Record<string, any[]>,
+              new Set(missing.map(([c]) => c))
+            );
+            for (const [collection] of missing) {
+              loaded[collection] = (this.data as any)[collection];
+            }
+            console.log('[DB] Seeded new collections:', missing.map(([c]) => c).join(', '));
+          }
+
           this.captureBaseline();
           console.log('[DB] Loaded from Postgres:', Object.entries(loaded)
             .map(([k, v]) => `${k}=${v.length}`)
@@ -1412,6 +1496,85 @@ class Database {
     await closePool();
   }
 
+  /* ------------------------------------------------------------------ */
+  /*  Market ads (public listings with admin moderation)                 */
+  /* ------------------------------------------------------------------ */
+
+  public getMarketAds(): MarketAd[] {
+    return this.data.marketAds || [];
+  }
+
+  public getMarketAd(id: string): MarketAd | undefined {
+    return (this.data.marketAds || []).find((a) => a.id === id);
+  }
+
+  /** New ads always enter as `pending` — nothing reaches the market unreviewed. */
+  public createMarketAd(
+    input: Omit<MarketAd, 'id' | 'status' | 'createdAt'>
+  ): MarketAd {
+    const ad: MarketAd = {
+      ...input,
+      id: newId('mkt'),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+
+    this.data.marketAds = [ad, ...(this.data.marketAds || [])];
+    this.save();
+    return ad;
+  }
+
+  public reviewMarketAd(
+    id: string,
+    decision: {
+      decision: 'approved' | 'rejected';
+      note?: string;
+      reviewedBy?: string;
+      paymentConfirmed?: boolean;
+    }
+  ): MarketAd | null {
+    const ad = this.getMarketAd(id);
+    if (!ad) return null;
+
+    ad.status = decision.decision;
+    ad.reviewedBy = decision.reviewedBy || 'إدارة سند';
+    ad.reviewedAt = new Date().toISOString();
+
+    if (decision.decision === 'rejected') {
+      ad.rejectionReason = decision.note || 'لم يستوف الإعلان شروط النشر.';
+    } else {
+      ad.rejectionReason = undefined;
+      if (decision.paymentConfirmed) {
+        ad.paymentRef = ad.paymentRef || `PAID-${new Date().toISOString().slice(0, 10)}`;
+      }
+    }
+
+    this.save();
+    return ad;
+  }
+
+  /**
+   * Deletion rules:
+   *  - the publisher must present the token issued to their device
+   *  - an admin can delete anything
+   */
+  public deleteMarketAd(
+    id: string,
+    auth: { ownerToken?: string; admin?: boolean }
+  ): { ok: boolean; reason?: 'NOT_FOUND' | 'FORBIDDEN' } {
+    const ad = this.getMarketAd(id);
+    if (!ad) return { ok: false, reason: 'NOT_FOUND' };
+
+    const isOwner = !!auth.ownerToken && ad.ownerToken === auth.ownerToken;
+    if (!isOwner && !auth.admin) {
+      return { ok: false, reason: 'FORBIDDEN' };
+    }
+
+    this.data.marketAds = (this.data.marketAds || []).filter((a) => a.id !== id);
+    this.save();
+    return { ok: true };
+  }
+
   public isDatabaseEnabled(): boolean {
     return isDbEnabled();
   }
@@ -1453,6 +1616,7 @@ class Database {
       kitchenTickets: INITIAL_KITCHEN_TICKETS,
       inventoryAlerts: [],
       inventoryAudits: [],
+      marketAds: INITIAL_MARKET_ADS,
     };
   }
 

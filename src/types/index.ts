@@ -665,3 +665,42 @@ export interface InventoryAudit {
   createdAt: string;
   updatedAt: string;
 }
+
+/* =========================================================================
+   Market ads (public marketplace listings) with admin moderation
+   ========================================================================= */
+
+export type MarketAdStatus = 'pending' | 'approved' | 'rejected';
+
+export interface MarketAd {
+  id: string;
+  title: string;
+  category: string;
+  /** Price of the goods being advertised, in SDG. */
+  priceSdg: number;
+  location: string;
+  phone: string;
+  whatsapp?: string;
+  description?: string;
+  imageUrl: string;
+  videoUrl?: string;
+  isVip: boolean;
+  publisherName?: string;
+  /** Secret held by the publisher's device — required to delete the ad. */
+  ownerToken: string;
+  /** Publishing fee charged for this ad, in SDG. */
+  feeSdg: number;
+  /** Payment reference supplied by the publisher (bank transfer, etc.). */
+  paymentRef?: string;
+  status: MarketAdStatus;
+  rejectionReason?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+}
+
+export interface MarketAdPricing {
+  standardFeeSdg: number;
+  vipFeeSdg: number;
+  currency: string;
+}
