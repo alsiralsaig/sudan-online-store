@@ -102,6 +102,20 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
     };
   }, [banner.id, window$.from, window$.to]);
 
+  // Lock the page behind the sheet so the report never drifts sideways on phones
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
   const totals = useMemo(() => {
     const impressions = days.reduce((a, d) => a + d.impressions, 0);
     const clicks = days.reduce((a, d) => a + d.clicks, 0);
@@ -132,7 +146,7 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
   const last = days[days.length - 1]?.date;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-3 sm:p-6">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center overflow-y-auto overflow-x-hidden p-3 sm:p-6">
       {/* Print rules: only the report sheet reaches the paper / PDF */}
       <style>{`
         @media print {
@@ -161,7 +175,7 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
         }
       `}</style>
 
-      <div className="banner-report-sheet w-full max-w-3xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl my-2">
+      <div className="banner-report-sheet w-full max-w-3xl mx-auto shrink-0 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl my-2">
         {/* header */}
         <div className="flex items-start justify-between gap-3 p-4 border-b border-slate-800">
           <div className="min-w-0">
