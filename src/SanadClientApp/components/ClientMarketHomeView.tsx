@@ -384,17 +384,29 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
                       </h4>
                       <div className="flex items-center gap-1 text-[10px] text-slate-500 flex-wrap">
                         <Layers className="w-3 h-3 text-amber-500 shrink-0" />
-                        <span className="truncate max-w-[70px]">{ad.category}</span>
+                        <span className="truncate max-w-[76px]">{ad.category}</span>
                         <span>•</span>
-                        <span className="truncate max-w-[60px]">{ad.location}</span>
+                        <span className="truncate max-w-[64px]">{ad.location}</span>
                         <span>•</span>
                         <span className="whitespace-nowrap">{ad.timeAgo}</span>
                       </div>
                     </div>
 
                     <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between gap-1">
-                      <span className="font-mono font-black text-[11px] sm:text-xs text-slate-950 truncate">
-                        {ad.priceSdg > 0 ? `${ad.priceSdg.toLocaleString('en-US')} جنيه سوداني` : 'حسب الاتفاق'}
+                      <span
+                        className={`font-mono font-black text-slate-950 ${
+                          ad.priceSdg > 999999 ? 'text-[10px]' : 'text-[11px]'
+                        } sm:text-xs whitespace-nowrap`}
+                        title={ad.priceSdg > 0 ? `${ad.priceSdg.toLocaleString('en-US')} جنيه سوداني` : 'حسب الاتفاق'}
+                      >
+                        {ad.priceSdg > 0 ? (
+                          <>
+                            {ad.priceSdg.toLocaleString('en-US')}
+                            <span className="text-emerald-800 font-sans"> ج.س</span>
+                          </>
+                        ) : (
+                          <span className="font-sans text-[11px]">حسب الاتفاق</span>
+                        )}
                       </span>
                       <span className="w-6 h-6 rounded-full bg-emerald-900 text-white flex items-center justify-center shrink-0">
                         <ArrowLeft className="w-3.5 h-3.5" />
@@ -483,6 +495,8 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
 
         {/* Store application shortcut, kept visible at the end of the feed */}
         <SanadContactSection compact className="mb-3" />
+
+        <div className="h-16" aria-hidden="true" />
 
         <button
           onClick={() => onNavigateTab?.('market_home')}
