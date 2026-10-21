@@ -228,7 +228,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
         {/* ---------------- Banner (photo-led, like the reference) -------- */}
         <div
           ref={heroRef}
-          className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 h-40 sm:h-52 bg-slate-900 cursor-pointer"
+          className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 aspect-[3.4/1] sm:aspect-[3.9/1] bg-slate-900 cursor-pointer"
           onClick={() => {
             const shown: any = banners[currentBannerIndex];
             if (shown?.id) {
@@ -252,31 +252,35 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
           />
           <div className="absolute inset-0 bg-gradient-to-l from-slate-950/95 via-slate-950/45 to-transparent" />
           <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-slate-950/70 to-transparent" />
-          <div className="relative h-full flex items-center justify-between p-5">
-            <div className="space-y-1 max-w-[66%] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
+          <div className="relative h-full flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5">
+            <div className="min-w-0 max-w-[64%] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
               {banners[currentBannerIndex].badge && (
-                <span className="text-[10px] font-mono tracking-widest text-amber-300 block">
+                <span className="text-[9px] sm:text-[10px] font-mono tracking-widest text-amber-300 block leading-none mb-0.5">
                   {banners[currentBannerIndex].badge}
                 </span>
               )}
-              <h3 className="text-base sm:text-2xl font-black leading-tight">
+              <h3 className="text-[13px] sm:text-xl font-black leading-tight line-clamp-2">
                 {banners[currentBannerIndex].title}
               </h3>
               {banners[currentBannerIndex].subtitle && (
-                <p className="text-[11px] sm:text-xs text-slate-100 line-clamp-2">
+                <p className="hidden sm:block text-[11px] text-slate-100 line-clamp-1 mt-0.5">
                   {banners[currentBannerIndex].subtitle}
                 </p>
               )}
-              <button
-                onClick={onOpenCreateModal}
-                className="mt-2 px-3 py-1.5 bg-white text-slate-900 rounded-xl text-[11px] font-black active:scale-95 transition-transform"
-              >
-                أضف إعلانك الآن (+)
-              </button>
             </div>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenCreateModal();
+              }}
+              className="shrink-0 self-end mb-1 px-2.5 py-1 sm:px-3 sm:py-1.5 bg-white text-slate-900 rounded-lg text-[10px] sm:text-[11px] font-black active:scale-95 transition-transform whitespace-nowrap shadow-sm"
+            >
+              أضف إعلانك (+)
+            </button>
           </div>
 
-          <div className="absolute bottom-2.5 inset-x-0 flex items-center justify-center gap-1.5">
+          <div className="absolute bottom-1.5 inset-x-0 flex items-center justify-center gap-1.5">
             {banners.map((_, idx) => (
               <button
                 key={idx}
