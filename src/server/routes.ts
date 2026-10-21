@@ -3342,7 +3342,8 @@ apiRouter.get('/admin/market-banners', (_req, res) => {
 });
 
 apiRouter.post('/admin/market-banners', (req, res) => {
-  const { title, subtitle, badge, imageUrl, linkUrl, advertiserName, sortOrder, active } = req.body || {};
+  const { title, subtitle, badge, imageUrl, linkUrl, advertiserName, advertiserTenantId, sortOrder, active } =
+    req.body || {};
 
   if (!title || String(title).trim().length < 3) {
     return res.status(400).json({ error: 'TITLE_REQUIRED', message: 'عنوان البانر مطلوب.' });
@@ -3358,6 +3359,7 @@ apiRouter.post('/admin/market-banners', (req, res) => {
     imageUrl: String(imageUrl).trim(),
     linkUrl: linkUrl ? String(linkUrl).trim() : undefined,
     advertiserName: advertiserName ? String(advertiserName).trim() : undefined,
+    advertiserTenantId: advertiserTenantId ? String(advertiserTenantId).trim() : undefined,
     active: active !== false,
     sortOrder:
       sortOrder !== undefined && sortOrder !== null && Number.isFinite(Number(sortOrder))
@@ -3370,7 +3372,7 @@ apiRouter.post('/admin/market-banners', (req, res) => {
 
 apiRouter.put('/admin/market-banners/:id', (req, res) => {
   const patch: any = {};
-  for (const key of ['title', 'subtitle', 'badge', 'imageUrl', 'linkUrl', 'advertiserName', 'active', 'sortOrder'] as const) {
+  for (const key of ['title', 'subtitle', 'badge', 'imageUrl', 'linkUrl', 'advertiserName', 'advertiserTenantId', 'active', 'sortOrder'] as const) {
     if (req.body?.[key] !== undefined) {
       patch[key] = key === 'sortOrder' ? Number(req.body[key]) : key === 'active' ? !!req.body[key] : req.body[key];
     }
@@ -3379,6 +3381,27 @@ apiRouter.put('/admin/market-banners/:id', (req, res) => {
   const banner = db.updateMarketBanner(req.params.id, patch);
   if (!banner) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
   res.json({ success: true, banner });
+});
+
+/*  Merchant side: «إعلاناتي» — a merchant only ever sees its own banners  */
+
+const bannersForRequestTenant = (req: Request) =>
+  db.getMarketBannersForTenant((req.headers['x-tenant-id'] as string) || 'tenant_alrowad');
+
+apiRouter.get('/merchant/market-banners', (req, res) => {
+  res.json({ banners: bannersForRequestTenant(req) });
+});
+
+apiRouter.get('/merchant/market-banners/:id/report', (req, res) => {
+  const mine = bannersForRequestTenant(req).some((b) => b.id === req.params.id);
+  if (!mine) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'هذا البانر غير مرتبط بحسابك.' });
+  }
+  const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+  const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+  const report = db.getMarketBannerReport(req.params.id, from, to);
+  if (!report) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
+  res.json({ success: true, ...report });
 });
 
 /** Advertiser report: day-by-day views, taps and CTR (defaults to this month). */

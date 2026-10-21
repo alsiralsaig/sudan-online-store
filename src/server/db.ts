@@ -2084,6 +2084,22 @@ class Database {
     };
   }
 
+  /** Banners that belong to one merchant (linked tenant, or a name match as fallback). */
+  public getMarketBannersForTenant(tenantId: string): MarketBanner[] {
+    const tenant = this.getTenant(tenantId);
+    const names = [tenant?.tradeName, tenant?.name]
+      .filter((n): n is string => !!n)
+      .map((n) => n.trim());
+    return (this.data.marketBanners || [])
+      .filter(
+        (b) =>
+          b.advertiserTenantId === tenantId ||
+          (!b.advertiserTenantId && !!b.advertiserName && names.includes(b.advertiserName.trim()))
+      )
+      .slice()
+      .sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+  }
+
   public deleteMarketBanner(id: string): boolean {
     const before = (this.data.marketBanners || []).length;
     this.data.marketBanners = (this.data.marketBanners || []).filter((b) => b.id !== id);

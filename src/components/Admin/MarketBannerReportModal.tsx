@@ -28,9 +28,16 @@ interface BannerLike {
   active?: boolean;
 }
 
+type ReportFetcher = (
+  id: string,
+  range?: { from?: string; to?: string }
+) => Promise<{ days: DayRow[]; totals?: { impressions: number; clicks: number; ctr: number } }>;
+
 interface Props {
   banner: BannerLike;
   onClose: () => void;
+  /** Defaults to the admin endpoint; the merchant page passes its own scoped one. */
+  fetcher?: ReportFetcher;
 }
 
 type RangeKey = 'month' | '7' | '30' | 'all';
@@ -65,7 +72,11 @@ const addDays = (iso: string, n: number): string => {
 };
 
 /** Advertiser report with a print-to-PDF layout. */
-export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) => {
+export const MarketBannerReportModal: React.FC<Props> = ({
+  banner,
+  onClose,
+  fetcher = api.getMarketBannerReport,
+}) => {
   const today = isoDay(new Date());
   const [range, setRange] = useState<RangeKey>('month');
   const [days, setDays] = useState<DayRow[]>([]);
@@ -86,8 +97,7 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
     let cancelled = false;
     setLoading(true);
     setError('');
-    api
-      .getMarketBannerReport(banner.id, { from: window$.from, to: window$.to })
+    fetcher(banner.id, { from: window$.from, to: window$.to })
       .then((res) => {
         if (!cancelled) setDays(res.days || []);
       })
@@ -100,7 +110,7 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
     return () => {
       cancelled = true;
     };
-  }, [banner.id, window$.from, window$.to]);
+  }, [banner.id, window$.from, window$.to, fetcher]);
 
   // Lock the page behind the sheet so the report never drifts sideways on phones
   useEffect(() => {

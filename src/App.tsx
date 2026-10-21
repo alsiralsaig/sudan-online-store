@@ -11,6 +11,7 @@ import { CurrenciesView } from './components/Currencies/CurrenciesView.tsx';
 import { BranchesEmployeesView } from './components/BranchesEmployees/BranchesEmployeesView.tsx';
 import { StorefrontView } from './components/Storefront/StorefrontView.tsx';
 import { SubscriptionView } from './components/Subscription/SubscriptionView.tsx';
+import { MerchantAdsView } from './components/Merchant/MerchantAdsView.tsx';
 import { CentralAdminView } from './components/Admin/CentralAdminView.tsx';
 import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx';
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
@@ -638,6 +639,11 @@ export default function App() {
           <SubscriptionView tenant={tenant} onRefresh={loadPrimaryData} />
         )}
 
+        {currentTab === 'my_ads' && (
+          <div className="p-4 sm:p-6">
+            <MerchantAdsView />
+          </div>
+        )}
         {currentTab === 'admin' && <CentralAdminView />}
       </main>
 

@@ -38,6 +38,7 @@ interface Banner {
   active: boolean;
   sortOrder: number;
   advertiserName?: string;
+  advertiserTenantId?: string;
   clicks?: number;
   lastClickedAt?: string;
   impressions?: number;
@@ -77,6 +78,7 @@ export const MarketBannersAdminView: React.FC = () => {
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [reportFor, setReportFor] = useState<Banner | null>(null);
+  const [tenants, setTenants] = useState<Array<{ id: string; name: string; tradeName?: string }>>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
@@ -85,6 +87,7 @@ export const MarketBannersAdminView: React.FC = () => {
     badge: '',
     linkUrl: '',
     advertiserName: '',
+    advertiserTenantId: '' as string | undefined,
     imageUrl: '',
   });
 
@@ -102,6 +105,10 @@ export const MarketBannersAdminView: React.FC = () => {
 
   useEffect(() => {
     load();
+    api
+      .getAdminTenants()
+      .then((res) => setTenants(res.tenants || []))
+      .catch(() => setTenants([]));
   }, []);
 
   const pickImage = async (file?: File | null) => {
@@ -131,7 +138,15 @@ export const MarketBannersAdminView: React.FC = () => {
     setBusyId('new');
     try {
       await api.createMarketBanner({ ...form, active: true });
-      setForm({ title: '', subtitle: '', badge: '', linkUrl: '', advertiserName: '', imageUrl: '' });
+      setForm({
+        title: '',
+        subtitle: '',
+        badge: '',
+        linkUrl: '',
+        advertiserName: '',
+        advertiserTenantId: '',
+        imageUrl: '',
+      });
       setIsAdding(false);
       await load();
     } catch (err) {
@@ -161,6 +176,20 @@ export const MarketBannersAdminView: React.FC = () => {
     try {
       await api.updateMarketBanner(banner.id, { sortOrder: swapWith.sortOrder });
       await api.updateMarketBanner(swapWith.id, { sortOrder: banner.sortOrder });
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const linkTenant = async (banner: Banner, tenantId: string) => {
+    const t = tenants.find((x) => x.id === tenantId);
+    setBusyId(banner.id);
+    try {
+      await api.updateMarketBanner(banner.id, {
+        advertiserTenantId: tenantId || undefined,
+        advertiserName: t ? t.tradeName || t.name : banner.advertiserName,
+      });
       await load();
     } finally {
       setBusyId(null);
@@ -307,6 +336,28 @@ export const MarketBannersAdminView: React.FC = () => {
               placeholder="اسم المعلن (للإدارة فقط)"
               className={field}
             />
+            <select
+              value={form.advertiserTenantId || ''}
+              onChange={(e) => {
+                const id = e.target.value;
+                const t = tenants.find((x) => x.id === id);
+                setForm({
+                  ...form,
+                  advertiserTenantId: id,
+                  // keep the advertiser label in sync with the linked store
+                  advertiserName: t ? t.tradeName || t.name : form.advertiserName,
+                });
+              }}
+              className={field}
+              title="يظهر البانر في صفحة «إعلاناتي» عند هذا التاجر"
+            >
+              <option value="">اربط البانر بمتجر (اختياري)</option>
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.tradeName || t.name}
+                </option>
+              ))}
+            </select>
             <input
               value={form.linkUrl}
               onChange={(e) => setForm({ ...form, linkUrl: e.target.value })}
@@ -379,6 +430,7 @@ export const MarketBannersAdminView: React.FC = () => {
                     <p className="text-[10px] text-slate-500 mt-0.5">
                       {banner.badge && <span className="text-amber-400">{banner.badge} • </span>}
                       {banner.advertiserName || 'بدون معلن'} • ترتيب {banner.sortOrder}
+                      {banner.advertiserTenantId ? ' • مرتبط بمتجر' : ' • غير مرتبط بمتجر'}
                     </p>
                   </div>
                   <span
@@ -429,6 +481,20 @@ export const MarketBannersAdminView: React.FC = () => {
                   >
                     <ArrowDown className="w-3 h-3" /> أخّر
                   </button>
+                  <select
+                    value={banner.advertiserTenantId || ''}
+                    onChange={(e) => linkTenant(banner, e.target.value)}
+                    disabled={busyId === banner.id}
+                    title="ربط البانر بمتجر ليظهر في صفحة «إعلاناتي»"
+                    className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-800 text-slate-200 border border-slate-700 focus:outline-none focus:border-emerald-500 disabled:opacity-50 max-w-[150px]"
+                  >
+                    <option value="">بدون متجر</option>
+                    {tenants.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.tradeName || t.name}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     onClick={() => setReportFor(banner)}
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 flex items-center gap-1"

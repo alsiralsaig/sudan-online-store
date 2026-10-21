@@ -6,6 +6,7 @@ import {
   BarChart3,
   ArrowLeftRight,
   ShieldAlert,
+  Megaphone,
   Globe,
   Coins,
   CreditCard,
@@ -520,6 +521,17 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <CreditCard className="w-3.5 h-3.5" />
           <span>الاشتراك والباقات</span>
+        </button>
+        <button
+          onClick={() => onTabChange('my_ads')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
+            currentTab === 'my_ads'
+              ? 'bg-white text-emerald-700 shadow-sm font-semibold'
+              : 'text-slate-700 bg-emerald-50/70 border border-emerald-200/50 font-semibold hover:text-emerald-900'
+          }`}
+        >
+          <Megaphone className="w-3.5 h-3.5 text-emerald-600" />
+          <span>إعلاناتي</span>
         </button>
         <button
           onClick={() => onTabChange('admin')}

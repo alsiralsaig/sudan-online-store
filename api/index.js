@@ -2275,6 +2275,14 @@ var Database = class {
       }
     };
   }
+  /** Banners that belong to one merchant (linked tenant, or a name match as fallback). */
+  getMarketBannersForTenant(tenantId) {
+    const tenant = this.getTenant(tenantId);
+    const names = [tenant?.tradeName, tenant?.name].filter((n) => !!n).map((n) => n.trim());
+    return (this.data.marketBanners || []).filter(
+      (b) => b.advertiserTenantId === tenantId || !b.advertiserTenantId && !!b.advertiserName && names.includes(b.advertiserName.trim())
+    ).slice().sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+  }
   deleteMarketBanner(id) {
     const before = (this.data.marketBanners || []).length;
     this.data.marketBanners = (this.data.marketBanners || []).filter((b) => b.id !== id);
@@ -5919,7 +5927,7 @@ apiRouter.get("/admin/market-banners", (_req, res) => {
   res.json({ banners: db.getMarketBanners(false) });
 });
 apiRouter.post("/admin/market-banners", (req, res) => {
-  const { title, subtitle, badge, imageUrl, linkUrl, advertiserName, sortOrder, active } = req.body || {};
+  const { title, subtitle, badge, imageUrl, linkUrl, advertiserName, advertiserTenantId, sortOrder, active } = req.body || {};
   if (!title || String(title).trim().length < 3) {
     return res.status(400).json({ error: "TITLE_REQUIRED", message: "\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0628\u0627\u0646\u0631 \u0645\u0637\u0644\u0648\u0628." });
   }
@@ -5933,6 +5941,7 @@ apiRouter.post("/admin/market-banners", (req, res) => {
     imageUrl: String(imageUrl).trim(),
     linkUrl: linkUrl ? String(linkUrl).trim() : void 0,
     advertiserName: advertiserName ? String(advertiserName).trim() : void 0,
+    advertiserTenantId: advertiserTenantId ? String(advertiserTenantId).trim() : void 0,
     active: active !== false,
     sortOrder: sortOrder !== void 0 && sortOrder !== null && Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : db.getMarketBanners().length + 1
   });
@@ -5940,7 +5949,7 @@ apiRouter.post("/admin/market-banners", (req, res) => {
 });
 apiRouter.put("/admin/market-banners/:id", (req, res) => {
   const patch = {};
-  for (const key of ["title", "subtitle", "badge", "imageUrl", "linkUrl", "advertiserName", "active", "sortOrder"]) {
+  for (const key of ["title", "subtitle", "badge", "imageUrl", "linkUrl", "advertiserName", "advertiserTenantId", "active", "sortOrder"]) {
     if (req.body?.[key] !== void 0) {
       patch[key] = key === "sortOrder" ? Number(req.body[key]) : key === "active" ? !!req.body[key] : req.body[key];
     }
@@ -5948,6 +5957,21 @@ apiRouter.put("/admin/market-banners/:id", (req, res) => {
   const banner = db.updateMarketBanner(req.params.id, patch);
   if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, banner });
+});
+var bannersForRequestTenant = (req) => db.getMarketBannersForTenant(req.headers["x-tenant-id"] || "tenant_alrowad");
+apiRouter.get("/merchant/market-banners", (req, res) => {
+  res.json({ banners: bannersForRequestTenant(req) });
+});
+apiRouter.get("/merchant/market-banners/:id/report", (req, res) => {
+  const mine = bannersForRequestTenant(req).some((b) => b.id === req.params.id);
+  if (!mine) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "\u0647\u0630\u0627 \u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0631\u062A\u0628\u0637 \u0628\u062D\u0633\u0627\u0628\u0643." });
+  }
+  const from = typeof req.query.from === "string" ? req.query.from : void 0;
+  const to = typeof req.query.to === "string" ? req.query.to : void 0;
+  const report = db.getMarketBannerReport(req.params.id, from, to);
+  if (!report) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  res.json({ success: true, ...report });
 });
 apiRouter.get("/admin/market-banners/:id/report", (req, res) => {
   const from = typeof req.query.from === "string" ? req.query.from : void 0;
