@@ -1938,6 +1938,7 @@ class Database {
     const banner: MarketBanner = {
       ...input,
       id: newId('bnr'),
+      clicks: 0,
       createdAt: new Date().toISOString(),
     };
     this.data.marketBanners = [...(this.data.marketBanners || []), banner];
@@ -1952,6 +1953,29 @@ class Database {
     const banner = (this.data.marketBanners || []).find((b) => b.id === id);
     if (!banner) return null;
     Object.assign(banner, patch);
+    this.save();
+    return banner;
+  }
+
+  public getMarketBanner(id: string): MarketBanner | null {
+    return (this.data.marketBanners || []).find((b) => b.id === id) || null;
+  }
+
+  /** Counts one shopper tap. Cheap write — only the two click fields change. */
+  public trackMarketBannerClick(id: string): MarketBanner | null {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+    banner.clicks = (banner.clicks || 0) + 1;
+    banner.lastClickedAt = new Date().toISOString();
+    this.save();
+    return banner;
+  }
+
+  public resetMarketBannerClicks(id: string): MarketBanner | null {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+    banner.clicks = 0;
+    banner.lastClickedAt = undefined;
     this.save();
     return banner;
   }

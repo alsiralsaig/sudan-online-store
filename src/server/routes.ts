@@ -3314,6 +3314,13 @@ apiRouter.get('/market-banners', (_req, res) => {
   res.json({ banners: db.getMarketBanners(true) });
 });
 
+/** Shopper tapped a banner — the landing page fires this before opening the link. */
+apiRouter.post('/market-banners/:id/click', (req, res) => {
+  const banner = db.trackMarketBannerClick(req.params.id);
+  if (!banner) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
+  res.json({ success: true, clicks: banner.clicks || 0 });
+});
+
 apiRouter.get('/admin/market-banners', (_req, res) => {
   res.json({ banners: db.getMarketBanners(false) });
 });
@@ -3354,6 +3361,12 @@ apiRouter.put('/admin/market-banners/:id', (req, res) => {
   }
 
   const banner = db.updateMarketBanner(req.params.id, patch);
+  if (!banner) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
+  res.json({ success: true, banner });
+});
+
+apiRouter.post('/admin/market-banners/:id/reset-clicks', (req, res) => {
+  const banner = db.resetMarketBannerClicks(req.params.id);
   if (!banner) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
   res.json({ success: true, banner });
 });

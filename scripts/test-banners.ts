@@ -45,6 +45,29 @@ ok('still visible to admin', (await call('/api/admin/market-banners')).body.bann
 const renamed = await call(`/api/admin/market-banners/${id}`, put({ title: 'عنوان محدّث', active: true }));
 ok('title updated', renamed.body.banner.title === 'عنوان محدّث');
 
+console.log('\n=== click tracking ===');
+const fresh = (await call('/api/admin/market-banners')).body.banners[0];
+ok('new banner starts at 0 clicks', (fresh.clicks ?? 0) === 0);
+
+const c1 = await call(`/api/market-banners/${fresh.id}/click`, { method: 'POST' });
+ok('tap increments', c1.code === 200 && c1.body.clicks === 1, JSON.stringify(c1.body));
+const c2 = await call(`/api/market-banners/${fresh.id}/click`, { method: 'POST' });
+const c3 = await call(`/api/market-banners/${fresh.id}/click`, { method: 'POST' });
+ok('increments again', c3.body.clicks === 3, String(c3.body?.clicks));
+
+const adminAfter = (await call('/api/admin/market-banners')).body.banners.find((b: any) => b.id === fresh.id);
+ok('admin sees the count', adminAfter.clicks === 3, String(adminAfter.clicks));
+ok('last tap timestamp saved', !!adminAfter.lastClickedAt);
+
+const other = (await call('/api/admin/market-banners')).body.banners.find((b: any) => b.id !== fresh.id);
+ok('other banners untouched', (other.clicks ?? 0) === 0);
+
+ok('unknown banner click 404', (await call('/api/market-banners/nope/click', { method: 'POST' })).code === 404);
+
+const reset = await call(`/api/admin/market-banners/${fresh.id}/reset-clicks`, { method: 'POST' });
+ok('reset zeroes the counter', reset.code === 200 && reset.body.banner.clicks === 0);
+ok('paused banner still counts taps', (await call('/api/market-banners/bnr_cars/click', { method: 'POST' })).code === 200);
+
 console.log('\n=== delete ===');
 ok('deleted', (await call(`/api/admin/market-banners/${id}`, { method: 'DELETE' })).code === 200);
 ok('gone from public feed', !(await call('/api/market-banners')).body.banners.some((b: any) => b.id === id));

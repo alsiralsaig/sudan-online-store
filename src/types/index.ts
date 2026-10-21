@@ -801,5 +801,8 @@ export interface MarketBanner {
   sortOrder: number;
   /** Shown to the admin, not to shoppers. */
   advertiserName?: string;
+  /** How many shoppers tapped the banner (advertiser reporting). */
+  clicks?: number;
+  lastClickedAt?: string;
   createdAt: string;
 }

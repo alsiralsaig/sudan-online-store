@@ -2157,6 +2157,7 @@ var Database = class {
     const banner = {
       ...input,
       id: newId("bnr"),
+      clicks: 0,
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     this.data.marketBanners = [...this.data.marketBanners || [], banner];
@@ -2167,6 +2168,26 @@ var Database = class {
     const banner = (this.data.marketBanners || []).find((b) => b.id === id);
     if (!banner) return null;
     Object.assign(banner, patch);
+    this.save();
+    return banner;
+  }
+  getMarketBanner(id) {
+    return (this.data.marketBanners || []).find((b) => b.id === id) || null;
+  }
+  /** Counts one shopper tap. Cheap write — only the two click fields change. */
+  trackMarketBannerClick(id) {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+    banner.clicks = (banner.clicks || 0) + 1;
+    banner.lastClickedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.save();
+    return banner;
+  }
+  resetMarketBannerClicks(id) {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+    banner.clicks = 0;
+    banner.lastClickedAt = void 0;
     this.save();
     return banner;
   }
@@ -5792,6 +5813,11 @@ apiRouter.post("/notifications/scan-lazy", async (_req, res) => {
 apiRouter.get("/market-banners", (_req, res) => {
   res.json({ banners: db.getMarketBanners(true) });
 });
+apiRouter.post("/market-banners/:id/click", (req, res) => {
+  const banner = db.trackMarketBannerClick(req.params.id);
+  if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  res.json({ success: true, clicks: banner.clicks || 0 });
+});
 apiRouter.get("/admin/market-banners", (_req, res) => {
   res.json({ banners: db.getMarketBanners(false) });
 });
@@ -5823,6 +5849,11 @@ apiRouter.put("/admin/market-banners/:id", (req, res) => {
     }
   }
   const banner = db.updateMarketBanner(req.params.id, patch);
+  if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  res.json({ success: true, banner });
+});
+apiRouter.post("/admin/market-banners/:id/reset-clicks", (req, res) => {
+  const banner = db.resetMarketBannerClicks(req.params.id);
   if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, banner });
 });

@@ -12,6 +12,8 @@ import {
   X,
   Loader2,
   AlertCircle,
+  MousePointerClick,
+  RotateCcw,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 
@@ -25,6 +27,8 @@ interface Banner {
   active: boolean;
   sortOrder: number;
   advertiserName?: string;
+  clicks?: number;
+  lastClickedAt?: string;
   createdAt: string;
 }
 
@@ -149,6 +153,17 @@ export const MarketBannersAdminView: React.FC = () => {
     }
   };
 
+  const resetClicks = async (banner: Banner) => {
+    if (!confirm(`تصفير نقرات «${banner.title}»؟`)) return;
+    setBusyId(banner.id);
+    try {
+      await api.resetMarketBannerClicks(banner.id);
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const remove = async (banner: Banner) => {
     if (!confirm(`حذف بانر «${banner.title}»؟`)) return;
     setBusyId(banner.id);
@@ -159,6 +174,12 @@ export const MarketBannersAdminView: React.FC = () => {
       setBusyId(null);
     }
   };
+
+  const totalClicks = banners.reduce((sum, b) => sum + (b.clicks || 0), 0);
+  const topBanner = banners.reduce<Banner | null>(
+    (best, b) => ((b.clicks || 0) > (best?.clicks || 0) ? b : best),
+    null
+  );
 
   const field =
     'w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500';
@@ -192,6 +213,32 @@ export const MarketBannersAdminView: React.FC = () => {
             {isAdding ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
             {isAdding ? 'إلغاء' : 'بانر جديد'}
           </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
+          <p className="text-[10px] text-slate-400 flex items-center gap-1">
+            <MousePointerClick className="w-3 h-3 text-emerald-400" /> إجمالي النقرات
+          </p>
+          <p className="text-lg font-black text-white mt-1">{totalClicks.toLocaleString('en-US')}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3">
+          <p className="text-[10px] text-slate-400">أفضل بانر</p>
+          <p className="text-xs font-bold text-white mt-1.5 truncate">
+            {topBanner && (topBanner.clicks || 0) > 0 ? topBanner.title : 'لا نقرات بعد'}
+          </p>
+          {topBanner && (topBanner.clicks || 0) > 0 && (
+            <p className="text-[10px] text-emerald-400 mt-0.5">
+              {(topBanner.clicks || 0).toLocaleString('en-US')} نقرة
+            </p>
+          )}
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 col-span-2 sm:col-span-1">
+          <p className="text-[10px] text-slate-400">متوسط النقرات للبانر</p>
+          <p className="text-lg font-black text-white mt-1">
+            {sorted.length ? Math.round(totalClicks / sorted.length).toLocaleString('en-US') : '0'}
+          </p>
         </div>
       </div>
 
@@ -297,6 +344,13 @@ export const MarketBannersAdminView: React.FC = () => {
                     </p>
                   </div>
                   <span
+                    title={banner.lastClickedAt ? `آخر نقرة: ${new Date(banner.lastClickedAt).toLocaleString('ar-EG')}` : 'لا نقرات بعد'}
+                    className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-800 text-sky-300 border-slate-700 flex items-center gap-1"
+                  >
+                    <MousePointerClick className="w-2.5 h-2.5" />
+                    {(banner.clicks || 0).toLocaleString('en-US')}
+                  </span>
+                  <span
                     className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                       banner.active
                         ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
@@ -329,6 +383,13 @@ export const MarketBannersAdminView: React.FC = () => {
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-800 text-slate-200 hover:text-white flex items-center gap-1 disabled:opacity-50"
                   >
                     <ArrowDown className="w-3 h-3" /> أخّر
+                  </button>
+                  <button
+                    onClick={() => resetClicks(banner)}
+                    disabled={busyId === banner.id || !banner.clicks}
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-800 text-slate-300 hover:text-white flex items-center gap-1 disabled:opacity-40"
+                  >
+                    <RotateCcw className="w-3 h-3" /> تصفير
                   </button>
                   <button
                     onClick={() => remove(banner)}

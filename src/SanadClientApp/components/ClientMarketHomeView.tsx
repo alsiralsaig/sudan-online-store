@@ -218,10 +218,14 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
       <div className="max-w-md md:max-w-4xl mx-auto px-3 sm:px-4 py-3 space-y-3">
         {/* ---------------- Banner (photo-led, like the reference) -------- */}
         <div
-          className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 h-40 sm:h-52 bg-slate-900"
+          className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 h-40 sm:h-52 bg-slate-900 cursor-pointer"
           onClick={() => {
-            const link = (banners[currentBannerIndex] as any)?.linkUrl;
-            if (link) window.open(link, '_blank');
+            const shown: any = banners[currentBannerIndex];
+            if (shown?.id) {
+              // Count the tap so the advertiser sees real numbers (never blocks the open)
+              api.trackMarketBannerClick(shown.id).catch(() => {});
+            }
+            if (shown?.linkUrl) window.open(shown.linkUrl, '_blank');
           }}
         >
           <img

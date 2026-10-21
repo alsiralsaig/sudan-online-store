@@ -721,6 +721,16 @@ class ApiClient {
     return this.request(`/admin/market-banners/${id}`, { method: 'DELETE' });
   }
 
+  /** Registers a shopper tap on a banner (fire-and-forget analytics). */
+  public async trackMarketBannerClick(id: string): Promise<{ success: boolean; clicks: number }> {
+    return this.request(`/market-banners/${id}/click`, { method: 'POST' });
+  }
+
+  /** Admin: zero the click counter for one banner. */
+  public async resetMarketBannerClicks(id: string): Promise<{ success: boolean; banner: any }> {
+    return this.request(`/admin/market-banners/${id}/reset-clicks`, { method: 'POST' });
+  }
+
   /** Uploads an image (compressed client-side) and returns its public URL. */
   public async uploadMedia(dataUrl: string, kind: 'image' | 'video' = 'image'): Promise<{ url: string; [k: string]: any }> {
     return this.request('/media', {
