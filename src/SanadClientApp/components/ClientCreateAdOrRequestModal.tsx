@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   Plus,
@@ -67,6 +67,21 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
     urgency: 'this_week' as 'urgent' | 'this_week' | 'flexible',
     notes: '',
   });
+
+  // Escape closes it and the page behind stops scrolling — the visitor must always get back
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [isOpen, onClose]);
 
   const sampleImages = [
     { label: 'سيارة حديثة', url: '/assets/images/albander_hyundai_car_1792184093653.jpg' },
@@ -150,10 +165,14 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
+      onClick={onClose}
+    >
       <div
         className="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto"
         dir="rtl"
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
