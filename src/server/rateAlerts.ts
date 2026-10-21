@@ -21,6 +21,14 @@ export const THRESHOLD_PERCENT = 3;
 
 const PHONE = (process.env.WHATSAPP_ALERT_PHONE || '').replace(/[^\d]/g, '');
 const CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || '';
+/**
+ * Provider endpoint is configuration, never code: when the free bot changes
+ * (new number / new gateway) only `WHATSAPP_API_URL` is replaced in the
+ * hosting env and the next deploy is not required.
+ */
+const API_URL = process.env.WHATSAPP_API_URL || 'https://api.callmebot.com/whatsapp.php';
+/** Text the provider returns when its free quota / user slots are exhausted. */
+const QUOTA_MARKERS = ['full', 'limit', 'quota', 'not allowed', 'blocked', 'invalid apikey'];
 
 export interface MoveAlert {
   code: string;
@@ -36,20 +44,23 @@ export interface AlertResult {
   whatsapp: { sent: number; skipped: string };
 }
 
-/** Sends one WhatsApp text. Returns true when the provider accepted it. */
-const sendWhatsApp = async (text: string): Promise<boolean> => {
-  if (!PHONE || !CALLMEBOT_KEY) return false;
+/** Sends one WhatsApp text. Returns the provider verdict, never throws. */
+const sendWhatsApp = async (text: string): Promise<{ ok: boolean; reason: string }> => {
+  if (!PHONE || !CALLMEBOT_KEY) return { ok: false, reason: 'NOT_CONFIGURED' };
   try {
     const url =
-      `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(PHONE)}` +
+      `${API_URL}?phone=${encodeURIComponent(PHONE)}` +
       `&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
-    return res.ok;
-  } catch {
-    return false;
+    const body = (await res.text().catch(() => '')).toLowerCase();
+    if (QUOTA_MARKERS.some((m) => body.includes(m))) return { ok: false, reason: 'PROVIDER_FULL' };
+    if (!res.ok) return { ok: false, reason: `HTTP_${res.status}` };
+    return { ok: true, reason: '' };
+  } catch (err) {
+    return { ok: false, reason: (err as Error).name === 'AbortError' ? 'TIMEOUT' : 'NETWORK' };
   }
 };
 
@@ -108,8 +119,9 @@ export const checkRateMoves = async (
     }
 
     if (PHONE && CALLMEBOT_KEY) {
-      const ok = await sendWhatsApp(`📉 *منصة سند* — تنبيه سعر\n\n${body}`);
-      if (ok) result.whatsapp.sent += 1;
+      const verdict = await sendWhatsApp(`📉 *منصة سند* — تنبيه سعر\n\n${body}`);
+      if (verdict.ok) result.whatsapp.sent += 1;
+      else if (!result.whatsapp.skipped) result.whatsapp.skipped = verdict.reason;
     }
 
     db.markRateAlerted(move.code, move.percent, move.current);
@@ -139,3 +151,12 @@ export function detectMoves(): MoveAlert[] {
 }
 
 export const whatsappConfigured = (): boolean => !!PHONE && !!CALLMEBOT_KEY;
+
+/** Host of the configured gateway, safe to expose (no key, no phone). */
+export const whatsappProviderHost = (): string => {
+  try {
+    return new URL(API_URL).host;
+  } catch {
+    return 'invalid-url';
+  }
+};

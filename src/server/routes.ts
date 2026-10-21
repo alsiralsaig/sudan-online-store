@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
 import { fetchLiveRates, ageHours, isStale, RATES_SOURCE } from './rates.ts';
-import { checkRateMoves, detectMoves, whatsappConfigured, THRESHOLD_PERCENT } from './rateAlerts.ts';
+import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
 import { newId, newCode } from './ids.ts';
 import { saveMedia, getMedia, deleteMedia, HttpError, MAX_RAW_BYTES } from './media.ts';
 import type {
@@ -1612,6 +1612,7 @@ apiRouter.get('/currency/alerts/status', (_req, res) => {
   res.json({
     thresholdPercent: THRESHOLD_PERCENT,
     whatsappConfigured: whatsappConfigured(),
+    whatsappProvider: whatsappProviderHost(),
     whatsappRecipient: process.env.WHATSAPP_ALERT_PHONE ? '•••' + String(process.env.WHATSAPP_ALERT_PHONE).slice(-4) : null,
     todayAlerts: db.getRateAlertLog().filter((a) => a.day === today),
     recentAlerts: db.getRateAlertLog().slice(0, 20),

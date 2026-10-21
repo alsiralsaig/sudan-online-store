@@ -5,7 +5,7 @@ const pglite = new PGlite();
 setSqlClient({ query: async (t: string, p?: any[]) => { const r = await pglite.query(t, p); return { rows: r.rows as any[], rowCount: r.affectedRows ?? null }; } });
 
 const { db } = await import('../src/server/db.ts');
-const { checkRateMoves, detectMoves, THRESHOLD_PERCENT, whatsappConfigured } = await import('../src/server/rateAlerts.ts');
+const { checkRateMoves, detectMoves, THRESHOLD_PERCENT, whatsappConfigured, whatsappProviderHost } = await import('../src/server/rateAlerts.ts');
 const { createApp } = await import('../server.ts');
 
 let pass = 0, fail = 0;
@@ -63,6 +63,9 @@ const status = await get('/api/currency/alerts/status');
 ok('status endpoint', status.code === 200 && status.body.thresholdPercent === 3);
 ok('status reports whatsapp off', status.body.whatsappConfigured === false);
 ok('status lists today alerts', Array.isArray(status.body.todayAlerts));
+ok('status exposes the gateway host (swappable via env)', status.body.whatsappProvider === 'api.callmebot.com', String(status.body.whatsappProvider));
+ok('provider host helper matches', whatsappProviderHost() === 'api.callmebot.com', whatsappProviderHost());
+ok('status never leaks the recipient number', !JSON.stringify(status.body).includes('249966704757'));
 
 const rates = await get('/api/assistant/rates');
 ok('assistant rates endpoint answers in Arabic', /السوق الموازي/.test(rates.body?.answer || ''), (rates.body?.answer || '').slice(0, 60));

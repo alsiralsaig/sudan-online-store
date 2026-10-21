@@ -205,7 +205,8 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
                   <span className="text-emerald-700 font-bold"> وواتساب مفعّل ✅</span>
                 ) : (
                   <span className="text-amber-700">
-                    {' '}والواتساب يحتاج مفتاح CallMeBot في إعدادات الخادم
+                    {' '}والواتساب قيد التهيئة (مزوّد الرسائل الجديد) — الإشعار
+                    داخل التطبيق وعلى الهاتف شغّال عادي
                   </span>
                 )}
                 {!!alertStatus?.recentAlerts?.length && (

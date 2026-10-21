@@ -3422,17 +3422,22 @@ async function runNotificationScan() {
 var THRESHOLD_PERCENT = 3;
 var PHONE = (process.env.WHATSAPP_ALERT_PHONE || "").replace(/[^\d]/g, "");
 var CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || "";
+var API_URL = process.env.WHATSAPP_API_URL || "https://api.callmebot.com/whatsapp.php";
+var QUOTA_MARKERS = ["full", "limit", "quota", "not allowed", "blocked", "invalid apikey"];
 var sendWhatsApp = async (text) => {
-  if (!PHONE || !CALLMEBOT_KEY) return false;
+  if (!PHONE || !CALLMEBOT_KEY) return { ok: false, reason: "NOT_CONFIGURED" };
   try {
-    const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(PHONE)}&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
+    const url = `${API_URL}?phone=${encodeURIComponent(PHONE)}&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
-    return res.ok;
-  } catch {
-    return false;
+    const body = (await res.text().catch(() => "")).toLowerCase();
+    if (QUOTA_MARKERS.some((m) => body.includes(m))) return { ok: false, reason: "PROVIDER_FULL" };
+    if (!res.ok) return { ok: false, reason: `HTTP_${res.status}` };
+    return { ok: true, reason: "" };
+  } catch (err) {
+    return { ok: false, reason: err.name === "AbortError" ? "TIMEOUT" : "NETWORK" };
   }
 };
 var fmt = (n) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -3472,10 +3477,11 @@ var checkRateMoves = async (moves = detectMoves()) => {
       console.warn("[rate-alert] in-app failed:", err.message);
     }
     if (PHONE && CALLMEBOT_KEY) {
-      const ok = await sendWhatsApp(`\u{1F4C9} *\u0645\u0646\u0635\u0629 \u0633\u0646\u062F* \u2014 \u062A\u0646\u0628\u064A\u0647 \u0633\u0639\u0631
+      const verdict = await sendWhatsApp(`\u{1F4C9} *\u0645\u0646\u0635\u0629 \u0633\u0646\u062F* \u2014 \u062A\u0646\u0628\u064A\u0647 \u0633\u0639\u0631
 
 ${body}`);
-      if (ok) result.whatsapp.sent += 1;
+      if (verdict.ok) result.whatsapp.sent += 1;
+      else if (!result.whatsapp.skipped) result.whatsapp.skipped = verdict.reason;
     }
     db.markRateAlerted(move.code, move.percent, move.current);
   }
@@ -3500,6 +3506,13 @@ function detectMoves() {
   return moves;
 }
 var whatsappConfigured = () => !!PHONE && !!CALLMEBOT_KEY;
+var whatsappProviderHost = () => {
+  try {
+    return new URL(API_URL).host;
+  } catch {
+    return "invalid-url";
+  }
+};
 
 // src/server/media.ts
 var TABLE = "sanad_media";
@@ -4858,6 +4871,7 @@ apiRouter.get("/currency/alerts/status", (_req, res) => {
   res.json({
     thresholdPercent: THRESHOLD_PERCENT,
     whatsappConfigured: whatsappConfigured(),
+    whatsappProvider: whatsappProviderHost(),
     whatsappRecipient: process.env.WHATSAPP_ALERT_PHONE ? "\u2022\u2022\u2022" + String(process.env.WHATSAPP_ALERT_PHONE).slice(-4) : null,
     todayAlerts: db.getRateAlertLog().filter((a) => a.day === today),
     recentAlerts: db.getRateAlertLog().slice(0, 20)
