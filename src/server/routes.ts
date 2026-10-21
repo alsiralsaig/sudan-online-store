@@ -3388,6 +3388,23 @@ apiRouter.put('/admin/market-banners/:id', (req, res) => {
 const bannersForRequestTenant = (req: Request) =>
   db.getMarketBannersForTenant((req.headers['x-tenant-id'] as string) || 'tenant_alrowad');
 
+apiRouter.get('/diag/merchant-banners', (req, res) => {
+  const steps: any = {};
+  try {
+    steps.hasMethod = typeof (db as any).getMarketBannersForTenant;
+    steps.bannerCount = (db.getSchema().marketBanners || []).length;
+    steps.tenantId = (db.getTenant('tenant_alrowad') || {}).id || null;
+    steps.tenantNames = [db.getTenant('tenant_alrowad')?.tradeName, db.getTenant('tenant_alrowad')?.name];
+    steps.result = (db as any).getMarketBannersForTenant('tenant_alrowad')?.length;
+    steps.ok = true;
+  } catch (err) {
+    steps.ok = false;
+    steps.error = (err as Error).message;
+    steps.stack = (err as Error).stack?.split('\n').slice(0, 4);
+  }
+  res.json(steps);
+});
+
 apiRouter.get('/merchant/market-banners', (req, res) => {
   res.json({ banners: bannersForRequestTenant(req) });
 });

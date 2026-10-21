@@ -5959,6 +5959,22 @@ apiRouter.put("/admin/market-banners/:id", (req, res) => {
   res.json({ success: true, banner });
 });
 var bannersForRequestTenant = (req) => db.getMarketBannersForTenant(req.headers["x-tenant-id"] || "tenant_alrowad");
+apiRouter.get("/diag/merchant-banners", (req, res) => {
+  const steps = {};
+  try {
+    steps.hasMethod = typeof db.getMarketBannersForTenant;
+    steps.bannerCount = (db.getSchema().marketBanners || []).length;
+    steps.tenantId = (db.getTenant("tenant_alrowad") || {}).id || null;
+    steps.tenantNames = [db.getTenant("tenant_alrowad")?.tradeName, db.getTenant("tenant_alrowad")?.name];
+    steps.result = db.getMarketBannersForTenant("tenant_alrowad")?.length;
+    steps.ok = true;
+  } catch (err) {
+    steps.ok = false;
+    steps.error = err.message;
+    steps.stack = err.stack?.split("\n").slice(0, 4);
+  }
+  res.json(steps);
+});
 apiRouter.get("/merchant/market-banners", (req, res) => {
   res.json({ banners: bannersForRequestTenant(req) });
 });
