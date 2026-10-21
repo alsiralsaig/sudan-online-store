@@ -13,6 +13,7 @@ import { StorefrontView } from './components/Storefront/StorefrontView.tsx';
 import { SubscriptionView } from './components/Subscription/SubscriptionView.tsx';
 import { MerchantAdsView } from './components/Merchant/MerchantAdsView.tsx';
 import { SanadContactSection } from './components/Common/SanadContactSection.tsx';
+import { SanadWhatsAppFab } from './components/Common/SanadWhatsAppFab.tsx';
 import { CentralAdminView } from './components/Admin/CentralAdminView.tsx';
 import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx';
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
@@ -301,6 +302,7 @@ export default function App() {
         {/* SanadClientApp renders its own assistant (with branch context) —
             rendering a second one here produced duplicate floating buttons. */}
         <SanadClientApp />
+        <SanadWhatsAppFab offset="above-nav" app="client" />
       </div>
     );
   }
@@ -349,6 +351,7 @@ export default function App() {
             <SanadContactSection variant="dark" title="تواصل مع فريق سند" />
           </div>
         </div>
+        <SanadWhatsAppFab app="admin" />
         <SanadAIAssistant
           currentMode="admin"
           onSwitchMode={(m) => switchAppMode(m as any)}
@@ -655,6 +658,8 @@ export default function App() {
           <SanadContactSection variant="light" />
         </div>
       </footer>
+
+      <SanadWhatsAppFab app="merchant" />
 
       {/* Floating Sudanese AI Assistant for Admin Mode */}
       <SanadAIAssistant
