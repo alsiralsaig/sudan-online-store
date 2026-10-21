@@ -273,11 +273,13 @@ export const MarketBannerReportModal: React.FC<Props> = ({ banner, onClose }) =>
                     return (
                       <div
                         key={d.date}
-                        className="flex-1 min-w-[7px] flex flex-col justify-end"
+                        className="flex-1 min-w-[7px] h-full flex flex-col justify-end"
                         title={`${prettyDate(d.date)} — ${d.impressions} ظهور / ${d.clicks} نقرة`}
                       >
                         <div
-                          className="w-full rounded-t bg-sky-500/70 relative overflow-hidden"
+                          className={`w-full rounded-t relative overflow-hidden ${
+                            d.impressions ? 'bg-sky-500/80' : 'bg-slate-600/30'
+                          }`}
                           style={{ height: `${Math.max(h, d.impressions ? 4 : 1)}%` }}
                         >
                           {d.clicks > 0 && (
