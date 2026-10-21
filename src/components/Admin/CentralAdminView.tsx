@@ -132,7 +132,7 @@ export const CentralAdminView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto min-w-0">
           <NotificationBell
             app="admin"
             onNavigate={(tab) => setActiveTab(tab as any)}
@@ -140,7 +140,7 @@ export const CentralAdminView: React.FC = () => {
 
         {/* Tab switcher — swipe scrolls the strip only, never the page */}
         <div
-          className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-semibold overflow-x-auto overscroll-x-contain max-w-full [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+          className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-semibold overflow-x-auto overscroll-x-contain w-full sm:w-auto sm:max-w-full min-w-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           style={{ touchAction: 'pan-x' }}
         >
           <button
