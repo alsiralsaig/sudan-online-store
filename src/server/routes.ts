@@ -16,7 +16,7 @@ import type {
   PromotionRule,
   InventoryAlert,
 } from '../types/index.ts';
-import { getPublicKey as getPushPublicKey, notify as notifyUser } from './notifications.ts';
+import { getPublicKey as getPushPublicKey, notify as notifyUser, notifyLowStock, runNotificationScan } from './notifications.ts';
 
 export const apiRouter = Router();
 
@@ -952,6 +952,8 @@ apiRouter.post('/pos/sales', requireTenant, (req, res) => {
 
   db.commit();
 
+  notifyLowStock(authReq.tenantId, { branchId }).catch(() => {});
+
   res.json({ success: true, sale, earnedPoints, customer: updatedCustomer });
 });
 
@@ -1403,7 +1405,9 @@ apiRouter.post('/storefront/:slug/order', (req, res) => {
     bankakRef,
     notes,
     createdAt: new Date().toISOString(),
-  };
+    // Device token so status updates can reach this shopper's phone
+    ownerToken: (req.headers['x-owner-token'] as string) || undefined,
+  } as any;
 
   db.getSchema().storefrontOrders.unshift(newOrder);
   db.commit();
@@ -1442,10 +1446,39 @@ apiRouter.put('/storefront-orders/:id/status', requireTenant, (req, res) => {
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
 
   const { status, paymentStatus } = req.body;
+  const previousStatus = order.status;
   if (status) order.status = status;
   if (paymentStatus) order.paymentStatus = paymentStatus;
 
   db.commit();
+
+  // Tell the shopper what happened to their order (their device only)
+  if (status && status !== previousStatus) {
+    const STATUS_TEXT: Record<string, { title: string; body: string }> = {
+      confirmed: { title: 'تم تأكيد طلبك', body: `طلب ${order.orderNumber} تم تأكيده وهو قيد التجهيز.` },
+      preparing: { title: 'طلبك قيد التجهيز', body: `طلب ${order.orderNumber} يتم تجهيزه الآن.` },
+      ready: { title: 'طلبك جاهز', body: `طلب ${order.orderNumber} جاهز للاستلام/التوصيل.` },
+      out_for_delivery: { title: 'طلبك في الطريق', body: `طلب ${order.orderNumber} خرج للتوصيل، يرجى الاستعداد لاستلامه.` },
+      delivered: { title: 'تم تسليم طلبك', body: `طلب ${order.orderNumber} تم تسليمه بنجاح. شكراً لثقتك بسند.` },
+      cancelled: { title: 'تم إلغاء طلبك', body: `طلب ${order.orderNumber} تم إلغاؤه. للاستفسار تواصل مع المتجر.` },
+    };
+
+    const text = STATUS_TEXT[status] || {
+      title: 'تحديث على طلبك',
+      body: `حالة طلب ${order.orderNumber} أصبحت: ${status}`,
+    };
+
+    notifyUser({
+      app: 'client',
+      kind: 'order_status',
+      title: text.title,
+      body: text.body,
+      linkTab: 'track_order',
+      recipientToken: (order as any).ownerToken,
+      tenantId: authReq.tenantId,
+    }).catch(() => {});
+  }
+
   res.json({ success: true, order });
 });
 
@@ -3077,4 +3110,31 @@ apiRouter.post('/push/test', async (req, res) => {
   });
 
   res.json({ success: true, notification });
+});
+
+/**
+ * Automatic notification scan (low stock + subscription expiry).
+ * Called by the admin "تحديث" action, by Vercel Cron, and lazily on app load.
+ * Everything is de-duplicated, so repeated calls are harmless.
+ */
+apiRouter.post('/notifications/scan', async (_req, res) => {
+  const result = await runNotificationScan();
+  res.json({ success: true, ...result });
+});
+
+apiRouter.get('/cron/notify-scan', async (_req, res) => {
+  const result = await runNotificationScan();
+  res.json({ success: true, ...result });
+});
+
+/** Called by the merchant app on load — throttled to once every 6 hours per process. */
+let lastLazyScan = 0;
+apiRouter.post('/notifications/scan-lazy', async (_req, res) => {
+  const now = Date.now();
+  if (now - lastLazyScan < 6 * 60 * 60 * 1000) {
+    return res.json({ success: true, skipped: true });
+  }
+  lastLazyScan = now;
+  const result = await runNotificationScan();
+  res.json({ success: true, ...result });
 });

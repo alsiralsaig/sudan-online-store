@@ -95,5 +95,11 @@
   ],
   "regions": [
     "fra1"
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/notify-scan",
+      "schedule": "0 6 * * *"
+    }
   ]
 }

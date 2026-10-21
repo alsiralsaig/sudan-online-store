@@ -768,6 +768,8 @@ export interface AppNotification {
   /** Restricts delivery to one device (the shopper who owns the ad/order). */
   recipientToken?: string;
   tenantId?: string;
+  /** Used to avoid repeating the same automatic alert (e.g. per product/day). */
+  dedupeKey?: string;
   read: boolean;
   createdAt: string;
 }

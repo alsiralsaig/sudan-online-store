@@ -62,11 +62,14 @@ interface NotifyInput {
   tenantId?: string;
   /** Extra payload merged into the push message (e.g. a deep link). */
   pushData?: Record<string, any>;
+  /** Skip creating a duplicate when this key was already used. */
+  dedupeKey?: string;
 }
 
 /** Create the in-app notification and fire the push to matching devices. */
 export async function notify(input: NotifyInput): Promise<AppNotification> {
   const notification = db.createNotification({
+    dedupeKey: input.dedupeKey,
     app: input.app,
     kind: input.kind,
     title: input.title,
@@ -128,4 +131,132 @@ function buildUrl(app: NotificationApp, linkTab?: string, extra?: Record<string,
   if (extra?.url) return String(extra.url);
   const base = `/?app=${app}`;
   return linkTab ? `${base}&tab=${encodeURIComponent(linkTab)}` : base;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Automatic alerts — low stock + subscription expiry                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Low-stock alerts.
+ *
+ * Runs after every sale / inventory change. For each product that dropped to
+ * or below its reorder point we create a merchant notification, but only once
+ * per product per day (tracked with a `low_stock:<product>:<day>` key so a
+ * busy shop does not get flooded).
+ */
+export async function notifyLowStock(tenantId: string, opts: { branchId?: string } = {}): Promise<number> {
+  const alerts = db.syncInventoryAlerts(tenantId);
+  const relevant = opts.branchId ? alerts.filter((a) => a.branchId === opts.branchId) : alerts;
+  const day = new Date().toISOString().slice(0, 10);
+  let sent = 0;
+
+  for (const alert of relevant) {
+    const key = `low_stock:${alert.productId}:${alert.branchId}:${day}`;
+    if (db.hasNotificationKey(key)) continue;
+
+    await notify({
+      app: 'merchant',
+      kind: 'low_stock',
+      title: alert.currentQuantity === 0 ? 'نفاد صنف من المخزون' : 'نقص في المخزون',
+      body: `${alert.productName} — المتبقي ${alert.currentQuantity} فقط في ${alert.branchName} (حد إعادة الطلب ${alert.reorderPoint}).`,
+      linkTab: 'inventory',
+      tenantId,
+      dedupeKey: key,
+    });
+    sent++;
+  }
+
+  return sent;
+}
+
+/**
+ * Subscription expiry warnings.
+ *
+ * Warns the merchant 7, 3 and 1 day before expiry (and on the expiry day),
+ * once per stage. Also tells the super admin when a tenant has actually
+ * expired so they can follow up.
+ */
+export async function notifySubscriptionExpiry(): Promise<number> {
+  const tenants = db.getSchema().tenants;
+  const now = Date.now();
+  let sent = 0;
+
+  for (const tenant of tenants) {
+    const expires = new Date(tenant.subscriptionExpiresAt).getTime();
+    if (!Number.isFinite(expires)) continue;
+
+    const daysLeft = Math.ceil((expires - now) / (24 * 60 * 60 * 1000));
+
+    let stage: string | null = null;
+    if (daysLeft <= 0) stage = 'expired';
+    else if (daysLeft === 1) stage = 'd1';
+    else if (daysLeft === 3) stage = 'd3';
+    else if (daysLeft === 7) stage = 'd7';
+
+    if (!stage) continue;
+
+    const key = `subscription:${tenant.id}:${stage}:${new Date().toISOString().slice(0, 10)}`;
+    if (db.hasNotificationKey(key)) continue;
+
+    await notify({
+      app: 'merchant',
+      kind: 'subscription',
+      title:
+        stage === 'expired'
+          ? 'انتهى اشتراكك في منصة سند'
+          : `اشتراكك ينتهي بعد ${daysLeft} ${daysLeft === 1 ? 'يوم' : 'أيام'}`,
+      body:
+        stage === 'expired'
+          ? `اشتراك «${tenant.tradeName || tenant.name}» منتهٍ. جدّد الاشتراك لتجنب إيقاف نقاط البيع والمتجر.`
+          : `«${tenant.tradeName || tenant.name}» — تاريخ الانتهاء ${new Date(tenant.subscriptionExpiresAt).toLocaleDateString('ar-EG')}. جدّد الآن وتجنب التوقف.`,
+      linkTab: 'subscription',
+      tenantId: tenant.id,
+      dedupeKey: key,
+    });
+
+    if (stage === 'expired') {
+      const adminKey = `subscription-admin:${tenant.id}:${new Date().toISOString().slice(0, 10)}`;
+      if (!db.hasNotificationKey(adminKey)) {
+        await notify({
+          app: 'admin',
+          kind: 'subscription',
+          title: 'اشتراك تاجر منتهٍ',
+          body: `«${tenant.tradeName || tenant.name}» — ${tenant.city} • يحتاج متابعة تجديد.`,
+          linkTab: 'payments_queue',
+          tenantId: tenant.id,
+          dedupeKey: adminKey,
+        });
+      }
+    }
+
+    sent++;
+  }
+
+  return sent;
+}
+
+/** Runs every automatic scan; safe to call often (everything is de-duplicated). */
+export async function runNotificationScan(): Promise<{ lowStock: number; subscriptions: number }> {
+  let lowStock = 0;
+  const seen = new Set<string>();
+
+  for (const tenant of db.getSchema().tenants) {
+    if (seen.has(tenant.id)) continue;
+    seen.add(tenant.id);
+    try {
+      lowStock += await notifyLowStock(tenant.id);
+    } catch (err) {
+      console.warn('[notify] low stock scan failed:', err);
+    }
+  }
+
+  let subscriptions = 0;
+  try {
+    subscriptions = await notifySubscriptionExpiry();
+  } catch (err) {
+    console.warn('[notify] subscription scan failed:', err);
+  }
+
+  return { lowStock, subscriptions };
 }

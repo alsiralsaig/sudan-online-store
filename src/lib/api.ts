@@ -663,6 +663,14 @@ class ApiClient {
     return this.request(`/notifications/${id}`, { method: 'DELETE' });
   }
 
+  public async scanNotifications(): Promise<{ success: boolean; lowStock?: number; subscriptions?: number }> {
+    return this.request('/notifications/scan', { method: 'POST', body: '{}' });
+  }
+
+  public async lazyScanNotifications(): Promise<{ success: boolean; skipped?: boolean }> {
+    return this.request('/notifications/scan-lazy', { method: 'POST', body: '{}' });
+  }
+
   public async getPushPublicKey(): Promise<{ enabled: boolean; publicKey?: string; message?: string }> {
     return this.request('/push/public-key');
   }

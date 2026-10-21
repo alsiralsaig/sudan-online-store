@@ -2026,6 +2026,9 @@ var Database = class {
     }).sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
     return filter.limit ? rows.slice(0, filter.limit) : rows;
   }
+  hasNotificationKey(key) {
+    return (this.data.notifications || []).some((n) => n.dedupeKey === key);
+  }
   createNotification(input) {
     const notification = {
       ...input,
@@ -2981,6 +2984,7 @@ function getPublicKey() {
 }
 async function notify(input) {
   const notification = db.createNotification({
+    dedupeKey: input.dedupeKey,
     app: input.app,
     kind: input.kind,
     title: input.title,
@@ -3032,6 +3036,90 @@ function buildUrl(app, linkTab, extra) {
   if (extra?.url) return String(extra.url);
   const base = `/?app=${app}`;
   return linkTab ? `${base}&tab=${encodeURIComponent(linkTab)}` : base;
+}
+async function notifyLowStock(tenantId, opts = {}) {
+  const alerts = db.syncInventoryAlerts(tenantId);
+  const relevant = opts.branchId ? alerts.filter((a) => a.branchId === opts.branchId) : alerts;
+  const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  let sent = 0;
+  for (const alert of relevant) {
+    const key = `low_stock:${alert.productId}:${alert.branchId}:${day}`;
+    if (db.hasNotificationKey(key)) continue;
+    await notify({
+      app: "merchant",
+      kind: "low_stock",
+      title: alert.currentQuantity === 0 ? "\u0646\u0641\u0627\u062F \u0635\u0646\u0641 \u0645\u0646 \u0627\u0644\u0645\u062E\u0632\u0648\u0646" : "\u0646\u0642\u0635 \u0641\u064A \u0627\u0644\u0645\u062E\u0632\u0648\u0646",
+      body: `${alert.productName} \u2014 \u0627\u0644\u0645\u062A\u0628\u0642\u064A ${alert.currentQuantity} \u0641\u0642\u0637 \u0641\u064A ${alert.branchName} (\u062D\u062F \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0637\u0644\u0628 ${alert.reorderPoint}).`,
+      linkTab: "inventory",
+      tenantId,
+      dedupeKey: key
+    });
+    sent++;
+  }
+  return sent;
+}
+async function notifySubscriptionExpiry() {
+  const tenants = db.getSchema().tenants;
+  const now = Date.now();
+  let sent = 0;
+  for (const tenant of tenants) {
+    const expires = new Date(tenant.subscriptionExpiresAt).getTime();
+    if (!Number.isFinite(expires)) continue;
+    const daysLeft = Math.ceil((expires - now) / (24 * 60 * 60 * 1e3));
+    let stage = null;
+    if (daysLeft <= 0) stage = "expired";
+    else if (daysLeft === 1) stage = "d1";
+    else if (daysLeft === 3) stage = "d3";
+    else if (daysLeft === 7) stage = "d7";
+    if (!stage) continue;
+    const key = `subscription:${tenant.id}:${stage}:${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`;
+    if (db.hasNotificationKey(key)) continue;
+    await notify({
+      app: "merchant",
+      kind: "subscription",
+      title: stage === "expired" ? "\u0627\u0646\u062A\u0647\u0649 \u0627\u0634\u062A\u0631\u0627\u0643\u0643 \u0641\u064A \u0645\u0646\u0635\u0629 \u0633\u0646\u062F" : `\u0627\u0634\u062A\u0631\u0627\u0643\u0643 \u064A\u0646\u062A\u0647\u064A \u0628\u0639\u062F ${daysLeft} ${daysLeft === 1 ? "\u064A\u0648\u0645" : "\u0623\u064A\u0627\u0645"}`,
+      body: stage === "expired" ? `\u0627\u0634\u062A\u0631\u0627\u0643 \xAB${tenant.tradeName || tenant.name}\xBB \u0645\u0646\u062A\u0647\u064D. \u062C\u062F\u0651\u062F \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643 \u0644\u062A\u062C\u0646\u0628 \u0625\u064A\u0642\u0627\u0641 \u0646\u0642\u0627\u0637 \u0627\u0644\u0628\u064A\u0639 \u0648\u0627\u0644\u0645\u062A\u062C\u0631.` : `\xAB${tenant.tradeName || tenant.name}\xBB \u2014 \u062A\u0627\u0631\u064A\u062E \u0627\u0644\u0627\u0646\u062A\u0647\u0627\u0621 ${new Date(tenant.subscriptionExpiresAt).toLocaleDateString("ar-EG")}. \u062C\u062F\u0651\u062F \u0627\u0644\u0622\u0646 \u0648\u062A\u062C\u0646\u0628 \u0627\u0644\u062A\u0648\u0642\u0641.`,
+      linkTab: "subscription",
+      tenantId: tenant.id,
+      dedupeKey: key
+    });
+    if (stage === "expired") {
+      const adminKey = `subscription-admin:${tenant.id}:${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`;
+      if (!db.hasNotificationKey(adminKey)) {
+        await notify({
+          app: "admin",
+          kind: "subscription",
+          title: "\u0627\u0634\u062A\u0631\u0627\u0643 \u062A\u0627\u062C\u0631 \u0645\u0646\u062A\u0647\u064D",
+          body: `\xAB${tenant.tradeName || tenant.name}\xBB \u2014 ${tenant.city} \u2022 \u064A\u062D\u062A\u0627\u062C \u0645\u062A\u0627\u0628\u0639\u0629 \u062A\u062C\u062F\u064A\u062F.`,
+          linkTab: "payments_queue",
+          tenantId: tenant.id,
+          dedupeKey: adminKey
+        });
+      }
+    }
+    sent++;
+  }
+  return sent;
+}
+async function runNotificationScan() {
+  let lowStock = 0;
+  const seen = /* @__PURE__ */ new Set();
+  for (const tenant of db.getSchema().tenants) {
+    if (seen.has(tenant.id)) continue;
+    seen.add(tenant.id);
+    try {
+      lowStock += await notifyLowStock(tenant.id);
+    } catch (err) {
+      console.warn("[notify] low stock scan failed:", err);
+    }
+  }
+  let subscriptions = 0;
+  try {
+    subscriptions = await notifySubscriptionExpiry();
+  } catch (err) {
+    console.warn("[notify] subscription scan failed:", err);
+  }
+  return { lowStock, subscriptions };
 }
 
 // src/server/routes.ts
@@ -3784,6 +3872,8 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
     }
   }
   db.commit();
+  notifyLowStock(authReq.tenantId, { branchId }).catch(() => {
+  });
   res.json({ success: true, sale, earnedPoints, customer: updatedCustomer });
 });
 apiRouter.get("/pos/sales", requireTenant, (req, res) => {
@@ -4122,7 +4212,9 @@ apiRouter.post("/storefront/:slug/order", (req, res) => {
     paymentStatus: bankakRef ? "paid_bankak" : "paid_on_delivery",
     bankakRef,
     notes,
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    // Device token so status updates can reach this shopper's phone
+    ownerToken: req.headers["x-owner-token"] || void 0
   };
   db.getSchema().storefrontOrders.unshift(newOrder);
   db.commit();
@@ -4156,9 +4248,34 @@ apiRouter.put("/storefront-orders/:id/status", requireTenant, (req, res) => {
   const order = db.getSchema().storefrontOrders.find((o) => o.id === req.params.id && o.tenantId === authReq.tenantId);
   if (!order) return res.status(404).json({ error: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
   const { status, paymentStatus } = req.body;
+  const previousStatus = order.status;
   if (status) order.status = status;
   if (paymentStatus) order.paymentStatus = paymentStatus;
   db.commit();
+  if (status && status !== previousStatus) {
+    const STATUS_TEXT = {
+      confirmed: { title: "\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0637\u0644\u0628\u0643", body: `\u0637\u0644\u0628 ${order.orderNumber} \u062A\u0645 \u062A\u0623\u0643\u064A\u062F\u0647 \u0648\u0647\u0648 \u0642\u064A\u062F \u0627\u0644\u062A\u062C\u0647\u064A\u0632.` },
+      preparing: { title: "\u0637\u0644\u0628\u0643 \u0642\u064A\u062F \u0627\u0644\u062A\u062C\u0647\u064A\u0632", body: `\u0637\u0644\u0628 ${order.orderNumber} \u064A\u062A\u0645 \u062A\u062C\u0647\u064A\u0632\u0647 \u0627\u0644\u0622\u0646.` },
+      ready: { title: "\u0637\u0644\u0628\u0643 \u062C\u0627\u0647\u0632", body: `\u0637\u0644\u0628 ${order.orderNumber} \u062C\u0627\u0647\u0632 \u0644\u0644\u0627\u0633\u062A\u0644\u0627\u0645/\u0627\u0644\u062A\u0648\u0635\u064A\u0644.` },
+      out_for_delivery: { title: "\u0637\u0644\u0628\u0643 \u0641\u064A \u0627\u0644\u0637\u0631\u064A\u0642", body: `\u0637\u0644\u0628 ${order.orderNumber} \u062E\u0631\u062C \u0644\u0644\u062A\u0648\u0635\u064A\u0644\u060C \u064A\u0631\u062C\u0649 \u0627\u0644\u0627\u0633\u062A\u0639\u062F\u0627\u062F \u0644\u0627\u0633\u062A\u0644\u0627\u0645\u0647.` },
+      delivered: { title: "\u062A\u0645 \u062A\u0633\u0644\u064A\u0645 \u0637\u0644\u0628\u0643", body: `\u0637\u0644\u0628 ${order.orderNumber} \u062A\u0645 \u062A\u0633\u0644\u064A\u0645\u0647 \u0628\u0646\u062C\u0627\u062D. \u0634\u0643\u0631\u0627\u064B \u0644\u062B\u0642\u062A\u0643 \u0628\u0633\u0646\u062F.` },
+      cancelled: { title: "\u062A\u0645 \u0625\u0644\u063A\u0627\u0621 \u0637\u0644\u0628\u0643", body: `\u0637\u0644\u0628 ${order.orderNumber} \u062A\u0645 \u0625\u0644\u063A\u0627\u0624\u0647. \u0644\u0644\u0627\u0633\u062A\u0641\u0633\u0627\u0631 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0627\u0644\u0645\u062A\u062C\u0631.` }
+    };
+    const text = STATUS_TEXT[status] || {
+      title: "\u062A\u062D\u062F\u064A\u062B \u0639\u0644\u0649 \u0637\u0644\u0628\u0643",
+      body: `\u062D\u0627\u0644\u0629 \u0637\u0644\u0628 ${order.orderNumber} \u0623\u0635\u0628\u062D\u062A: ${status}`
+    };
+    notify({
+      app: "client",
+      kind: "order_status",
+      title: text.title,
+      body: text.body,
+      linkTab: "track_order",
+      recipientToken: order.ownerToken,
+      tenantId: authReq.tenantId
+    }).catch(() => {
+    });
+  }
   res.json({ success: true, order });
 });
 apiRouter.get("/currencies", requireTenant, (req, res) => {
@@ -5473,6 +5590,24 @@ apiRouter.post("/push/test", async (req, res) => {
     recipientToken: ownerToken
   });
   res.json({ success: true, notification });
+});
+apiRouter.post("/notifications/scan", async (_req, res) => {
+  const result = await runNotificationScan();
+  res.json({ success: true, ...result });
+});
+apiRouter.get("/cron/notify-scan", async (_req, res) => {
+  const result = await runNotificationScan();
+  res.json({ success: true, ...result });
+});
+var lastLazyScan = 0;
+apiRouter.post("/notifications/scan-lazy", async (_req, res) => {
+  const now = Date.now();
+  if (now - lastLazyScan < 6 * 60 * 60 * 1e3) {
+    return res.json({ success: true, skipped: true });
+  }
+  lastLazyScan = now;
+  const result = await runNotificationScan();
+  res.json({ success: true, ...result });
 });
 
 // server.ts

@@ -1776,6 +1776,10 @@ class Database {
     return filter.limit ? rows.slice(0, filter.limit) : rows;
   }
 
+  public hasNotificationKey(key: string): boolean {
+    return (this.data.notifications || []).some((n) => n.dedupeKey === key);
+  }
+
   public createNotification(
     input: Omit<AppNotification, 'id' | 'createdAt' | 'read'>
   ): AppNotification {

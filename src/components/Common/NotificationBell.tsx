@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bell,
   CheckCheck,
+  RefreshCw,
   X,
   Trash2,
   Smartphone,
@@ -79,6 +80,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
   const [pushState, setPushState] = useState<'unknown' | 'off' | 'on' | 'unsupported' | 'denied' | 'working'>('unknown');
+  const [scanning, setScanning] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -92,7 +94,12 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   }, [app, ownerToken]);
 
   useEffect(() => {
-    load();
+    // Refresh automatic alerts (low stock, expiring subscriptions) then load.
+    api
+      .lazyScanNotifications()
+      .catch(() => {})
+      .finally(() => load());
+
     const timer = setInterval(load, 60 * 1000);
     const onVisible = () => {
       if (document.visibilityState === 'visible') load();
@@ -191,6 +198,18 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     }
   };
 
+  const runScan = async () => {
+    setScanning(true);
+    try {
+      await api.scanNotifications();
+      await load();
+    } catch {
+      /* offline */
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const markAll = async () => {
     await api.markAllNotificationsRead(app, ownerToken).catch(() => {});
     setItems((prev) => prev.map((n) => ({ ...n, read: true })));
@@ -254,6 +273,9 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
               )}
             </div>
             <div className="flex items-center gap-1">
+              <button onClick={runScan} title="فحص التنبيهات (مخزون / اشتراكات)" className="p-1.5 rounded-lg hover:bg-white/10">
+                <RefreshCw className={`w-3.5 h-3.5 ${scanning ? 'animate-spin' : ''}`} />
+              </button>
               <button onClick={markAll} title="تحديد الكل كمقروء" className="p-1.5 rounded-lg hover:bg-white/10">
                 <CheckCheck className="w-3.5 h-3.5" />
               </button>
