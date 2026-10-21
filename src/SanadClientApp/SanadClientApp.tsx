@@ -465,7 +465,8 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900 pb-16">
-      {/* 1. Header (Navigation & Branch Selector) */}
+      {/* 1. Header — hidden on the market home, which carries its own slim bar */}
+      {activeTab !== 'market_home' && (
       <ClientHeader
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -483,12 +484,20 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         currency="SDG"
         products={products}
       />
+      )}
 
       {/* 2. Main Content Views */}
       <main className="flex-1">
         {/* Tab 1: Market Home (The Screenshot View) */}
         {activeTab === 'market_home' && (
           <ClientMarketHomeView
+            cartCount={cart.reduce((sum, item) => sum + item.quantity, 0)}
+            onOpenCart={() => setIsCartOpen(true)}
+            onSelectSection={(key) => {
+              if (key === 'auctions') setActiveTab('auctions');
+              else if (key === 'business_directory') setActiveTab('branches_info');
+              else setActiveTab('catalog');
+            }}
             onOpenSections={() => setIsSectionsModalOpen(true)}
             onOpenSearch={() => setIsSearchModalOpen(true)}
             onOpenAssistant={() => {

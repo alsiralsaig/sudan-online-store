@@ -3,6 +3,11 @@ import {
   Search,
   Sparkles,
   ChevronDown,
+  ShoppingCart,
+  Heart,
+  Gift,
+  Clock3,
+  Store as StoreIcon,
   ArrowLeft,
   MapPin,
   Clock,
@@ -23,13 +28,19 @@ import {
   Stethoscope,
 } from 'lucide-react';
 import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
+import { SanadLogo } from '../../components/Common/SanadLogo.tsx';
+import { TenantApplicationModal } from '../../components/Common/TenantApplicationModal.tsx';
+import { ClientSectionsDropdown } from './ClientSectionsDropdown.tsx';
 import { api } from '../../lib/api.ts';
 import { useImpressionTracker } from '../../lib/useImpressionTracker.ts';
 import { SanadContactSection } from '../../components/Common/SanadContactSection.tsx';
 import type { ClientMarketAd, ClientPurchaseRequest } from '../types.ts';
 
 interface ClientMarketHomeViewProps {
-  onOpenSections: () => void;
+  onOpenSections?: () => void;
+  onSelectSection?: (sectionKey: string) => void;
+  cartCount?: number;
+  onOpenCart?: () => void;
   onOpenSearch: () => void;
   onOpenAssistant: () => void;
   onSelectAd: (ad: ClientMarketAd) => void;
@@ -50,6 +61,9 @@ interface ClientMarketHomeViewProps {
  */
 export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   onOpenSections,
+  onSelectSection,
+  cartCount = 0,
+  onOpenCart,
   onOpenSearch,
   onOpenAssistant,
   onSelectAd,
@@ -62,6 +76,10 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
 }) => {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
   const [rotationTick, setRotationTick] = useState(0);
+  const [sectionsOpen, setSectionsOpen] = useState(false);
+  const [tenantModalOpen, setTenantModalOpen] = useState(false);
+  const [promoIndex, setPromoIndex] = useState(0);
+  const [promoTick, setPromoTick] = useState(0);
 
   /** Defaults shown until the admin-managed banners load (or if none are set). */
   const defaultBanners = [
@@ -158,6 +176,47 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
 
   const latestAds = ads.slice(0, 10);
 
+  /**
+   * Second moving strip (the reference landing page has two stacked sliders).
+   * It rotates through the newest ads that carry a photo, and falls back to the
+   * admin banners when the feed is still small — so it is never empty.
+   */
+  const promoFromAds = ads
+    .filter((a) => !!a.imageUrl && a.id !== vipAd.id)
+    .slice(0, 6);
+  // Fallback: start one slide further so the two strips never look identical
+  const shiftedBanners = banners.length > 1 ? [...banners.slice(1), banners[0]] : banners;
+  const promos =
+    promoFromAds.length >= 2
+      ? promoFromAds.map((a) => ({
+          id: `ad_${a.id}`,
+          title: a.title,
+          subtitle: `${a.category} • ${a.location}`,
+          image: a.imageUrl as string,
+          price: a.priceSdg > 0 ? `${a.priceSdg.toLocaleString('en-US')} ج.س` : 'حسب الاتفاق',
+          open: () => onSelectAd(a),
+        }))
+      : shiftedBanners.map((b, i) => ({
+          id: `bn_${b.id}_${i}`,
+          title: b.title,
+          subtitle: b.subtitle || '',
+          image: b.image,
+          price: '',
+          open: () => onNavigateTab?.('catalog'),
+        }));
+
+  // Independent timer so both strips move at their own rhythm
+  useEffect(() => {
+    if (promos.length < 2) return;
+    const timer = setInterval(() => {
+      setPromoIndex((i) => (i + 1) % promos.length);
+      setPromoTick((k) => k + 1);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [promos.length]);
+
+  const promo = promos[promoIndex % Math.max(promos.length, 1)];
+
   /** The four big shortcuts from the reference page, mapped onto real screens. */
   const shortcuts = [
     {
@@ -195,32 +254,125 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
 
   return (
     <div className="pb-24 bg-slate-50" dir="rtl">
-      {/* ---------------- Top bar: sections pill (right) + icons (left) ---- */}
-      <div className="bg-white sticky top-0 z-30 px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3">
-        <button
-          onClick={onOpenSections}
-          className="px-6 py-2.5 bg-emerald-900 hover:bg-emerald-800 active:scale-95 text-white rounded-2xl text-sm font-bold flex items-center gap-2 shadow-sm transition-all"
-        >
-          <span>الأقسام</span>
-          <ChevronDown className="w-4 h-4" />
-        </button>
+      {/* ---- Slim top bar: logo + «أقسام» (right) · actions (left) ------
+          The old full-width header (slogan block + search field + tab rows)
+          was pure dead space on a phone; the reference landing page opens
+          straight onto the market, so this is now the only header here. */}
+      <div className="bg-white sticky top-0 z-30 border-b border-slate-100 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+        <div className="max-w-md md:max-w-4xl mx-auto px-2.5 py-2 flex items-center justify-between gap-2">
+          {/* Logo sits to the right of «أقسام» */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <SanadLogo
+              size="sm"
+              variant="compact"
+              onClick={() => onNavigateTab?.('market_home')}
+            />
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onOpenAssistant}
-            className="w-9 h-9 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50 text-emerald-800 flex items-center justify-center transition-colors"
-            title="المساعد الذكي سند"
-          >
-            <Sparkles className="w-4 h-4 text-emerald-700" />
-          </button>
-          <button
-            onClick={onOpenSearch}
-            className="w-9 h-9 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-slate-50 text-slate-700 flex items-center justify-center transition-colors"
-            title="بحث في السوق"
-          >
-            <Search className="w-4 h-4" />
-          </button>
-          <NotificationBell app="client" ownerToken={ownerToken} onNavigate={onNavigateTab} />
+            <div className="relative">
+              <button
+                onClick={() => setSectionsOpen((v) => !v)}
+                aria-expanded={sectionsOpen}
+                aria-haspopup="menu"
+                className={`px-3.5 py-2 rounded-xl text-[13px] font-black flex items-center gap-1.5 transition-all active:scale-95 ${
+                  sectionsOpen
+                    ? 'bg-emerald-800 text-white'
+                    : 'bg-emerald-900 hover:bg-emerald-800 text-white'
+                }`}
+              >
+                <span>أقسام</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${sectionsOpen ? 'rotate-180' : ''}`}
+                />
+              </button>
+
+              {/* Menu drops directly under the pill */}
+              <ClientSectionsDropdown
+                isOpen={sectionsOpen}
+                onClose={() => setSectionsOpen(false)}
+                onSelectSection={(key) => {
+                  if (onSelectSection) onSelectSection(key);
+                  else onOpenSections?.();
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onOpenCart && (
+              <button
+                onClick={onOpenCart}
+                className="relative w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center active:scale-95 transition-transform shadow-sm"
+                title="سلة المشتريات"
+              >
+                <ShoppingCart className="w-4 h-4" />
+                {cartCount > 0 && (
+                  <span className="absolute -top-1.5 -left-1.5 min-w-[17px] h-[17px] px-1 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black font-mono flex items-center justify-center">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
+            )}
+
+            <button
+              onClick={onOpenAssistant}
+              className="w-9 h-9 rounded-xl border border-slate-200 text-emerald-800 flex items-center justify-center active:scale-95 transition-transform"
+              title="المساعد الذكي سند"
+            >
+              <Sparkles className="w-4 h-4 text-emerald-700" />
+            </button>
+
+            <button
+              onClick={onOpenSearch}
+              className="w-9 h-9 rounded-xl border border-slate-200 text-slate-700 flex items-center justify-center active:scale-95 transition-transform"
+              title="بحث في السوق"
+            >
+              <Search className="w-4 h-4" />
+            </button>
+
+            <NotificationBell app="client" ownerToken={ownerToken} onNavigate={onNavigateTab} />
+          </div>
+        </div>
+
+        {/* Thin shortcut strip — scrolls on its own, never widens the page */}
+        <div className="max-w-md md:max-w-4xl mx-auto overflow-x-auto no-scrollbar border-t border-slate-100/80">
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 w-max">
+            <button
+              onClick={() => setTenantModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-emerald-900 text-white text-[11px] font-black whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1 shadow-sm"
+            >
+              <StoreIcon className="w-3 h-3" /> طلب متجر
+            </button>
+            <button
+              onClick={() => onNavigateTab?.('catalog')}
+              className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 text-[11px] font-bold whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1"
+            >
+              🛍️ كافة المنتجات
+            </button>
+            <button
+              onClick={() => onNavigateTab?.('pre_orders')}
+              className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1"
+            >
+              <Sparkles className="w-3 h-3 text-amber-500" /> الطلبات المسبقة
+            </button>
+            <button
+              onClick={() => onNavigateTab?.('wishlist')}
+              className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 text-[11px] font-bold whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1"
+            >
+              <Heart className="w-3 h-3 text-rose-500" /> الرغبات
+            </button>
+            <button
+              onClick={() => onNavigateTab?.('loyalty')}
+              className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 text-[11px] font-bold whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1"
+            >
+              <Gift className="w-3 h-3 text-amber-600" /> الولاء والمكافآت
+            </button>
+            <button
+              onClick={() => onNavigateTab?.('track_order')}
+              className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 text-[11px] font-bold whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1"
+            >
+              <Clock3 className="w-3 h-3 text-emerald-700" /> تتبع طلبي
+            </button>
+          </div>
         </div>
       </div>
 
@@ -293,6 +445,57 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
             ))}
           </div>
         </div>
+
+        {/* ---------------- Second moving strip (promo carousel) -------- */}
+        {promo && (
+          <div className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 aspect-[4.6/1] sm:aspect-[6.4/1] bg-slate-900">
+            <div key={promoTick} className="absolute inset-0 animate-in fade-in duration-500">
+              <img
+                src={promo.image}
+                alt={promo.title}
+                loading="lazy"
+                decoding="async"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.opacity = '0';
+                }}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-l from-slate-950/95 via-slate-950/40 to-transparent" />
+
+              <button
+                onClick={promo.open}
+                className="relative h-full w-full flex items-center justify-between gap-2 px-3 sm:px-5 text-right"
+              >
+                <div className="min-w-0 max-w-[62%] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
+                  <h4 className="text-[12px] sm:text-base font-black leading-tight line-clamp-1">
+                    {promo.title}
+                  </h4>
+                  <p className="text-[10px] text-slate-100 line-clamp-1 mt-0.5">
+                    {promo.subtitle}
+                  </p>
+                </div>
+                {promo.price && (
+                  <span className="shrink-0 px-2 py-1 rounded-lg bg-emerald-950/85 backdrop-blur-md text-amber-300 font-black font-mono text-[11px] sm:text-sm">
+                    {promo.price}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            <div className="absolute bottom-1.5 inset-x-0 flex items-center justify-center gap-1.5">
+              {promos.map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setPromoIndex(idx)}
+                  aria-label={`عرض ${idx + 1}`}
+                  className={`h-1.5 rounded-full transition-all ${
+                    promoIndex === idx ? 'w-5 bg-amber-400' : 'w-1.5 bg-white/50'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ---------------- VIP showcase --------------------------------- */}
         <div
@@ -503,13 +706,19 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
         <div className="h-16" aria-hidden="true" />
 
         <button
-          onClick={() => onNavigateTab?.('market_home')}
+          onClick={() => setTenantModalOpen(true)}
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-bold"
         >
           <Store className="w-4 h-4" />
           <span>عندك متجر؟ أضفه إلى منصة سند</span>
         </button>
       </div>
+
+      <TenantApplicationModal
+        isOpen={tenantModalOpen}
+        onClose={() => setTenantModalOpen(false)}
+        source="client"
+      />
     </div>
   );
 };
