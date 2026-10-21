@@ -8,7 +8,7 @@ await esbuild.build({
   platform: 'node',
   target: 'node18',
   format: 'esm',
-  external: ['express', '@google/genai', 'pg'],
+  external: ['express', '@google/genai', 'pg', 'web-push'],
   sourcemap: false,
   minify: false,
   logLevel: 'info',
