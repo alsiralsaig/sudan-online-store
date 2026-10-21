@@ -783,3 +783,23 @@ export interface PushSubscriptionRecord {
   createdAt: string;
   lastSeenAt?: string;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Market banners — the rotating hero on the shopper landing page     */
+/* ------------------------------------------------------------------ */
+
+export interface MarketBanner {
+  id: string;
+  title: string;
+  subtitle?: string;
+  badge?: string;
+  imageUrl: string;
+  /** Where a tap should lead. */
+  linkUrl?: string;
+  active: boolean;
+  /** Lower number shows first. */
+  sortOrder: number;
+  /** Shown to the admin, not to shoppers. */
+  advertiserName?: string;
+  createdAt: string;
+}

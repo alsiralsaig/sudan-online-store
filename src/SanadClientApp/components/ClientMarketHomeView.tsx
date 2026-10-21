@@ -23,6 +23,7 @@ import {
   Stethoscope,
 } from 'lucide-react';
 import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
+import { api } from '../../lib/api.ts';
 import type { ClientMarketAd, ClientPurchaseRequest } from '../types.ts';
 
 interface ClientMarketHomeViewProps {
@@ -59,7 +60,8 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
 }) => {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
 
-  const banners = [
+  /** Defaults shown until the admin-managed banners load (or if none are set). */
+  const defaultBanners = [
     {
       id: 1,
       badge: '★★★★★',
@@ -86,13 +88,45 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
     },
   ];
 
+  const [banners, setBanners] = useState(defaultBanners);
+
+  // Banners are managed from the admin console (صورة + عنوان + ترتيب)
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getMarketBanners()
+      .then((res) => {
+        if (cancelled) return;
+        const live = (res.banners || []).map((b: any) => ({
+          id: b.id,
+          badge: b.badge || '',
+          title: b.title,
+          subtitle: b.subtitle || '',
+          image: b.imageUrl,
+          theme: 'from-slate-950 via-slate-900 to-black',
+          linkUrl: b.linkUrl,
+        }));
+        if (live.length > 0) {
+          setBanners(live);
+          setCurrentBannerIndex(0);
+        }
+      })
+      .catch(() => {
+        /* keep the defaults when offline */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Rotate the banner like the reference landing page
   useEffect(() => {
+    if (banners.length < 2) return;
     const timer = setInterval(() => {
-      setCurrentBannerIndex((i) => (i + 1) % 3);
+      setCurrentBannerIndex((i) => (i + 1) % banners.length);
     }, 6000);
     return () => clearInterval(timer);
-  }, []);
+  }, [banners.length]);
 
   const vipAd: ClientMarketAd =
     ads.find((a) => a.isVip) ||
@@ -183,7 +217,13 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
 
       <div className="max-w-md md:max-w-4xl mx-auto px-3 sm:px-4 py-3 space-y-3">
         {/* ---------------- Banner (photo-led, like the reference) -------- */}
-        <div className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 h-40 sm:h-52 bg-slate-900">
+        <div
+          className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 h-40 sm:h-52 bg-slate-900"
+          onClick={() => {
+            const link = (banners[currentBannerIndex] as any)?.linkUrl;
+            if (link) window.open(link, '_blank');
+          }}
+        >
           <img
             src={banners[currentBannerIndex].image}
             alt={banners[currentBannerIndex].title}

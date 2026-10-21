@@ -45,6 +45,7 @@ import type {
   MarketAd,
   TenantApplication,
   AppNotification,
+  MarketBanner,
   PushSubscriptionRecord,
 } from '../types/index.ts';
 
@@ -80,6 +81,7 @@ export interface DatabaseSchema {
   notifications: AppNotification[];
   pushSubscriptions: PushSubscriptionRecord[];
   pushKeys: { id: string; publicKey: string; privateKey: string; createdAt: string }[];
+  marketBanners: MarketBanner[];
 }
 
 // Initial seed data for Sudanese market
@@ -1317,6 +1319,42 @@ const INITIAL_ALBANDAR_LISTINGS: AlbandarListing[] = [
 
 
 /** Ads that ship with the platform so the market is never empty. */
+const INITIAL_MARKET_BANNERS: MarketBanner[] = [
+  {
+    id: 'bnr_cars',
+    title: 'أعلن عن معرض سياراتك هنا',
+    subtitle: 'كن من أوائل المعلنين في سوق سند',
+    badge: '★★★★★',
+    imageUrl: '/assets/images/albander_hyundai_car_1792184093653.jpg',
+    active: true,
+    sortOrder: 1,
+    advertiserName: 'معرض السيارات المعتمد',
+    createdAt: '2026-10-01T08:00:00.000Z',
+  },
+  {
+    id: 'bnr_appliances',
+    title: 'عروض الأجهزة الكهربائية والمكيفات',
+    subtitle: 'أفضل الأسعار مع ضمان معتمد وتركيب فوري',
+    badge: 'ضمان معتمد',
+    imageUrl: '/assets/aistudio/Screenshot_________________9bd493de.jpg',
+    active: true,
+    sortOrder: 2,
+    advertiserName: 'معرض الأجهزة المنزلية',
+    createdAt: '2026-10-01T08:05:00.000Z',
+  },
+  {
+    id: 'bnr_groceries',
+    title: 'تسوق من المتاجر الكبرى المعتمدة',
+    subtitle: 'مواد تموينية وغذائية بالجملة والدفع ببنكك',
+    badge: 'توصيل سريع',
+    imageUrl: '/assets/images/sanad_pos_hero_1792173270140.jpg',
+    active: true,
+    sortOrder: 3,
+    advertiserName: 'منصة سند',
+    createdAt: '2026-10-01T08:10:00.000Z',
+  },
+];
+
 const INITIAL_NOTIFICATIONS: AppNotification[] = [
   {
     id: 'ntf_seed_ad',
@@ -1883,6 +1921,49 @@ class Database {
     return removed;
   }
 
+  /* ------------------------------------------------------------------ */
+  /*  Market banners                                                     */
+  /* ------------------------------------------------------------------ */
+
+  public getMarketBanners(onlyActive = false): MarketBanner[] {
+    return (this.data.marketBanners || [])
+      .filter((b) => (onlyActive ? b.active : true))
+      .slice()
+      .sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+  }
+
+  public createMarketBanner(
+    input: Omit<MarketBanner, 'id' | 'createdAt'>
+  ): MarketBanner {
+    const banner: MarketBanner = {
+      ...input,
+      id: newId('bnr'),
+      createdAt: new Date().toISOString(),
+    };
+    this.data.marketBanners = [...(this.data.marketBanners || []), banner];
+    this.save();
+    return banner;
+  }
+
+  public updateMarketBanner(
+    id: string,
+    patch: Partial<Omit<MarketBanner, 'id' | 'createdAt'>>
+  ): MarketBanner | null {
+    const banner = (this.data.marketBanners || []).find((b) => b.id === id);
+    if (!banner) return null;
+    Object.assign(banner, patch);
+    this.save();
+    return banner;
+  }
+
+  public deleteMarketBanner(id: string): boolean {
+    const before = (this.data.marketBanners || []).length;
+    this.data.marketBanners = (this.data.marketBanners || []).filter((b) => b.id !== id);
+    const removed = this.data.marketBanners.length !== before;
+    if (removed) this.save();
+    return removed;
+  }
+
   public isDatabaseEnabled(): boolean {
     return isDbEnabled();
   }
@@ -1929,6 +2010,7 @@ class Database {
       notifications: INITIAL_NOTIFICATIONS,
       pushSubscriptions: [],
       pushKeys: [],
+      marketBanners: INITIAL_MARKET_BANNERS,
     };
   }
 

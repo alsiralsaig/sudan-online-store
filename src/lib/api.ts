@@ -694,6 +694,41 @@ class ApiClient {
     });
   }
 
+  /* Market banners */
+  public async getMarketBanners(): Promise<{ banners: any[] }> {
+    return this.request('/market-banners');
+  }
+
+  public async getAdminMarketBanners(): Promise<{ banners: any[] }> {
+    return this.request('/admin/market-banners');
+  }
+
+  public async createMarketBanner(payload: any): Promise<{ success: boolean; banner: any }> {
+    return this.request('/admin/market-banners', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateMarketBanner(id: string, patch: any): Promise<{ success: boolean; banner: any }> {
+    return this.request(`/admin/market-banners/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+  }
+
+  public async deleteMarketBanner(id: string): Promise<{ success: boolean }> {
+    return this.request(`/admin/market-banners/${id}`, { method: 'DELETE' });
+  }
+
+  /** Uploads an image (compressed client-side) and returns its public URL. */
+  public async uploadMedia(dataUrl: string, kind: 'image' | 'video' = 'image'): Promise<{ url: string; [k: string]: any }> {
+    return this.request('/media', {
+      method: 'POST',
+      body: JSON.stringify({ dataUrl, kind }),
+    });
+  }
+
   public async getAdminTenants(): Promise<{ tenants: any[] }> {
     return this.request('/admin/tenants');
   }

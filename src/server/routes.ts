@@ -3305,3 +3305,61 @@ apiRouter.post('/notifications/scan-lazy', async (_req, res) => {
   const result = await runNotificationScan();
   res.json({ success: true, ...result });
 });
+
+/* ------------------------------------------------------------------ */
+/*  Market banners — managed from the admin console                    */
+/* ------------------------------------------------------------------ */
+
+apiRouter.get('/market-banners', (_req, res) => {
+  res.json({ banners: db.getMarketBanners(true) });
+});
+
+apiRouter.get('/admin/market-banners', (_req, res) => {
+  res.json({ banners: db.getMarketBanners(false) });
+});
+
+apiRouter.post('/admin/market-banners', (req, res) => {
+  const { title, subtitle, badge, imageUrl, linkUrl, advertiserName, sortOrder, active } = req.body || {};
+
+  if (!title || String(title).trim().length < 3) {
+    return res.status(400).json({ error: 'TITLE_REQUIRED', message: 'عنوان البانر مطلوب.' });
+  }
+  if (!imageUrl || !String(imageUrl).trim()) {
+    return res.status(400).json({ error: 'IMAGE_REQUIRED', message: 'أضف صورة للبانر.' });
+  }
+
+  const banner = db.createMarketBanner({
+    title: String(title).trim(),
+    subtitle: subtitle ? String(subtitle).trim() : undefined,
+    badge: badge ? String(badge).trim() : undefined,
+    imageUrl: String(imageUrl).trim(),
+    linkUrl: linkUrl ? String(linkUrl).trim() : undefined,
+    advertiserName: advertiserName ? String(advertiserName).trim() : undefined,
+    active: active !== false,
+    sortOrder:
+      sortOrder !== undefined && sortOrder !== null && Number.isFinite(Number(sortOrder))
+        ? Number(sortOrder)
+        : db.getMarketBanners().length + 1,
+  });
+
+  res.json({ success: true, banner });
+});
+
+apiRouter.put('/admin/market-banners/:id', (req, res) => {
+  const patch: any = {};
+  for (const key of ['title', 'subtitle', 'badge', 'imageUrl', 'linkUrl', 'advertiserName', 'active', 'sortOrder'] as const) {
+    if (req.body?.[key] !== undefined) {
+      patch[key] = key === 'sortOrder' ? Number(req.body[key]) : key === 'active' ? !!req.body[key] : req.body[key];
+    }
+  }
+
+  const banner = db.updateMarketBanner(req.params.id, patch);
+  if (!banner) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
+  res.json({ success: true, banner });
+});
+
+apiRouter.delete('/admin/market-banners/:id', (req, res) => {
+  const removed = db.deleteMarketBanner(req.params.id);
+  if (!removed) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
+  res.json({ success: true });
+});

@@ -18,6 +18,7 @@ import {
   Sparkles,
   Megaphone,
   Store,
+  Image as ImageIcon,
   Tag,
 } from 'lucide-react';
 import type { AuditLog, Product } from '../../types/index.ts';
@@ -26,15 +27,16 @@ import { ThermalReceiptSettingsView } from './ThermalReceiptSettingsView.tsx';
 import { PromotionsSettingsView } from './PromotionsSettingsView.tsx';
 import { MarketAdsAdminView } from './MarketAdsAdminView.tsx';
 import { TenantApplicationsAdminView } from './TenantApplicationsAdminView.tsx';
+import { MarketBannersAdminView } from './MarketBannersAdminView.tsx';
 import { NotificationBell } from '../Common/NotificationBell.tsx';
 
 export const CentralAdminView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads' | 'tenant_requests'>('merchants');
+  const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads' | 'tenant_requests' | 'banners'>('merchants');
 
   // Notification taps can open a specific admin tab via ?tab=
   useEffect(() => {
     const applyTab = (tab: string) => {
-      const allowed = ['merchants', 'payments_queue', 'audit_trail', 'receipt_settings', 'promotions', 'market_ads', 'tenant_requests'];
+      const allowed = ['merchants', 'payments_queue', 'audit_trail', 'receipt_settings', 'promotions', 'market_ads', 'tenant_requests', 'banners'];
       if (allowed.includes(tab)) setActiveTab(tab as any);
     };
     const fromUrl = new URLSearchParams(window.location.search).get('tab');
@@ -196,6 +198,15 @@ export const CentralAdminView: React.FC = () => {
           >
             <Store className="w-3.5 h-3.5 text-emerald-600" />
             <span>طلبات المتاجر</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('banners')}
+            className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+              activeTab === 'banners' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
+            }`}
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
+            <span>بانرات السوق</span>
           </button>
         </div>
         </div>
@@ -415,6 +426,7 @@ export const CentralAdminView: React.FC = () => {
       {activeTab === 'promotions' && <PromotionsSettingsView products={products} />}
       {activeTab === 'market_ads' && <MarketAdsAdminView />}
       {activeTab === 'tenant_requests' && <TenantApplicationsAdminView />}
+      {activeTab === 'banners' && <MarketBannersAdminView />}
 
       {/* =========================================================================
           REVIEW PAYMENT MODAL
