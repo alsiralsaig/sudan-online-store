@@ -266,11 +266,130 @@ const SUDANAKHBAR_HOME = 'https://www.sudanakhbar.com/business-news/currency-rat
  * Returns the rates plus the article's own publish time — the only signal we
  * have for "when did the market actually move" on that site.
  */
+/**
+ * Reader fallback.
+ *
+ * sudanakhbar.com answers 403 to datacenter IPs (Vercel's egress), so the
+ * direct fetch works from a phone but not from the serverless function. A
+ * plain reader proxy fetches the same public page from its own network, which
+ * keeps the second source working without any paid service or API key.
+ */
+const READER = (url: string) => `https://r.jina.ai/${url}`;
+
+const fetchViaReader = async (url: string, timeoutMs = 14000): Promise<string | null> => {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), timeoutMs);
+    const res = await fetch(READER(url), {
+      signal: c.signal,
+      headers: { Accept: 'text/plain', 'X-Return-Format': 'text' },
+    });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const text = await res.text();
+    return text.length > 200 ? text : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Reads sudanakhbar through the reader proxy (used when the direct call is 403). */
+export const fetchSudanAkhbarViaReader = async (
+  diag: SourceDiag[] = []
+): Promise<{ rates: LiveRate[]; publishedAt?: string; title?: string; url?: string } | null> => {
+  // Preferred: the same REST endpoint, fetched by the proxy's network
+  for (const q of ['سعر الدولار', 'السوق الموازي']) {
+    const raw = await fetchViaReader(
+      `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q)}` +
+        `&per_page=5&_fields=id,date_gmt,link,title,content`
+    );
+    if (!raw) {
+      diag.push({ method: `reader:wp-json:${q}`, ok: false, detail: 'proxy unavailable' });
+      continue;
+    }
+    try {
+      const start = raw.indexOf('[');
+      const posts = JSON.parse(raw.slice(start));
+      const picked = pickArticleFromPosts(posts, `reader:wp-json:${q}`, diag);
+      if (picked) return picked;
+    } catch {
+      diag.push({ method: `reader:wp-json:${q}`, ok: false, detail: 'unparseable json' });
+    }
+  }
+
+  // Last resort: the rendered listing → the article page
+  const listing = await fetchViaReader(SUDANAKHBAR_HOME);
+  if (!listing) {
+    diag.push({ method: 'reader:listing', ok: false, detail: 'proxy unavailable' });
+    return null;
+  }
+  const linkRe = /(https:\/\/www\.sudanakhbar\.com\/\d{6,})/g;
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(listing)) && candidates.length < 6) {
+    if (!seen.has(m[1])) {
+      seen.add(m[1]);
+      candidates.push(m[1]);
+    }
+  }
+  const compact = listing.replace(/\s+/g, ' ');
+  const ranked = candidates.sort((a, b) => {
+    const near = (u: string) => {
+      const i = compact.indexOf(u);
+      const window = i >= 0 ? compact.slice(i, i + 260) : '';
+      return /السوق السوداء|الموازي|سعر الدولار/.test(window) ? 0 : 1;
+    };
+    return near(a) - near(b);
+  });
+
+  for (const url of ranked.slice(0, 3)) {
+    const article = await fetchViaReader(url);
+    if (!article) {
+      diag.push({ method: 'reader:article', ok: false, detail: url });
+      continue;
+    }
+    const parsed = parseSudanAkhbarArticle(article);
+    if (parsed.rates.length < 3) {
+      diag.push({ method: 'reader:article', ok: false, detail: 'no rate table' });
+      continue;
+    }
+    diag.push({ method: 'reader:article', ok: true, detail: `${parsed.rates.length} rates` });
+    return { rates: parsed.rates, publishedAt: parsed.publishedAt, title: parsed.title, url };
+  }
+  return null;
+};
+
 export interface SourceDiag {
   method: string;
   ok: boolean;
   detail: string;
 }
+
+/** Picks the first post that actually contains a rate table. */
+const pickArticleFromPosts = (
+  posts: any[],
+  method: string,
+  diag: SourceDiag[]
+): { rates: LiveRate[]; publishedAt?: string; title?: string; url?: string } | null => {
+  for (const post of posts) {
+    const title = String(post?.title?.rendered || '').replace(/<[^>]+>/g, ' ').trim();
+    const html = String(post?.content?.rendered || '');
+    const parsed = parseSudanAkhbarArticle(html);
+    if (parsed.rates.length < 3) continue;
+    const publishedAt = post?.date_gmt
+      ? new Date(`${post.date_gmt}Z`).toISOString()
+      : parsed.publishedAt;
+    diag.push({ method, ok: true, detail: `${parsed.rates.length} rates · ${post?.link || ''}` });
+    return { rates: parsed.rates, publishedAt, title: title || undefined, url: post?.link };
+  }
+  diag.push({ method, ok: false, detail: 'no post with a rate table' });
+  return null;
+};
+
+const WP_SEARCH = (q: string) =>
+  `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q)}` +
+  `&per_page=5&_fields=id,date_gmt,link,title,content`;
 
 /** WordPress REST search — structured content + the article's own date. */
 const fetchSudanAkhbarViaApi = async (
@@ -295,23 +414,8 @@ const fetchSudanAkhbarViaApi = async (
         diag.push({ method: `wp-json:${q}`, ok: false, detail: 'empty list' });
         continue;
       }
-      for (const post of posts) {
-        const title = String(post?.title?.rendered || '').replace(/<[^>]+>/g, ' ').trim();
-        const html = String(post?.content?.rendered || '');
-        const parsed = parseSudanAkhbarArticle(html);
-        if (parsed.rates.length < 3) continue;
-        // date_gmt is UTC without the trailing Z
-        const publishedAt = post?.date_gmt
-          ? new Date(`${post.date_gmt}Z`).toISOString()
-          : parsed.publishedAt;
-        diag.push({
-          method: `wp-json:${q}`,
-          ok: true,
-          detail: `${parsed.rates.length} rates · ${post?.link || ''}`,
-        });
-        return { rates: parsed.rates, publishedAt, title: title || undefined, url: post?.link };
-      }
-      diag.push({ method: `wp-json:${q}`, ok: false, detail: 'no post with a rate table' });
+      const picked = pickArticleFromPosts(posts, `wp-json:${q}`, diag);
+      if (picked) return picked;
     } catch (err) {
       diag.push({ method: `wp-json:${q}`, ok: false, detail: (err as Error).name });
     }
@@ -326,16 +430,26 @@ const fetchSudanAkhbarViaApi = async (
  * regions: the WordPress REST API first (structured + dated), the article
  * listing as a fallback.
  */
+type ArticleResult = { rates: LiveRate[]; publishedAt?: string; title?: string; url?: string };
+
+/** The article changes a few times a day at most — 5 minutes is plenty. */
+const ARTICLE_TTL_MS = 5 * 60 * 1000;
+let articleCache: { at: number; value: ArticleResult | null } | null = null;
+
 export const fetchSudanAkhbarArticle = async (
   diag: SourceDiag[] = []
-): Promise<{
-  rates: LiveRate[];
-  publishedAt?: string;
-  title?: string;
-  url?: string;
-} | null> => {
+): Promise<ArticleResult | null> => {
+  if (articleCache && Date.now() - articleCache.at < ARTICLE_TTL_MS) {
+    if (articleCache.value) diag.push({ method: 'cache', ok: true, detail: 'article cached' });
+    return articleCache.value;
+  }
+  const store = (value: ArticleResult | null) => {
+    articleCache = { at: Date.now(), value };
+    return value;
+  };
+
   const viaApi = await fetchSudanAkhbarViaApi(diag);
-  if (viaApi) return viaApi;
+  if (viaApi) return store(viaApi);
 
   try {
     const c1 = new AbortController();
@@ -344,7 +458,7 @@ export const fetchSudanAkhbarArticle = async (
     clearTimeout(t1);
     if (!listing.ok) {
       diag.push({ method: 'listing', ok: false, detail: `HTTP ${listing.status}` });
-      return null;
+      return store(await fetchSudanAkhbarViaReader(diag));
     }
     const html = await listing.text();
 
@@ -359,7 +473,7 @@ export const fetchSudanAkhbarArticle = async (
     }
     if (!candidates.length) {
       diag.push({ method: 'listing', ok: false, detail: 'no matching article links' });
-      return null;
+      return store(await fetchSudanAkhbarViaReader(diag));
     }
 
     for (const candidate of candidates) {
@@ -377,17 +491,17 @@ export const fetchSudanAkhbarArticle = async (
         continue;
       }
       diag.push({ method: 'article', ok: true, detail: `${parsed.rates.length} rates` });
-      return {
+      return store({
         rates: parsed.rates,
         publishedAt: parsed.publishedAt,
         title: parsed.title || candidate.title,
         url: candidate.url,
-      };
+      });
     }
-    return null;
+    return store(await fetchSudanAkhbarViaReader(diag));
   } catch (err) {
     diag.push({ method: 'listing', ok: false, detail: (err as Error).name });
-    return null;
+    return store(null);
   }
 };
 
