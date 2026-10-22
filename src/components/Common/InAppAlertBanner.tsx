@@ -35,6 +35,10 @@ export const InAppAlertBanner: React.FC<InAppAlertBannerProps> = ({
   const [leaving, setLeaving] = useState(false);
   const seen = useRef<Set<string>>(new Set());
   const primed = useRef(false);
+  // Anything that already existed when this screen opened stays quiet; only
+  // what arrives afterwards alerts. Survives a service-worker refresh too
+  // (the timestamp is compared with the notification's own createdAt).
+  const startedAt = useRef<number>(Date.now());
   const timerRef = useRef<number | null>(null);
 
   // First load only records what already exists — no banner storm on opening.
@@ -47,9 +51,21 @@ export const InAppAlertBanner: React.FC<InAppAlertBannerProps> = ({
         if (cancelled) return;
         const list = (res.notifications || []) as AlertItem[];
 
+        const isNew = (n: AlertItem & { createdAt?: string }) => {
+          const at = n.createdAt ? new Date(n.createdAt).getTime() : 0;
+          // 20s tolerance covers clock skew between phone and server
+          return at > startedAt.current - 20000;
+        };
+
         if (!primed.current) {
           list.forEach((n) => seen.current.add(n.id));
           primed.current = true;
+          // Items that appeared *after* this screen opened still deserve a banner
+          const late = list.filter((n) => isNew(n) && !seen.current.has(`shown_${n.id}`));
+          if (late.length > 0) {
+            late.forEach((n) => seen.current.add(`shown_${n.id}`));
+            setQueue((prev) => [...prev, ...late]);
+          }
           return;
         }
 
