@@ -15,6 +15,8 @@ import {
   Loader2,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
+import { detectPushSupport, isInAppBrowser } from '../../lib/pushSupport.ts';
+import type { PushSupport } from '../../lib/pushSupport.ts';
 
 export type NotificationAppKey = 'client' | 'merchant' | 'admin';
 
@@ -81,6 +83,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   const [loading, setLoading] = useState(false);
   const [pushState, setPushState] = useState<'unknown' | 'off' | 'on' | 'unsupported' | 'denied' | 'working'>('unknown');
   const [scanning, setScanning] = useState(false);
+  const [support, setSupport] = useState<PushSupport | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -133,7 +136,9 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   // Work out the current push state for this device
   useEffect(() => {
     const check = async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      const diag = detectPushSupport();
+      setSupport(diag);
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || diag.state !== 'ok') {
         setPushState('unsupported');
         return;
       }
@@ -318,9 +323,49 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                 الإشعارات ممنوعة من إعدادات المتصفح. افتح إعدادات الموقع واسمح بالإشعارات ثم أعد المحاولة.
               </span>
             ) : pushState === 'unsupported' ? (
-              <span className="text-[10px] text-slate-500 block">
-                هذا المتصفح لا يدعم إشعارات الهاتف — ستظهر الإشعارات داخل التطبيق فقط.
-              </span>
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-amber-800 font-bold leading-relaxed flex items-start gap-1">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
+                  <span>
+                    {support?.title ||
+                      'إشعارات الهاتف غير متاحة هنا — التنبيهات ستظهر داخل التطبيق فقط.'}
+                  </span>
+                </p>
+
+                {!!support?.steps?.length && (
+                  <ol className="text-[9.5px] text-slate-600 space-y-0.5 pr-4 list-decimal leading-relaxed">
+                    {support.steps.map((step, i) => (
+                      <li key={i}>{step}</li>
+                    ))}
+                  </ol>
+                )}
+
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <button
+                    onClick={() => {
+                      setSupport(detectPushSupport());
+                      setPushState('off');
+                      setTimeout(() => enablePush(), 60);
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-bold"
+                  >
+                    إعادة المحاولة
+                  </button>
+                  {isInAppBrowser() && (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard
+                          ?.writeText(location.href)
+                          .then(() => alert('تم نسخ الرابط — افتحه في Chrome أو Safari.'))
+                          .catch(() => {});
+                      }}
+                      className="px-2 py-1 rounded-lg bg-white border border-slate-300 text-slate-700 text-[10px] font-bold"
+                    >
+                      نسخ الرابط
+                    </button>
+                  )}
+                </div>
+              </div>
             ) : (
               <button
                 onClick={enablePush}

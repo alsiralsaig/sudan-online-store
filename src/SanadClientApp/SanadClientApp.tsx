@@ -9,6 +9,7 @@ import { ClientLoyaltyDashboard } from './components/ClientLoyaltyDashboard.tsx'
 import { ClientFooter } from './components/ClientFooter.tsx';
 import { ClientSectionsModal } from './components/ClientSectionsModal.tsx';
 import { ClientBottomNav } from './components/ClientBottomNav.tsx';
+import { InAppAlertBanner } from '../components/Common/InAppAlertBanner.tsx';
 import { ClientCreateAdOrRequestModal } from './components/ClientCreateAdOrRequestModal.tsx';
 import { ClientMarketHomeView } from './components/ClientMarketHomeView.tsx';
 import { ClientAdDetailModal } from './components/ClientAdDetailModal.tsx';
@@ -465,6 +466,12 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900 pb-16">
+      {/* New notifications drop from the top of the screen while browsing */}
+      <InAppAlertBanner
+        app="client"
+        ownerToken={getOwnerToken()}
+        onNavigate={(tab) => setActiveTab(tab as any)}
+      />
       {/* 1. Header — hidden on the market home, which carries its own slim bar */}
       {activeTab !== 'market_home' && (
       <ClientHeader

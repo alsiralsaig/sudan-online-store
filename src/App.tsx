@@ -19,6 +19,7 @@ import { CentralAdminView } from './components/Admin/CentralAdminView.tsx';
 import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx';
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
 import { SanadClientApp } from './SanadClientApp/SanadClientApp.tsx';
+import { InAppAlertBanner } from './components/Common/InAppAlertBanner.tsx';
 import { SanadAIAssistant } from './components/Common/SanadAIAssistant.tsx';
 import { SanadAppModeBar, type PlatformAppMode } from './components/Common/SanadAppModeBar.tsx';
 import { AdminWelcomeBanner } from './components/Admin/AdminWelcomeBanner.tsx';
@@ -313,6 +314,7 @@ export default function App() {
   if (appMode === 'super_admin') {
     return (
       <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans antialiased select-none" dir="rtl">
+        <InAppAlertBanner app="admin" />
         <SanadAppModeBar
           currentApp="super_admin"
           onSwitchApp={(app) => switchAppMode(app)}
@@ -370,6 +372,12 @@ export default function App() {
   // Merchant Mode (Store POS & Management)
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans select-none antialiased">
+      {/* Phone-style alert that drops from the top for any new notification */}
+      <InAppAlertBanner
+        app="merchant"
+        onNavigate={(tab) => setCurrentTab(tab as typeof currentTab)}
+      />
+
       {/* No app-switcher bar here: merchants open their own app, and the
           platform console is reachable through its URL only. */}
 
