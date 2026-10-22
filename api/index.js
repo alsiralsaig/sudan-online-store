@@ -3156,6 +3156,112 @@ var parseAlsougRates = (html) => {
   }
   return out;
 };
+var AR_MONTHS = {
+  \u064A\u0646\u0627\u064A\u0631: 0,
+  \u0641\u0628\u0631\u0627\u064A\u0631: 1,
+  \u0645\u0627\u0631\u0633: 2,
+  \u0627\u0628\u0631\u064A\u0644: 3,
+  \u0623\u0628\u0631\u064A\u0644: 3,
+  \u0645\u0627\u064A\u0648: 4,
+  \u064A\u0648\u0646\u064A\u0648: 5,
+  \u064A\u0648\u0644\u064A\u0648: 6,
+  \u0627\u063A\u0633\u0637\u0633: 7,
+  \u0623\u063A\u0633\u0637\u0633: 7,
+  \u0633\u0628\u062A\u0645\u0628\u0631: 8,
+  \u0627\u0643\u062A\u0648\u0628\u0631: 9,
+  \u0623\u0643\u062A\u0648\u0628\u0631: 9,
+  \u0646\u0648\u0641\u0645\u0628\u0631: 10,
+  \u062F\u064A\u0633\u0645\u0628\u0631: 11
+};
+var parseArabicPublishedAt = (text) => {
+  const m = text.match(
+    /(\d{1,2})\s+([\u0600-\u06FF]{3,10})\s*[،,]?\s*(\d{4})\s*(?:-|—|\|)?\s*(\d{1,2})[:.](\d{2})?\s*(صباح|مساء|ص|م)?/
+  );
+  if (!m) return void 0;
+  const day = Number(m[1]);
+  const month = AR_MONTHS[m[2].replace(/[^\u0621-\u064A]/g, "")];
+  const year = Number(m[3]);
+  if (month === void 0 || !day || !year) return void 0;
+  let hour = Number(m[4] || 0);
+  const minute = Number(m[5] || 0);
+  const meridiem = m[6] || "";
+  if ((meridiem === "\u0645\u0633\u0627\u0621" || meridiem === "\u0645") && hour < 12) hour += 12;
+  if ((meridiem === "\u0635\u0628\u0627\u062D" || meridiem === "\u0635") && hour === 12) hour = 0;
+  const utc = Date.UTC(year, month, day, hour - 2, minute);
+  return new Date(utc).toISOString();
+};
+var htmlToText = (html) => html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+var AR_LABEL_TO_CODE = [
+  // NB: all groups are non-capturing — the captured number must stay at index 1
+  { re: /الدولار\s*(?:الأمريكي|الامريكي|الاميركي|الأميركي)/i, code: "USD" },
+  { re: /الريال\s*السعودي/i, code: "SAR" },
+  { re: /الدرهم\s*(?:الإماراتي|الاماراتي)/i, code: "AED" },
+  { re: /اليورو/i, code: "EUR" },
+  { re: /(?:الجنيه|الجنية)\s*(?:المصري|المصرى)/i, code: "EGP" },
+  { re: /الريال\s*القطري/i, code: "QAR" },
+  { re: /(?:الجنيه|الجنية)\s*(?:الإسترليني|الاسترليني|الاسترلينى)/i, code: "GBP" },
+  { re: /الريال\s*العماني/i, code: "OMR" },
+  { re: /الدينار\s*الكويتي/i, code: "KWD" }
+];
+var parseSudanAkhbarArticle = (html) => {
+  const text = htmlToText(html);
+  const title = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const blockStart = text.search(/متوسط\s*(اسعار|أسعار)\s*العملات/i);
+  const scope = blockStart >= 0 ? text.slice(blockStart) : text;
+  const rates = [];
+  const seen = /* @__PURE__ */ new Set();
+  const NUM = "([0-9][0-9,]{2,}(?:\\.[0-9]+)?)";
+  const patternsFor = (source) => [
+    {
+      // «10200 جنيه للشراء و10393.1747 جنيه للبيع» → the sell price
+      re: new RegExp(
+        source + `\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0634\u0631\u0627\u0621\\s*\u0648\\s*${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0628\u064A\u0639`,
+        "i"
+      ),
+      pick: 2
+    },
+    {
+      // «10200 و10393 للبيع»
+      re: new RegExp(
+        source + `\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0648\\s*${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0628\u064A\u0639`,
+        "i"
+      ),
+      pick: 2
+    },
+    {
+      // «10393.1747 ( ارتفاع سعر متوسط )» → the market average table
+      re: new RegExp(source + `\\s*${NUM}\\s*\\(\\s*(?:\u0627\u0631\u062A\u0641\u0627\u0639|\u0627\u0646\u062E\u0641\u0627\u0636)`),
+      pick: 1
+    },
+    {
+      // «13662.3000 جنيهاً للبيع»
+      re: new RegExp(source + `\\s*${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0628\u064A\u0639`),
+      pick: 1
+    },
+    {
+      // plain «الدولار الامريكي 10200 جنيها»
+      re: new RegExp(source + `\\s*${NUM}`),
+      pick: 1
+    }
+  ];
+  for (const { re, code } of AR_LABEL_TO_CODE) {
+    if (seen.has(code)) continue;
+    let value = null;
+    for (const { re: candidate, pick } of patternsFor(re.source)) {
+      const m = scope.match(candidate) || text.match(candidate);
+      if (!m) continue;
+      const parsedValue = toNumber(m[pick] ?? m[1]);
+      if (parsedValue === null || parsedValue < 100 || parsedValue >= 15e5) continue;
+      value = parsedValue;
+      break;
+    }
+    if (value === null) continue;
+    rates.push({ code, official: null, parallel: value });
+    seen.add(code);
+  }
+  const publishedAt = parseArabicPublishedAt(text.slice(0, Math.max(400, text.indexOf("\u0645\u0635\u062F\u0631 \u0627\u0644\u062E\u0628\u0631") + 200))) || parseArabicPublishedAt(text);
+  return { rates, publishedAt, title: title || void 0 };
+};
 var BROWSER_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36",
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -3164,36 +3270,47 @@ var BROWSER_HEADERS = {
   "Cache-Control": "no-cache"
 };
 var SUDANAKHBAR_HOME = "https://www.sudanakhbar.com/business-news/currency-rates-prices";
-var fetchSudanAkhbarRates = async () => {
+var fetchSudanAkhbarArticle = async () => {
   try {
     const c1 = new AbortController();
-    const t1 = setTimeout(() => c1.abort(), 8e3);
+    const t1 = setTimeout(() => c1.abort(), 9e3);
     const listing = await fetch(SUDANAKHBAR_HOME, { signal: c1.signal, headers: BROWSER_HEADERS });
     clearTimeout(t1);
-    if (!listing.ok) return [];
+    if (!listing.ok) return null;
     const html = await listing.text();
-    const linkRe = /href="(https:\/\/www\.sudanakhbar\.com\/\d{6,})"[^>]*>([^<]{10,160})</g;
-    let best = null;
+    const linkRe = /href="(https:\/\/www\.sudanakhbar\.com\/\d{6,})"[^>]*>([^<]{10,200})</g;
+    const candidates = [];
     let m;
     while (m = linkRe.exec(html)) {
-      if (/السوق السوداء|الموازي/.test(m[2])) {
-        best = m[1];
-        break;
+      if (/السوق السوداء|الموازي|سعر الدولار|العملات/.test(m[2])) {
+        candidates.push({ url: m[1], title: m[2].trim() });
+        if (candidates.length >= 3) break;
       }
     }
-    if (!best) return [];
-    const c2 = new AbortController();
-    const t2 = setTimeout(() => c2.abort(), 8e3);
-    const article = await fetch(best, { signal: c2.signal, headers: BROWSER_HEADERS });
-    clearTimeout(t2);
-    if (!article.ok) return [];
-    const body = await article.text();
-    if (!/السوق السوداء|الموازي/.test(body)) return [];
-    const rates = parseAlsougRates(body);
-    return rates.filter((r) => r.parallel !== null && r.parallel >= 100);
+    if (!candidates.length) return null;
+    for (const candidate of candidates) {
+      const c2 = new AbortController();
+      const t2 = setTimeout(() => c2.abort(), 9e3);
+      const article = await fetch(candidate.url, { signal: c2.signal, headers: BROWSER_HEADERS });
+      clearTimeout(t2);
+      if (!article.ok) continue;
+      const parsed = parseSudanAkhbarArticle(await article.text());
+      if (parsed.rates.length < 3) continue;
+      return {
+        rates: parsed.rates,
+        publishedAt: parsed.publishedAt,
+        title: parsed.title || candidate.title,
+        url: candidate.url
+      };
+    }
+    return null;
   } catch {
-    return [];
+    return null;
   }
+};
+var fetchSudanAkhbarRates = async () => {
+  const article = await fetchSudanAkhbarArticle();
+  return article ? article.rates.filter((r) => r.parallel !== null && r.parallel >= 100) : [];
 };
 var fetchLiveRates = async () => {
   try {
@@ -3228,6 +3345,46 @@ var fetchLiveRates = async () => {
   }
   return null;
 };
+var fetchSudanAkhbarSnapshot = async () => {
+  const article = await fetchSudanAkhbarArticle();
+  if (!article?.rates.length) return null;
+  return {
+    rates: article.rates.filter((r) => r.parallel !== null && r.parallel >= 100),
+    source: BACKUP_SOURCE_NAME,
+    sourceUrl: article.url || SUDANAKHBAR_HOME,
+    fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    stale: false,
+    sourceUpdatedAt: article.publishedAt,
+    sourceTitle: article.title
+  };
+};
+var fetchAlsougSnapshot = async () => {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 9e3);
+    const res = await fetch(SOURCE_URL, { signal: controller.signal, headers: BROWSER_HEADERS });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const rates = parseAlsougRates(await res.text());
+    if (!rates.length) return null;
+    return {
+      rates,
+      source: SOURCE_NAME,
+      sourceUrl: SOURCE_URL,
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      stale: false
+    };
+  } catch {
+    return null;
+  }
+};
+var fetchAllSources = async () => {
+  const [primary, backup] = await Promise.all([
+    fetchAlsougSnapshot().catch(() => null),
+    fetchSudanAkhbarSnapshot().catch(() => null)
+  ]);
+  return [primary, backup].filter(Boolean);
+};
 var MAX_AGE_HOURS = 36;
 var ageHours = (iso) => {
   if (!iso) return null;
@@ -3243,6 +3400,135 @@ var BACKUP_SOURCE_NAME = "\u0627\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u064
 var RATES_SOURCE = {
   primary: { url: SOURCE_URL, name: SOURCE_NAME },
   backup: { url: SUDANAKHBAR_HOME, name: BACKUP_SOURCE_NAME }
+};
+
+// src/server/rateAnswer.ts
+var AR_NAMES = {
+  USD: "\u0627\u0644\u062F\u0648\u0644\u0627\u0631 \u0627\u0644\u0623\u0645\u0631\u064A\u0643\u064A",
+  SAR: "\u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0633\u0639\u0648\u062F\u064A",
+  AED: "\u0627\u0644\u062F\u0631\u0647\u0645 \u0627\u0644\u0625\u0645\u0627\u0631\u0627\u062A\u064A",
+  EUR: "\u0627\u0644\u064A\u0648\u0631\u0648",
+  EGP: "\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0645\u0635\u0631\u064A",
+  QAR: "\u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0642\u0637\u0631\u064A",
+  TRY: "\u0627\u0644\u0644\u064A\u0631\u0629 \u0627\u0644\u062A\u0631\u0643\u064A\u0629",
+  GBP: "\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0625\u0633\u062A\u0631\u0644\u064A\u0646\u064A",
+  OMR: "\u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0639\u0645\u0627\u0646\u064A",
+  KWD: "\u0627\u0644\u062F\u064A\u0646\u0627\u0631 \u0627\u0644\u0643\u0648\u064A\u062A\u064A"
+};
+var CODE_ORDER = ["USD", "SAR", "AED", "EUR", "EGP", "QAR", "GBP", "OMR", "KWD", "TRY"];
+var money = (n) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+var sortRates = (rates) => [...rates].sort(
+  (a, b) => (CODE_ORDER.indexOf(a.code) + 1 || 99) - (CODE_ORDER.indexOf(b.code) + 1 || 99)
+);
+var describeSourceDate = (iso, now = Date.now()) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const tz = { timeZone: "Africa/Khartoum" };
+  const time = d.toLocaleTimeString("ar-SD", { hour: "2-digit", minute: "2-digit", ...tz });
+  const day = d.toLocaleDateString("ar-SD", { day: "numeric", month: "long", ...tz });
+  const fmtDay = (x) => x.toLocaleDateString("en-CA", { timeZone: "Africa/Khartoum" });
+  const sameDay = fmtDay(new Date(now)) === fmtDay(d);
+  return `${day} ${time} (${sameDay ? "\u0627\u0644\u064A\u0648\u0645" : describeAgeAr(iso, now)})`;
+};
+var SOURCE_ALIASES = [
+  { name: "alsoug", re: /alsoug|سوق\s*السودان|البديل/i },
+  { name: "sudanakhbar", re: /أخبار\s*السودان|اخبار\s*السودان|سودان\s*أخبار|sudanakhbar/i }
+];
+var describeAgeAr = (iso, now = Date.now()) => {
+  if (!iso) return "\u063A\u064A\u0631 \u0645\u0639\u0631\u0648\u0641";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "\u063A\u064A\u0631 \u0645\u0639\u0631\u0648\u0641";
+  const mins = Math.max(0, Math.round((now - t) / 6e4));
+  const d = (n) => n.toLocaleString("ar-EG");
+  if (mins < 1) return "\u0627\u0644\u0622\u0646";
+  if (mins < 60) return `\u0642\u0628\u0644 ${d(mins)} \u062F\u0642\u064A\u0642\u0629`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  if (hours < 24) {
+    const base = hours === 1 ? "\u0642\u0628\u0644 \u0633\u0627\u0639\u0629" : hours === 2 ? "\u0642\u0628\u0644 \u0633\u0627\u0639\u062A\u064A\u0646" : `\u0642\u0628\u0644 ${d(hours)} \u0633\u0627\u0639\u0627\u062A`;
+    return rest ? `${base} \u0648${d(rest)} \u062F\u0642\u064A\u0642\u0629` : base;
+  }
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "\u0642\u0628\u0644 \u064A\u0648\u0645";
+  if (days === 2) return "\u0642\u0628\u0644 \u064A\u0648\u0645\u064A\u0646";
+  return `\u0642\u0628\u0644 ${d(days)} \u0623\u064A\u0627\u0645`;
+};
+var isRateQuery = (msg) => /سعر|أسعار|اسعار|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|ليرة|عملة|عملات|صرف|تحويل|بنكك\s*سعر/i.test(
+  msg
+) || asksForSources(msg);
+var asksForSources = (msg) => {
+  if (SOURCE_ALIASES.some((s) => s.re.test(msg))) return true;
+  return /المصدرين|المصادر|قارن|مقارنة|كل\s*المصادر|الموقعين|التقارير/i.test(msg);
+};
+var sourcesWanted = (msg) => {
+  if (SOURCE_ALIASES[1].re.test(msg) && !SOURCE_ALIASES[0].re.test(msg)) return "backup";
+  if (asksForSources(msg)) return "both";
+  return "primary-first";
+};
+var priceLines = (snapshot) => sortRates((snapshot.rates || []).filter((r) => r.parallel || r.official)).map((r) => {
+  const price = money(r.parallel ?? r.official);
+  const bank = r.official ? ` (\u0627\u0644\u0628\u0646\u0643: ${money(r.official)})` : "";
+  return `\u2022 ${AR_NAMES[r.code] || r.code}: ${price} \u062C.\u0633${bank}`;
+});
+var formatRatesAnswer = (snapshot, opts = {}) => {
+  if (!snapshot?.rates?.length) return null;
+  const lines = priceLines(snapshot);
+  const when = snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toLocaleString("ar-SD", { timeZone: "Africa/Khartoum" }) : "";
+  const age = describeAgeAr(snapshot.fetchedAt);
+  const note = opts.changed === false ? `\u0645\u0644\u0627\u062D\u0638\u0629 \u0645\u0647\u0645\u0629: \u0642\u0627\u0631\u0646\u062A \u0627\u0644\u0642\u0631\u0627\u0621\u0629 \u0628\u0627\u0644\u0642\u0631\u0627\u0621\u0629 \u0627\u0644\u0633\u0627\u0628\u0642\u0629 \u2014 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 **\u0645\u0627 \u0627\u062A\u063A\u064A\u0651\u0631\u062A**\u060C \u064A\u0639\u0646\u064A \u0627\u0644\u0633\u0648\u0642 \u0641\u064A \u0627\u0644\u0645\u0635\u062F\u0631 \u0645\u0627 \u062A\u062D\u0631\u0651\u0643 \u0645\u0646 ${describeAgeAr(
+    opts.previousAt
+  )}.` : opts.changed === true ? "\u0641\u064A\u0647 \u062A\u062D\u0631\u0651\u0643 \u0641\u064A \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0645\u0642\u0627\u0631\u0646\u0629 \u0628\u0627\u0644\u0642\u0631\u0627\u0621\u0629 \u0627\u0644\u0633\u0627\u0628\u0642\u0629." : "";
+  const sourceDate = snapshot.sourceUpdatedAt ? `
+\u0646\u064F\u0634\u0631\u062A \u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0641\u064A \u0627\u0644\u0645\u0635\u062F\u0631: ${describeSourceDate(snapshot.sourceUpdatedAt)}.` : "";
+  return `\u062D\u0628\u0627\u0628\u0643 \u{1F44B} \u062F\u064A \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A (\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0623\u0633\u0648\u062F) \u0645\u0646 \u0622\u062E\u0631 \u0642\u0631\u0627\u0621\u0629 \u062D\u0642\u064A\u0642\u064A\u0629:
+${lines.join("\n")}
+
+\u0627\u0644\u0645\u0635\u062F\u0631: ${snapshot.source} \u2014 \u062A\u0645 \u0633\u062D\u0628 \u0627\u0644\u0642\u0631\u0627\u0621\u0629 \u0645\u0646 \u0627\u0644\u0645\u0648\u0642\u0639: ${age}${when ? ` (${when})` : ""}.${sourceDate}
+` + (note ? `${note}
+` : "") + `\u0627\u0644\u0633\u0639\u0631 \u0627\u0644\u0631\u0633\u0645\u064A \u0644\u0644\u0628\u0646\u0643 \u0623\u0642\u0644 \u0645\u0646 \u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A\u060C \u0648\u0627\u0644\u062A\u0639\u0627\u0645\u0644 \u0641\u064A \u0627\u0644\u0633\u0648\u062F\u0627\u0646 \u0628\u064A\u0645\u0634\u064A \u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642.`;
+};
+var formatMultiSourceAnswer = (sources, opts = {}) => {
+  if (!sources.length) {
+    return "\u064A\u0627 \u062D\u0628\u064A\u0628\u0646\u0627\u060C \u062C\u0631\u0651\u0628\u062A \u0623\u0641\u062A\u062D \u0627\u0644\u0645\u0635\u062F\u0631\u064A\u0646 (\u0633\u0648\u0642 \u0627\u0644\u0633\u0648\u062F\u0627\u0646 \u0648\u0623\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646) \u0647\u0633\u064A \u0648\u0645\u0627 \u0631\u062C\u0651\u0639\u0648\u0627 \u062C\u062F\u0648\u0644 \u0623\u0633\u0639\u0627\u0631 \u0635\u0627\u0644\u062D. \u062F\u064A \u0645\u0634\u0643\u0644\u0629 \u0641\u064A \u0627\u0644\u0645\u0648\u0627\u0642\u0639 \u0646\u0641\u0633\u0647\u0627 \u0645\u0634 \u0641\u064A \u0627\u0644\u0645\u0646\u0635\u0629 \u2014 \u0628\u0646\u0639\u064A\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629 \u0643\u0644 \u0634\u0648\u064A\u0629\u060C \u0648\u062A\u0642\u062F\u0631 \u062A\u0634\u0648\u0641 \u0622\u062E\u0631 \u0642\u0631\u0627\u0621\u0629 \u0645\u062D\u0641\u0648\u0638\u0629 \u0645\u0646 \u0634\u0627\u0634\u0629 \xAB\u0627\u0644\u0639\u0645\u0644\u0627\u062A \u0648\u0627\u0644\u0635\u0631\u0641\xBB.";
+  }
+  const blocks = sources.map((s) => {
+    const lines = priceLines(s);
+    const published = s.sourceUpdatedAt ? ` \xB7 \u0646\u064F\u0634\u0631 \u0641\u064A \u0627\u0644\u0645\u0635\u062F\u0631: ${describeSourceDate(s.sourceUpdatedAt)}` : "";
+    return `*${s.source}*
+` + (lines.length ? lines.join("\n") : "\u2022 \u0645\u0627 \u0644\u0642\u064A\u062A \u062C\u062F\u0648\u0644 \u0623\u0633\u0639\u0627\u0631 \u0641\u064A \u0627\u0644\u0635\u0641\u062D\u0629 \u0627\u0644\u0622\u0646") + `
+_\u0633\u062D\u0628 \u0627\u0644\u0642\u0631\u0627\u0621\u0629: ${describeAgeAr(s.fetchedAt)}${published}_`;
+  });
+  const perSource = sources.map((s) => ({
+    name: s.source,
+    map: new Map(s.rates.filter((r) => r.parallel).map((r) => [r.code, r.parallel]))
+  }));
+  const comparisons = [];
+  if (perSource.length >= 2) {
+    for (const code of perSource[0].map.keys()) {
+      const values = perSource.map((s) => ({ name: s.name, value: s.map.get(code) })).filter((v) => typeof v.value === "number");
+      if (values.length < 2) continue;
+      const min = Math.min(...values.map((v) => v.value));
+      const max = Math.max(...values.map((v) => v.value));
+      if (min === max) {
+        comparisons.push(`\u2022 ${AR_NAMES[code] || code}: \u0627\u0644\u0645\u0635\u062F\u0631\u064A\u0646 \u0645\u062A\u0637\u0627\u0628\u0642\u064A\u0646 (${money(min)} \u062C.\u0633)`);
+      } else {
+        const gap = ((max - min) / min * 100).toFixed(1);
+        comparisons.push(
+          `\u2022 ${AR_NAMES[code] || code}: \u0641\u0631\u0642 ${gap}% \u0628\u064A\u0646 ${money(min)} \u0648${money(max)} \u062C.\u0633`
+        );
+      }
+    }
+  }
+  return `\u062D\u0628\u0627\u0628\u0643 \u064A\u0627 \u063A\u0627\u0644\u064A \u{1F44B} \u0641\u062A\u062D\u062A **\u0627\u0644\u0645\u0635\u062F\u0631\u064A\u0646** \u0648\u0633\u062D\u0628\u062A \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0645\u0646\u0647\u0645 \u0647\u0633\u064A (\u0645\u0634 \u0645\u0646 \u0627\u0644\u0630\u0627\u0643\u0631\u0629):
+
+${blocks.join("\n\n")}
+
+` + (comparisons.length ? `*\u0645\u0642\u0627\u0631\u0646\u0629 \u0633\u0631\u064A\u0639\u0629:*
+${comparisons.join("\n")}
+
+` : "") + (opts.storedAt ? `\u0622\u062E\u0631 \u0642\u0631\u0627\u0621\u0629 \u0645\u062D\u0641\u0648\u0638\u0629 \u0641\u064A \u0627\u0644\u0645\u0646\u0635\u0629 \u0643\u0627\u0646\u062A ${describeAgeAr(opts.storedAt)} \u2014 \u0648\u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0641\u0648\u0642 \u0647\u064A \u0627\u0644\u0623\u062D\u062F\u062B.
+` : "") + `\u0646\u0635\u064A\u062D\u0629: \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0628\u062A\u062A\u063A\u064A\u0651\u0631 \u0641\u064A \u0646\u0641\u0633 \u0627\u0644\u064A\u0648\u0645\u060C \u0641\u0623\u0643\u0651\u062F \u0645\u0639 \u0627\u0644\u062A\u0627\u062C\u0631 \u0648\u0642\u062A \u0627\u0644\u062A\u0646\u0641\u064A\u0630.`;
 };
 
 // src/server/notifications.ts
@@ -4960,17 +5246,50 @@ apiRouter.post("/admin/currency/refresh", async (req, res) => {
   }
   res.json({ success: true, ...result });
 });
-apiRouter.get("/assistant/rates", async (_req, res) => {
-  let snapshot = db.getRatesSnapshot();
+apiRouter.get("/assistant/rates", async (req, res) => {
+  const q2 = String(req.query.q || "");
+  const wanted = req.query.source || (q2 ? sourcesWanted(q2) : "primary-first");
+  const force = req.query.fresh === "1" || req.query.fresh === "true";
+  const storedBefore = db.getRatesSnapshot();
+  if (wanted === "both" || wanted === "backup") {
+    const sources = await fetchAllSources().catch(() => []);
+    const picked = wanted === "backup" ? sources.filter((s) => s.source.includes("sudanakhbar")) : sources;
+    const answer = formatMultiSourceAnswer(picked.length ? picked : sources, {
+      storedAt: storedBefore?.fetchedAt
+    });
+    return res.json({
+      snapshot: storedBefore,
+      sources: (sources.length ? sources : []).map((s) => ({
+        name: s.source,
+        url: s.sourceUrl,
+        fetchedAt: s.fetchedAt,
+        rates: s.rates
+      })),
+      stale: false,
+      answer
+    });
+  }
+  let snapshot = storedBefore;
   const hours = snapshot?.fetchedAt ? ageHours(snapshot.fetchedAt) : null;
-  if (hours === null || hours >= 1) {
+  if (force || hours === null || hours >= 0.25) {
     try {
       const fresh = await fetchLiveRates();
       if (fresh) {
+        const previous = snapshot?.rates?.find((r) => r.code === "USD")?.parallel ?? null;
+        const current = fresh.rates.find((r) => r.code === "USD")?.parallel ?? null;
+        const changed = previous === null || current === null ? null : previous !== current;
         db.applyLiveRates(fresh, "\u0627\u0644\u0645\u0633\u0627\u0639\u062F \u0627\u0644\u0630\u0643\u064A");
         await db.flush({ lock: false }).catch(() => {
         });
         snapshot = db.getRatesSnapshot();
+        const answer = formatRatesAnswer(snapshot, { changed, previousAt: storedBefore?.fetchedAt });
+        return res.json({
+          snapshot,
+          stale: snapshot ? isStale(snapshot.fetchedAt) : true,
+          age: describeAgeAr(snapshot?.fetchedAt),
+          changed,
+          answer
+        });
       }
     } catch {
     }
@@ -4978,7 +5297,24 @@ apiRouter.get("/assistant/rates", async (_req, res) => {
   res.json({
     snapshot,
     stale: snapshot ? isStale(snapshot.fetchedAt) : true,
+    age: describeAgeAr(snapshot?.fetchedAt),
     answer: formatRatesAnswer(snapshot)
+  });
+});
+apiRouter.get("/currency/rates/all", async (_req, res) => {
+  const sources = await fetchAllSources().catch(() => []);
+  const stored = db.getRatesSnapshot();
+  res.json({
+    success: sources.length > 0,
+    sources: sources.map((s) => ({
+      name: s.source,
+      url: s.sourceUrl,
+      fetchedAt: s.fetchedAt,
+      age: describeAgeAr(s.fetchedAt),
+      rates: s.rates
+    })),
+    storedAt: stored?.fetchedAt || null,
+    answer: formatMultiSourceAnswer(sources, { storedAt: stored?.fetchedAt })
   });
 });
 apiRouter.get("/currency/alerts/status", (_req, res) => {
@@ -5870,33 +6206,10 @@ var ratesBlockForPrompt = (snapshot) => {
     const label = r.code === "USD" ? "\u062F\u0648\u0644\u0627\u0631 \u0623\u0645\u0631\u064A\u0643\u064A" : r.code === "SAR" ? "\u0631\u064A\u0627\u0644 \u0633\u0639\u0648\u062F\u064A" : r.code === "AED" ? "\u062F\u0631\u0647\u0645 \u0625\u0645\u0627\u0631\u0627\u062A\u064A" : r.code === "EUR" ? "\u064A\u0648\u0631\u0648" : r.code === "EGP" ? "\u062C\u0646\u064A\u0647 \u0645\u0635\u0631\u064A" : r.code === "QAR" ? "\u0631\u064A\u0627\u0644 \u0642\u0637\u0631\u064A" : r.code;
     return `- ${label} (${r.code}): ${parallel} \u062C.\u0633${bank}`;
   });
-  const when = snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toLocaleString("ar-SD") : "";
-  return `\u0627\u0644\u0645\u0635\u062F\u0631: ${snapshot.source || "\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A"} \u2014 \u0622\u062E\u0631 \u062A\u062D\u062F\u064A\u062B: ${when}
+  const when = snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toLocaleString("ar-SD", { timeZone: "Africa/Khartoum" }) : "";
+  const age = describeAgeAr(snapshot.fetchedAt);
+  return `\u0627\u0644\u0645\u0635\u062F\u0631: ${snapshot.source || "\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A"} \u2014 \u062A\u0645 \u0633\u062D\u0628 \u0627\u0644\u0642\u0631\u0627\u0621\u0629 \u0645\u0646 \u0627\u0644\u0645\u0648\u0642\u0639: ${age}` + (when ? ` (${when})` : "") + `
 ${lines.join("\n")}`;
-};
-var AR_NAMES = {
-  USD: "\u0627\u0644\u062F\u0648\u0644\u0627\u0631 \u0627\u0644\u0623\u0645\u0631\u064A\u0643\u064A",
-  SAR: "\u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0633\u0639\u0648\u062F\u064A",
-  AED: "\u0627\u0644\u062F\u0631\u0647\u0645 \u0627\u0644\u0625\u0645\u0627\u0631\u0627\u062A\u064A",
-  EUR: "\u0627\u0644\u064A\u0648\u0631\u0648",
-  EGP: "\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0645\u0635\u0631\u064A",
-  QAR: "\u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0642\u0637\u0631\u064A",
-  TRY: "\u0627\u0644\u0644\u064A\u0631\u0629 \u0627\u0644\u062A\u0631\u0643\u064A\u0629",
-  GBP: "\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0625\u0633\u062A\u0631\u0644\u064A\u0646\u064A"
-};
-var formatRatesAnswer = (snapshot) => {
-  if (!snapshot?.rates?.length) return null;
-  const lines = snapshot.rates.filter((r) => r.parallel || r.official).map((r) => {
-    const price = (r.parallel ?? r.official).toLocaleString("en-US");
-    const bank = r.official ? ` (\u0627\u0644\u0628\u0646\u0643: ${r.official.toLocaleString("en-US")})` : "";
-    return `\u2022 ${AR_NAMES[r.code] || r.code}: ${price} \u062C.\u0633${bank}`;
-  });
-  const when = snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toLocaleString("ar-SD") : "";
-  return `\u062D\u0628\u0627\u0628\u0643 \u{1F44B} \u062F\u064A \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A (\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0623\u0633\u0648\u062F) \u0627\u0644\u062D\u0627\u0644\u064A\u0629:
-${lines.join("\n")}
-
-\u0627\u0644\u0645\u0635\u062F\u0631: ${snapshot.source} \u2014 \u0622\u062E\u0631 \u062A\u062D\u062F\u064A\u062B: ${when}.
-\u0627\u0644\u0633\u0639\u0631 \u0627\u0644\u0631\u0633\u0645\u064A \u0644\u0644\u0628\u0646\u0643 \u0623\u0642\u0644 \u0645\u0646 \u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A\u060C \u0648\u0627\u0644\u062A\u0639\u0627\u0645\u0644 \u0641\u064A \u0627\u0644\u0633\u0648\u062F\u0627\u0646 \u0628\u064A\u0645\u0634\u064A \u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642.`;
 };
 function buildSystemInstruction(mode, context) {
   const now = /* @__PURE__ */ new Date();
@@ -5927,8 +6240,10 @@ ${context?.liveRates ? ratesBlockForPrompt(context.liveRates) : "\u0644\u0627 \u
 
 \u0642\u0648\u0627\u0639\u062F \u0635\u0627\u0631\u0645\u0629 \u0639\u0646\u062F \u0627\u0644\u0633\u0624\u0627\u0644 \u0639\u0646 \u0627\u0644\u0623\u0633\u0639\u0627\u0631:
 - \u0627\u0644\u0633\u0639\u0631 \u0627\u0644\u0631\u0633\u0645\u064A \u0644\u0644\u0628\u0646\u0643 \u2260 \u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642. \u0627\u0644\u0646\u0627\u0633 \u0641\u064A \u0627\u0644\u0633\u0648\u062F\u0627\u0646 \u0628\u062A\u062A\u0639\u0627\u0645\u0644 \u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A\u060C \u0641\u0627\u0630\u0643\u0631 \u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0623\u0648\u0644\u0627\u064B \u0648\u0628\u062E\u0637 \u0648\u0627\u0636\u062D.
-- \u0627\u0630\u0643\u0631 \u062A\u0627\u0631\u064A\u062E/\u0648\u0642\u062A \u0622\u062E\u0631 \u062A\u062D\u062F\u064A\u062B\u060C \u0648\u0644\u0648 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0642\u062F\u064A\u0645\u0629 \u0646\u0628\u0651\u0647 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645.
-- \u0644\u0648 \u0645\u0627 \u0641\u064A \u0628\u064A\u0627\u0646\u0627\u062A \u062D\u062F\u064A\u062B\u0629: \u0642\u0644 \u0628\u0635\u0631\u0627\u062D\u0629 \u0625\u0646 \u0627\u0644\u0645\u0635\u062F\u0631 \u0645\u0634 \u0645\u062A\u0627\u062D \u0647\u0633\u064A\u060C \u0648\u0645\u0627 \u062A\u062E\u062A\u0631\u0639 \u0633\u0639\u0631 \u0645\u0646 \u0631\u0627\u0633\u0643 \u0623\u0628\u062F\u0627\u064B.
+- \u0639\u0645\u0631 \u0627\u0644\u0642\u0631\u0627\u0621\u0629 \u0645\u0643\u062A\u0648\u0628 \u0641\u0648\u0642 (\xAB\u062A\u0645 \u0633\u062D\u0628 \u0627\u0644\u0642\u0631\u0627\u0621\u0629: \u0642\u0628\u0644 \u0643\u0630\u0627\xBB). **\u0645\u0627 \u062A\u0642\u0648\u0644 \u0623\u0628\u062F\u0627\u064B \xAB\u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u062D\u0642\u062A \u0627\u0644\u064A\u0648\u0645/\u0627\u0644\u0644\u064A\u0644\u0629\xBB** \u0644\u0648 \u0627\u0644\u0639\u0645\u0631 \u0623\u0643\u062B\u0631 \u0645\u0646 \u0631\u0628\u0639 \u0633\u0627\u0639\u0629 \u2014 \u0642\u0644 \u0627\u0644\u0639\u0645\u0631 \u0627\u0644\u062D\u0642\u064A\u0642\u064A \u0632\u064A \u0645\u0627 \u0647\u0648.
+- \u0644\u0648 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0642\u0627\u0644 \xAB\u0627\u0644\u0633\u0639\u0631 \u0642\u062F\u064A\u0645\xBB: \u0637\u0627\u0628\u0642\u0647 \u0628\u0627\u0644\u0648\u0627\u0642\u0639 \u2014 \u0644\u0648 \u0627\u0644\u0631\u0642\u0645 \u0646\u0641\u0633\u0647 \u0645\u0627 \u0627\u062A\u063A\u064A\u0651\u0631 \u0641\u064A \u0627\u0644\u0645\u0635\u062F\u0631\u060C \u0642\u0648\u0644 \u0644\u064A\u0647 \u0628\u0635\u0631\u0627\u062D\u0629 \u0625\u0646 \u0627\u0644\u0633\u0648\u0642 \u0645\u0627 \u062A\u062D\u0631\u0651\u0643 \u0641\u064A \u0627\u0644\u0645\u0635\u062F\u0631 \u0645\u0646 \u0622\u062E\u0631 \u0642\u0631\u0627\u0621\u0629\u060C \u0648\u0625\u0646 \u0627\u0644\u0631\u0642\u0645 \u0647\u0648 \u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u062D\u0627\u0644\u064A \u0641\u0639\u0644\u0627\u064B\u061B \u0648\u0645\u0627 \u062A\u062F\u0651\u0639\u064A \u0625\u0646\u0643 \u062D\u062F\u0651\u062B\u062A \u0644\u0648 \u0645\u0627 \u0641\u064A \u062A\u063A\u064A\u064A\u0631.
+- \u0627\u0644\u0645\u0646\u0635\u0629 \u0628\u062A\u0642\u0631\u0623 **\u0645\u0635\u062F\u0631\u064A\u0646**: \u0633\u0648\u0642 \u0627\u0644\u0633\u0648\u062F\u0627\u0646 (alsoug.com) \u0648**\u0623\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646 (sudanakhbar.com)**. \u0644\u0648 \u0633\u0623\u0644 \u0639\u0646 \xAB\u0623\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\xBB \u0623\u0648 \u0627\u0644\u0645\u0635\u062F\u0631\u064A\u0646\u060C \u0627\u0644\u0645\u0646\u0635\u0629 \u0628\u062A\u062C\u064A\u0628\u0647\u0645 \u0641\u0639\u0644\u064A\u0627\u064B \u2014 **\u0645\u0627 \u062A\u0642\u0648\u0644 \u0623\u0628\u062F\u0627\u064B \xAB\u0645\u0627 \u0639\u0646\u062F\u064A \u0648\u0635\u0648\u0644\xBB**.
+- \u0644\u0648 \u0645\u0627 \u0641\u064A \u0628\u064A\u0627\u0646\u0627\u062A \u062D\u062F\u064A\u062B\u0629 \u0623\u0635\u0644\u0627\u064B: \u0642\u0644 \u0628\u0635\u0631\u0627\u062D\u0629 \u0625\u0646 \u0627\u0644\u0645\u0635\u062F\u0631 \u0645\u0634 \u0645\u062A\u0627\u062D \u0647\u0633\u064A\u060C \u0648\u0645\u0627 \u062A\u062E\u062A\u0631\u0639 \u0633\u0639\u0631 \u0645\u0646 \u0631\u0627\u0633\u0643 \u0623\u0628\u062F\u0627\u064B.
 - \u0644\u0648 \u0633\u0623\u0644 \u0639\u0646 \u0645\u0628\u0644\u063A (\u0645\u062B\u0644\u0627\u064B \xAB100 \u062F\u0648\u0644\u0627\u0631 \u0643\u0645 \u0628\u0627\u0644\u062C\u0646\u064A\u0647\u061F\xBB) \u0627\u062D\u0633\u0628 \u0628\u0627\u0644\u0636\u0631\u0628 \u0641\u064A \u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A.
 - \u0627\u062E\u062A\u0635\u0631: \u0633\u0639\u0631\u060C \u0645\u0635\u062F\u0631\u060C \u0648\u0642\u062A\u060C \u0648\u0646\u0635\u064A\u062D\u0629 \u0633\u0637\u0631 \u0648\u0627\u062D\u062F.
 
@@ -5982,13 +6297,12 @@ async function geminiGenerate(opts) {
   }
   return { text: null, error: lastError };
 }
+var SOURCE_ALIASES_PRIMARY = /alsoug|سوق\s*السودان|البديل/i;
+var SOURCE_ALIASES_BACKUP = /أخبار\s*السودان|اخبار\s*السودان|سودان\s*أخبار|sudanakhbar/i;
 apiRouter.post("/assistant/chat", async (req, res) => {
   const { message, mode, context, history } = req.body || {};
   if (!message || typeof message !== "string" || !message.trim()) {
     return res.status(400).json({ error: "\u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u0645\u0637\u0644\u0648\u0628\u0629" });
-  }
-  if (!GEMINI_KEY()) {
-    return res.json({ reply: null, reason: "NO_API_KEY" });
   }
   const turns = Array.isArray(history) ? history.filter((h) => h && typeof h.text === "string" && h.text.trim()).slice(-8).map((h) => ({
     role: h.sender === "user" ? "user" : "model",
@@ -5997,17 +6311,37 @@ apiRouter.post("/assistant/chat", async (req, res) => {
   turns.push({ role: "user", parts: [{ text: message.slice(0, 3e3) }] });
   try {
     let liveRates = db.getRatesSnapshot();
-    const asksAboutRates = /سعر|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|عملة|عملات|صرف|تحويل/i.test(message);
+    const asksAboutRates = isRateQuery(message);
+    const wantsSources = asksForSources(message);
+    if (asksAboutRates && wantsSources) {
+      const sources = await fetchAllSources().catch(() => []);
+      const prefersBackup = SOURCE_ALIASES_BACKUP.test(message) && !SOURCE_ALIASES_PRIMARY.test(message);
+      const ordered = prefersBackup ? [...sources].sort((a) => a.source.includes("sudanakhbar") ? -1 : 1) : sources;
+      const answer = formatMultiSourceAnswer(ordered, {
+        storedAt: db.getRatesSnapshot()?.fetchedAt
+      });
+      return res.json({
+        reply: answer,
+        model: "rates-multi-source",
+        sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt }))
+      });
+    }
     if (asksAboutRates) {
       const hours = liveRates?.fetchedAt ? ageHours(liveRates.fetchedAt) : null;
-      if (hours === null || hours >= 1) {
+      if (hours === null || hours >= 0.25) {
         try {
+          const previousAt = liveRates?.fetchedAt;
+          const prevUsd = liveRates?.rates?.find((r) => r.code === "USD")?.parallel ?? null;
           const snapshot = await fetchLiveRates();
           if (snapshot) {
+            const curUsd = snapshot.rates.find((r) => r.code === "USD")?.parallel ?? null;
+            liveRates = snapshot;
             db.applyLiveRates(snapshot, "\u0627\u0644\u0645\u0633\u0627\u0639\u062F \u0627\u0644\u0630\u0643\u064A");
             await db.flush({ lock: false }).catch(() => {
             });
             liveRates = db.getRatesSnapshot();
+            liveRates.__changed = prevUsd === null || curUsd === null ? null : prevUsd !== curUsd;
+            liveRates.__previousAt = previousAt;
           }
         } catch {
         }
@@ -6017,6 +6351,17 @@ apiRouter.post("/assistant/chat", async (req, res) => {
       ...context || {},
       liveRates: asksAboutRates ? liveRates : void 0
     };
+    if (!GEMINI_KEY()) {
+      const cached = db.getRatesSnapshot();
+      if (asksAboutRates) {
+        const offline = formatRatesAnswer(cached, {
+          changed: liveRates?.__changed ?? null,
+          previousAt: liveRates?.__previousAt
+        });
+        if (offline) return res.json({ reply: offline, model: "rates-live" });
+      }
+      return res.json({ reply: null, reason: "NO_API_KEY" });
+    }
     const result = await geminiGenerate({
       models: ASSISTANT_MODELS,
       contents: turns,
@@ -6030,7 +6375,10 @@ apiRouter.post("/assistant/chat", async (req, res) => {
     }
     console.warn("[assistant] failed:", result.error);
     if (asksAboutRates) {
-      const offline = formatRatesAnswer(liveRates);
+      const offline = formatRatesAnswer(liveRates, {
+        changed: liveRates?.__changed ?? null,
+        previousAt: liveRates?.__previousAt
+      });
       if (offline) return res.json({ reply: offline, model: "rates-cache" });
     }
     return res.json({ reply: null, reason: "FALLBACK", detail: result.error });

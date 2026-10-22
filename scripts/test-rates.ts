@@ -76,5 +76,93 @@ ok('/currencies flags the source', usdApi?.rateSource === 'parallel');
 ok('SDG stays 1', (curr.body?.currencies || []).find((c: any) => c.code === 'SDG')?.rateToSdg === 1);
 server2.close();
 
+/* ------------------------------------------------------------------ */
+/*  Answers: honesty about age + both-source questions                 */
+/* ------------------------------------------------------------------ */
+console.log('\n=== answer wording ===');
+const {
+  describeAgeAr,
+  isRateQuery,
+  asksForSources,
+  sourcesWanted,
+  formatRatesAnswer,
+  formatMultiSourceAnswer,
+} = await import('../src/server/rateAnswer.ts');
+
+const t0 = Date.parse('2026-10-22T09:00:00Z');
+ok('age in minutes', describeAgeAr('2026-10-22T08:57:00Z', t0) === 'قبل ٣ دقيقة', describeAgeAr('2026-10-22T08:57:00Z', t0));
+ok('age in hours', /قبل .*ساع/.test(describeAgeAr('2026-10-22T05:00:00Z', t0)));
+ok('age in days', /قبل .*أيام|قبل يوم/.test(describeAgeAr('2026-10-19T09:00:00Z', t0)), describeAgeAr('2026-10-19T09:00:00Z', t0));
+ok('one day says «قبل يوم»', describeAgeAr('2026-10-21T09:00:00Z', t0) === 'قبل يوم', describeAgeAr('2026-10-21T09:00:00Z', t0));
+ok('unknown age is honest', describeAgeAr(undefined) === 'غير معروف');
+
+ok('detects a rate question', isRateQuery('سعر الدولار اليوم كم؟'));
+ok('detects sudanakhbar by name', isRateQuery('شوف الأسعار علي أخبار السودان'));
+ok('asksForSources on sudanakhbar', asksForSources('شوف الأسعار علي أخبار السودان'));
+ok('asksForSources on comparison', asksForSources('قارن المصدرين'));
+ok('plain rate query stays single-source', sourcesWanted('سعر الدولار اليوم') === 'primary-first');
+ok('sudanakhbar alone → backup', sourcesWanted('أسعار أخبار السودان') === 'backup');
+ok('both when comparing', sourcesWanted('قارن أسعار المصدرين') === 'both');
+
+const snapA = {
+  rates: [
+    { code: 'USD', official: 4886.38, parallel: 10386 },
+    { code: 'SAR', official: 1313.55, parallel: 2740 },
+  ],
+  source: 'سوق السودان (alsoug.com)',
+  sourceUrl: 'https://www.alsoug.com/currency',
+  fetchedAt: '2026-10-22T08:57:00Z',
+  stale: false,
+};
+const single = formatRatesAnswer(snapA, { changed: false, previousAt: '2026-10-21T18:48:00Z' });
+ok('single answer keeps the parallel price', /10,386/.test(single));
+ok('single answer states the reading age', /تم سحب القراءة من الموقع: قبل/.test(single));
+ok('unchanged price is stated honestly', /ما اتغيّرت/.test(single));
+ok('no false "today" claim', !/حقت الليلة|أسعار اليوم/.test(single));
+
+const snapB = { ...snapA, source: 'اخبار السودان (sudanakhbar.com)', fetchedAt: '2026-10-22T08:59:00Z' };
+const multi = formatMultiSourceAnswer([snapA, snapB], { storedAt: '2026-10-21T18:48:00Z' });
+ok('multi answer names alsoug', /alsoug/.test(multi));
+ok('multi answer names sudanakhbar', /sudanakhbar/.test(multi));
+ok('multi answer compares the sources', /مقارنة سريعة|متطابقين|فرق/.test(multi));
+ok('multi answer reports each reading age', (multi.match(/سحب القراءة/g) || []).length === 2);
+ok('empty result never invents a price', !/10,386/.test(formatMultiSourceAnswer([])));
+
+
+/* ------------------------------------------------------------------ */
+/*  sudanakhbar article parser (the text-only source)                  */
+/* ------------------------------------------------------------------ */
+console.log('\n=== sudanakhbar article parser ===');
+const { parseSudanAkhbarArticle, parseArabicPublishedAt } = await import('../src/server/rates.ts');
+
+const article = `
+<div class="post-content"><h1>ارتفاع جنوني.. سعر الدولار في السودان اليوم الخميس 22 اكتوبر 2026م</h1>
+<p>مصدر الخبر فريق التحرير 22 أكتوبر، 2026 - 8:12 صباحًا</p>
+<p>الدولار الأميركي 10200 جنيه للشراء و10393.1747 جنيه للبيع، بينما بلغ سعر الريال السعودي 2719.2749 جنيه للشراء و2770.7744 جنيه للبيع.</p>
+<p>متوسط اسعار العملات في السودان في السوق الموازي</p>
+<p>الدولار الامريكي 10200 جنيها ( ارتفاع سعر متوسط ) الريال السعودي 2719.2749 جنيها ( ارتفاع سعر متوسط )
+الدرهم الاماراتي 2777.3997 جنيها ( ارتفاع سعر متوسط ) اليورو 11458.0991 جنيها ( ارتفاع سعر متوسط )
+الجنيه الاسترليني 13662.3000 جنيها ( ارتفاع سعر متوسط ) الجنية المصري 187.7416 جنيها ( ارتفاع سعر متوسط )
+الريال القطري 2802.1977 جنيها ( ارتفاع سعر متوسط )</p></div>`;
+
+const parsedArticle = parseSudanAkhbarArticle(article);
+const byCode = (code: string) => parsedArticle.rates.find((r) => r.code === code)?.parallel;
+ok('reads the dollar', byCode('USD') === 10393.1747, String(byCode('USD')));
+ok('reads the riyal', byCode('SAR') === 2770.7744, String(byCode('SAR')));
+ok('reads the dirham', byCode('AED') === 2777.3997, String(byCode('AED')));
+ok('reads the euro', byCode('EUR') === 11458.0991, String(byCode('EUR')));
+ok('reads the egyptian pound', byCode('EGP') === 187.7416, String(byCode('EGP')));
+ok('reads the qatari riyal', byCode('QAR') === 2802.1977, String(byCode('QAR')));
+ok('prefers the selling price over the buying price', byCode('USD') !== 10200);
+ok('extracts the article publish time', !!parsedArticle.publishedAt, String(parsedArticle.publishedAt));
+ok(
+  'publish time is Khartoum 08:12 → 06:12Z',
+  parsedArticle.publishedAt === '2026-10-22T06:12:00.000Z',
+  String(parsedArticle.publishedAt)
+);
+ok('keeps the headline', /ارتفاع جنوني/.test(parsedArticle.title || ''));
+ok('no rates invented from empty html', parseSudanAkhbarArticle('<html><body>لا شيء</body></html>').rates.length === 0);
+ok('date parser ignores junk', parseArabicPublishedAt('لا يوجد تاريخ') === undefined);
+
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);
 process.exit(fail ? 1 : 0);

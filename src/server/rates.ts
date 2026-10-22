@@ -24,6 +24,10 @@ export interface LiveRatesSnapshot {
   fetchedAt: string;
   /** true when the fetch failed and these numbers came from an older snapshot */
   stale: boolean;
+  /** When the *source itself* says the table was published (articles only). */
+  sourceUpdatedAt?: string;
+  /** Headline of the article the numbers were taken from. */
+  sourceTitle?: string;
 }
 
 const SOURCE_URL = 'https://www.alsoug.com/currency';
@@ -97,6 +101,149 @@ export const parseAlsougRates = (html: string): LiveRate[] => {
   return out;
 };
 
+/* ------------------------------------------------------------------ */
+/*  sudanakhbar.com — rates live inside a daily article, not a table    */
+/* ------------------------------------------------------------------ */
+
+const AR_MONTHS: Record<string, number> = {
+  يناير: 0, فبراير: 1, مارس: 2, ابريل: 3, أبريل: 3, مايو: 4, يونيو: 5,
+  يوليو: 6, اغسطس: 7, أغسطس: 7, سبتمبر: 8, اكتوبر: 9, أكتوبر: 9,
+  نوفمبر: 10, ديسمبر: 11,
+};
+
+/** "22 أكتوبر، 2026 - 8:12 صباحاً" → ISO string (UTC, Khartoum = UTC+2). */
+export const parseArabicPublishedAt = (text: string): string | undefined => {
+  const m = text.match(
+    /(\d{1,2})\s+([\u0600-\u06FF]{3,10})\s*[،,]?\s*(\d{4})\s*(?:-|—|\|)?\s*(\d{1,2})[:.](\d{2})?\s*(صباح|مساء|ص|م)?/
+  );
+  if (!m) return undefined;
+  const day = Number(m[1]);
+  const month = AR_MONTHS[m[2].replace(/[^\u0621-\u064A]/g, '')];
+  const year = Number(m[3]);
+  if (month === undefined || !day || !year) return undefined;
+  let hour = Number(m[4] || 0);
+  const minute = Number(m[5] || 0);
+  const meridiem = m[6] || '';
+  if ((meridiem === 'مساء' || meridiem === 'م') && hour < 12) hour += 12;
+  if ((meridiem === 'صباح' || meridiem === 'ص') && hour === 12) hour = 0;
+  // Sudan is UTC+2 year-round
+  const utc = Date.UTC(year, month, day, hour - 2, minute);
+  return new Date(utc).toISOString();
+};
+
+/** Strips tags to plain text so an article body can be scanned. */
+const htmlToText = (html: string): string =>
+  html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const AR_LABEL_TO_CODE: Array<{ re: RegExp; code: string }> = [
+  // NB: all groups are non-capturing — the captured number must stay at index 1
+  { re: /الدولار\s*(?:الأمريكي|الامريكي|الاميركي|الأميركي)/i, code: 'USD' },
+  { re: /الريال\s*السعودي/i, code: 'SAR' },
+  { re: /الدرهم\s*(?:الإماراتي|الاماراتي)/i, code: 'AED' },
+  { re: /اليورو/i, code: 'EUR' },
+  { re: /(?:الجنيه|الجنية)\s*(?:المصري|المصرى)/i, code: 'EGP' },
+  { re: /الريال\s*القطري/i, code: 'QAR' },
+  { re: /(?:الجنيه|الجنية)\s*(?:الإسترليني|الاسترليني|الاسترلينى)/i, code: 'GBP' },
+  { re: /الريال\s*العماني/i, code: 'OMR' },
+  { re: /الدينار\s*الكويتي/i, code: 'KWD' },
+];
+
+/**
+ * Reads the «متوسط اسعار العملات في السوق الموازي» block of a Sudan Akhbar
+ * article. Every currency is taken from the first plausible number that
+ * follows its name (the article repeats itself in several tables, the first
+ * one is the headline table of the day).
+ */
+export const parseSudanAkhbarArticle = (
+  html: string
+): { rates: LiveRate[]; publishedAt?: string; title?: string } => {
+  const text = htmlToText(html);
+  const title = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Prefer the block that explicitly says «السوق الموازي»; fall back to all text.
+  const blockStart = text.search(/متوسط\s*(اسعار|أسعار)\s*العملات/i);
+  const scope = blockStart >= 0 ? text.slice(blockStart) : text;
+
+  const rates: LiveRate[] = [];
+  const seen = new Set<string>();
+
+  const NUM = '([0-9][0-9,]{2,}(?:\\.[0-9]+)?)';
+  /**
+   * Ordered candidates — the first plausible value wins.
+   * `pick` says which capture group holds the price we want (2 = the selling
+   * price in «X جنيه للشراء وY جنيه للبيع»).
+   */
+  const patternsFor = (source: string): Array<{ re: RegExp; pick: number }> => [
+    {
+      // «10200 جنيه للشراء و10393.1747 جنيه للبيع» → the sell price
+      re: new RegExp(
+        source + `\\s*(?:جنيه[اً]?)?\\s*${NUM}\\s*(?:جنيه[اً]?)?\\s*للشراء\\s*و\\s*${NUM}\\s*(?:جنيه[اً]?)?\\s*للبيع`,
+        'i'
+      ),
+      pick: 2,
+    },
+    {
+      // «10200 و10393 للبيع»
+      re: new RegExp(
+        source + `\\s*(?:جنيه[اً]?)?\\s*${NUM}\\s*(?:جنيه[اً]?)?\\s*و\\s*${NUM}\\s*(?:جنيه[اً]?)?\\s*للبيع`,
+        'i'
+      ),
+      pick: 2,
+    },
+    {
+      // «10393.1747 ( ارتفاع سعر متوسط )» → the market average table
+      re: new RegExp(source + `\\s*${NUM}\\s*\\(\\s*(?:ارتفاع|انخفاض)`),
+      pick: 1,
+    },
+    {
+      // «13662.3000 جنيهاً للبيع»
+      re: new RegExp(source + `\\s*${NUM}\\s*(?:جنيه[اً]?)?\\s*للبيع`),
+      pick: 1,
+    },
+    {
+      // plain «الدولار الامريكي 10200 جنيها»
+      re: new RegExp(source + `\\s*${NUM}`),
+      pick: 1,
+    },
+  ];
+
+  for (const { re, code } of AR_LABEL_TO_CODE) {
+    if (seen.has(code)) continue;
+    let value: number | null = null;
+
+    for (const { re: candidate, pick } of patternsFor(re.source)) {
+      const m = scope.match(candidate) || text.match(candidate);
+      if (!m) continue;
+      const parsedValue = toNumber(m[pick] ?? m[1]);
+      // A sane parallel price is 100 … 1,500,000 SDG
+      if (parsedValue === null || parsedValue < 100 || parsedValue >= 1_500_000) continue;
+      value = parsedValue;
+      break;
+    }
+
+    if (value === null) continue;
+    rates.push({ code, official: null, parallel: value });
+    seen.add(code);
+  }
+
+  // The article date is the only trustworthy "when did the market move" signal
+  const publishedAt =
+    parseArabicPublishedAt(text.slice(0, Math.max(400, text.indexOf('مصدر الخبر') + 200))) ||
+    parseArabicPublishedAt(text);
+
+  return { rates, publishedAt, title: title || undefined };
+};
+
 /** Browser-like headers — the site answers 403 to plain bots. */
 const BROWSER_HEADERS = {
   'User-Agent':
@@ -114,41 +261,62 @@ const BROWSER_HEADERS = {
  */
 const SUDANAKHBAR_HOME = 'https://www.sudanakhbar.com/business-news/currency-rates-prices';
 
-const fetchSudanAkhbarRates = async (): Promise<LiveRate[]> => {
+/**
+ * Reads today's Sudan Akhbar parallel-market article.
+ * Returns the rates plus the article's own publish time — the only signal we
+ * have for "when did the market actually move" on that site.
+ */
+export const fetchSudanAkhbarArticle = async (): Promise<{
+  rates: LiveRate[];
+  publishedAt?: string;
+  title?: string;
+  url?: string;
+} | null> => {
   try {
     const c1 = new AbortController();
-    const t1 = setTimeout(() => c1.abort(), 8000);
+    const t1 = setTimeout(() => c1.abort(), 9000);
     const listing = await fetch(SUDANAKHBAR_HOME, { signal: c1.signal, headers: BROWSER_HEADERS });
     clearTimeout(t1);
-    if (!listing.ok) return [];
+    if (!listing.ok) return null;
     const html = await listing.text();
 
-    // newest article that mentions the parallel market
-    const linkRe = /href="(https:\/\/www\.sudanakhbar\.com\/\d{6,})"[^>]*>([^<]{10,160})</g;
-    let best: string | null = null;
+    // Newest article that mentions the parallel market (listing is newest-first)
+    const linkRe = /href="(https:\/\/www\.sudanakhbar\.com\/\d{6,})"[^>]*>([^<]{10,200})</g;
+    const candidates: { url: string; title: string }[] = [];
     let m: RegExpExecArray | null;
     while ((m = linkRe.exec(html))) {
-      if (/السوق السوداء|الموازي/.test(m[2])) {
-        best = m[1];
-        break;
+      if (/السوق السوداء|الموازي|سعر الدولار|العملات/.test(m[2])) {
+        candidates.push({ url: m[1], title: m[2].trim() });
+        if (candidates.length >= 3) break;
       }
     }
-    if (!best) return [];
+    if (!candidates.length) return null;
 
-    const c2 = new AbortController();
-    const t2 = setTimeout(() => c2.abort(), 8000);
-    const article = await fetch(best, { signal: c2.signal, headers: BROWSER_HEADERS });
-    clearTimeout(t2);
-    if (!article.ok) return [];
+    for (const candidate of candidates) {
+      const c2 = new AbortController();
+      const t2 = setTimeout(() => c2.abort(), 9000);
+      const article = await fetch(candidate.url, { signal: c2.signal, headers: BROWSER_HEADERS });
+      clearTimeout(t2);
+      if (!article.ok) continue;
 
-    const body = await article.text();
-    if (!/السوق السوداء|الموازي/.test(body)) return [];
-    const rates = parseAlsougRates(body);
-    // Only trust it when every rate looked like a plausible SDG value
-    return rates.filter((r) => r.parallel !== null && r.parallel >= 100);
+      const parsed = parseSudanAkhbarArticle(await article.text());
+      if (parsed.rates.length < 3) continue;
+      return {
+        rates: parsed.rates,
+        publishedAt: parsed.publishedAt,
+        title: parsed.title || candidate.title,
+        url: candidate.url,
+      };
+    }
+    return null;
   } catch {
-    return [];
+    return null;
   }
+};
+
+export const fetchSudanAkhbarRates = async (): Promise<LiveRate[]> => {
+  const article = await fetchSudanAkhbarArticle();
+  return article ? article.rates.filter((r) => r.parallel !== null && r.parallel >= 100) : [];
 };
 
 /** Fetch the live page and parse it. Never throws. */
@@ -189,6 +357,56 @@ export const fetchLiveRates = async (): Promise<LiveRatesSnapshot | null> => {
   }
 
   return null;
+};
+
+/** The backup source as a full snapshot (same shape as the primary). */
+export const fetchSudanAkhbarSnapshot = async (): Promise<LiveRatesSnapshot | null> => {
+  const article = await fetchSudanAkhbarArticle();
+  if (!article?.rates.length) return null;
+  return {
+    rates: article.rates.filter((r) => r.parallel !== null && (r.parallel as number) >= 100),
+    source: BACKUP_SOURCE_NAME,
+    sourceUrl: article.url || SUDANAKHBAR_HOME,
+    fetchedAt: new Date().toISOString(),
+    stale: false,
+    sourceUpdatedAt: article.publishedAt,
+    sourceTitle: article.title,
+  };
+};
+
+/** The primary source only (no silent fallback) — used by «قارن المصدرين». */
+export const fetchAlsougSnapshot = async (): Promise<LiveRatesSnapshot | null> => {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 9000);
+    const res = await fetch(SOURCE_URL, { signal: controller.signal, headers: BROWSER_HEADERS });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const rates = parseAlsougRates(await res.text());
+    if (!rates.length) return null;
+    return {
+      rates,
+      source: SOURCE_NAME,
+      sourceUrl: SOURCE_URL,
+      fetchedAt: new Date().toISOString(),
+      stale: false,
+    };
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Reads both published sources in parallel and returns whatever answered.
+ * Used when the shopper asks for «أخبار السودان» or wants a comparison, so the
+ * assistant never has to say «ما عندي وصول».
+ */
+export const fetchAllSources = async (): Promise<LiveRatesSnapshot[]> => {
+  const [primary, backup] = await Promise.all([
+    fetchAlsougSnapshot().catch(() => null),
+    fetchSudanAkhbarSnapshot().catch(() => null),
+  ]);
+  return [primary, backup].filter(Boolean) as LiveRatesSnapshot[];
 };
 
 /** Readings older than this are flagged so nobody trades on an old number. */

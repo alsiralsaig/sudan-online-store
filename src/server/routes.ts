@@ -1,6 +1,23 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
-import { fetchLiveRates, ageHours, isStale, RATES_SOURCE } from './rates.ts';
+import {
+  fetchLiveRates,
+  fetchAllSources,
+  fetchSudanAkhbarSnapshot,
+  fetchAlsougSnapshot,
+  ageHours,
+  isStale,
+  RATES_SOURCE,
+} from './rates.ts';
+import {
+  AR_NAMES,
+  describeAgeAr,
+  formatRatesAnswer,
+  formatMultiSourceAnswer,
+  isRateQuery,
+  asksForSources,
+  sourcesWanted,
+} from './rateAnswer.ts';
 import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
 import { newId, newCode } from './ids.ts';
@@ -1584,17 +1601,61 @@ apiRouter.post('/admin/currency/refresh', async (req, res) => {
   res.json({ success: true, ...result });
 });
 
-/** Instant rate answer for the assistant (text; the client can also speak it). */
-apiRouter.get('/assistant/rates', async (_req, res) => {
-  let snapshot = db.getRatesSnapshot();
+/**
+ * Instant rate answer for the assistant (text; the client can also speak it).
+ *
+ * Query params:
+ *   source=all|primary|backup   → read the named source(s) live
+ *   fresh=1                     → force a fetch even if the cache is minutes old
+ *   q=<question>                → lets the server pick the right sources itself
+ */
+apiRouter.get('/assistant/rates', async (req, res) => {
+  const q = String((req.query.q as string) || '');
+  const wanted = (req.query.source as string) || (q ? sourcesWanted(q) : 'primary-first');
+  const force = req.query.fresh === '1' || req.query.fresh === 'true';
+  const storedBefore = db.getRatesSnapshot();
+
+  // «فين الأسعار في أخبار السودان؟» / «قارن المصدرين» → read both, live.
+  if (wanted === 'both' || wanted === 'backup') {
+    const sources = await fetchAllSources().catch(() => []);
+    const picked =
+      wanted === 'backup' ? sources.filter((s) => s.source.includes('sudanakhbar')) : sources;
+    const answer = formatMultiSourceAnswer(picked.length ? picked : sources, {
+      storedAt: storedBefore?.fetchedAt,
+    });
+    return res.json({
+      snapshot: storedBefore,
+      sources: (sources.length ? sources : []).map((s) => ({
+        name: s.source,
+        url: s.sourceUrl,
+        fetchedAt: s.fetchedAt,
+        rates: s.rates,
+      })),
+      stale: false,
+      answer,
+    });
+  }
+
+  let snapshot = storedBefore;
   const hours = snapshot?.fetchedAt ? ageHours(snapshot.fetchedAt) : null;
-  if (hours === null || hours >= 1) {
+  if (force || hours === null || hours >= 0.25) {
     try {
       const fresh = await fetchLiveRates();
       if (fresh) {
+        const previous = snapshot?.rates?.find((r: any) => r.code === 'USD')?.parallel ?? null;
+        const current = fresh.rates.find((r) => r.code === 'USD')?.parallel ?? null;
+        const changed = previous === null || current === null ? null : previous !== current;
         db.applyLiveRates(fresh, 'المساعد الذكي');
         await db.flush({ lock: false }).catch(() => {});
         snapshot = db.getRatesSnapshot();
+        const answer = formatRatesAnswer(snapshot, { changed, previousAt: storedBefore?.fetchedAt });
+        return res.json({
+          snapshot,
+          stale: snapshot ? isStale(snapshot.fetchedAt) : true,
+          age: describeAgeAr(snapshot?.fetchedAt),
+          changed,
+          answer,
+        });
       }
     } catch {
       /* use the cache */
@@ -1603,7 +1664,26 @@ apiRouter.get('/assistant/rates', async (_req, res) => {
   res.json({
     snapshot,
     stale: snapshot ? isStale(snapshot.fetchedAt) : true,
+    age: describeAgeAr(snapshot?.fetchedAt),
     answer: formatRatesAnswer(snapshot),
+  });
+});
+
+/** Both published sources, read live — what the «قارن المصدرين» button calls. */
+apiRouter.get('/currency/rates/all', async (_req, res) => {
+  const sources = await fetchAllSources().catch(() => []);
+  const stored = db.getRatesSnapshot();
+  res.json({
+    success: sources.length > 0,
+    sources: sources.map((s) => ({
+      name: s.source,
+      url: s.sourceUrl,
+      fetchedAt: s.fetchedAt,
+      age: describeAgeAr(s.fetchedAt),
+      rates: s.rates,
+    })),
+    storedAt: stored?.fetchedAt || null,
+    answer: formatMultiSourceAnswer(sources, { storedAt: stored?.fetchedAt }),
   });
 });
 
@@ -2746,39 +2826,14 @@ const ratesBlockForPrompt = (snapshot: any): string => {
       r.code === 'QAR' ? 'ريال قطري' : r.code;
     return `- ${label} (${r.code}): ${parallel} ج.س${bank}`;
   });
-  const when = snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toLocaleString('ar-SD') : '';
-  return `المصدر: ${snapshot.source || 'السوق الموازي'} — آخر تحديث: ${when}\n${lines.join('\n')}`;
-};
-
-const AR_NAMES: Record<string, string> = {
-  USD: 'الدولار الأمريكي',
-  SAR: 'الريال السعودي',
-  AED: 'الدرهم الإماراتي',
-  EUR: 'اليورو',
-  EGP: 'الجنيه المصري',
-  QAR: 'الريال القطري',
-  TRY: 'الليرة التركية',
-  GBP: 'الجنيه الإسترليني',
-};
-
-/** Plain-Arabic answer built only from the cached snapshot (no model needed). */
-const formatRatesAnswer = (snapshot: any): string | null => {
-  if (!snapshot?.rates?.length) return null;
-  const lines = snapshot.rates
-    .filter((r: any) => r.parallel || r.official)
-    .map((r: any) => {
-      const price = (r.parallel ?? r.official).toLocaleString('en-US');
-      const bank = r.official ? ` (البنك: ${r.official.toLocaleString('en-US')})` : '';
-      return `• ${AR_NAMES[r.code] || r.code}: ${price} ج.س${bank}`;
-    });
   const when = snapshot.fetchedAt
-    ? new Date(snapshot.fetchedAt).toLocaleString('ar-SD')
+    ? new Date(snapshot.fetchedAt).toLocaleString('ar-SD', { timeZone: 'Africa/Khartoum' })
     : '';
+  const age = describeAgeAr(snapshot.fetchedAt);
   return (
-    `حبابك 👋 دي أسعار السوق الموازي (السوق الأسود) الحالية:\n` +
-    `${lines.join('\n')}\n\n` +
-    `المصدر: ${snapshot.source} — آخر تحديث: ${when}.\n` +
-    `السعر الرسمي للبنك أقل من سوق الموازي، والتعامل في السودان بيمشي بسعر السوق.`
+    `المصدر: ${snapshot.source || 'السوق الموازي'} — تم سحب القراءة من الموقع: ${age}` +
+    (when ? ` (${when})` : '') +
+    `\n${lines.join('\n')}`
   );
 };
 
@@ -2811,8 +2866,10 @@ ${context?.liveRates ? ratesBlockForPrompt(context.liveRates) : 'لا توجد �
 
 قواعد صارمة عند السؤال عن الأسعار:
 - السعر الرسمي للبنك ≠ سعر السوق. الناس في السودان بتتعامل بسعر السوق الموازي، فاذكر سعر السوق أولاً وبخط واضح.
-- اذكر تاريخ/وقت آخر تحديث، ولو الأرقام قديمة نبّه المستخدم.
-- لو ما في بيانات حديثة: قل بصراحة إن المصدر مش متاح هسي، وما تخترع سعر من راسك أبداً.
+- عمر القراءة مكتوب فوق («تم سحب القراءة: قبل كذا»). **ما تقول أبداً «الأسعار حقت اليوم/الليلة»** لو العمر أكثر من ربع ساعة — قل العمر الحقيقي زي ما هو.
+- لو المستخدم قال «السعر قديم»: طابقه بالواقع — لو الرقم نفسه ما اتغيّر في المصدر، قول ليه بصراحة إن السوق ما تحرّك في المصدر من آخر قراءة، وإن الرقم هو سعر السوق الحالي فعلاً؛ وما تدّعي إنك حدّثت لو ما في تغيير.
+- المنصة بتقرأ **مصدرين**: سوق السودان (alsoug.com) و**أخبار السودان (sudanakhbar.com)**. لو سأل عن «أخبار السودان» أو المصدرين، المنصة بتجيبهم فعلياً — **ما تقول أبداً «ما عندي وصول»**.
+- لو ما في بيانات حديثة أصلاً: قل بصراحة إن المصدر مش متاح هسي، وما تخترع سعر من راسك أبداً.
 - لو سأل عن مبلغ (مثلاً «100 دولار كم بالجنيه؟») احسب بالضرب في سعر السوق الموازي.
 - اختصر: سعر، مصدر، وقت، ونصيحة سطر واحد.
 
@@ -2900,15 +2957,14 @@ async function geminiGenerate(opts: {
   return { text: null, error: lastError };
 }
 
+const SOURCE_ALIASES_PRIMARY = /alsoug|سوق\s*السودان|البديل/i;
+const SOURCE_ALIASES_BACKUP = /أخبار\s*السودان|اخبار\s*السودان|سودان\s*أخبار|sudanakhbar/i;
+
 apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   const { message, mode, context, history } = req.body || {};
   if (!message || typeof message !== 'string' || !message.trim()) {
     return res.status(400).json({ error: 'الرسالة مطلوبة' });
   }
-  if (!GEMINI_KEY()) {
-    return res.json({ reply: null, reason: 'NO_API_KEY' });
-  }
-
   // Last turns give the assistant memory inside the conversation
   const turns: any[] = Array.isArray(history)
     ? history
@@ -2925,16 +2981,47 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   try {
     // Rate questions (and anything touching money) need the live parallel table.
     let liveRates: any = db.getRatesSnapshot();
-    const asksAboutRates = /سعر|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|عملة|عملات|صرف|تحويل/i.test(message);
+    const asksAboutRates = isRateQuery(message);
+    const wantsSources = asksForSources(message);
+
+    /**
+     * «شوف الأسعار في أخبار السودان» / «قارن المصدرين» → the platform really
+     * reads both sites and answers deterministically. The model is skipped on
+     * purpose: it used to claim it had no access to sudanakhbar.
+     */
+    if (asksAboutRates && wantsSources) {
+      const sources = await fetchAllSources().catch(() => []);
+      // They named «أخبار السودان» → show it first, then the other source to compare
+      const prefersBackup = SOURCE_ALIASES_BACKUP.test(message) && !SOURCE_ALIASES_PRIMARY.test(message);
+      const ordered = prefersBackup
+        ? [...sources].sort((a) => (a.source.includes('sudanakhbar') ? -1 : 1))
+        : sources;
+      const answer = formatMultiSourceAnswer(ordered, {
+        storedAt: db.getRatesSnapshot()?.fetchedAt,
+      });
+      return res.json({
+        reply: answer,
+        model: 'rates-multi-source',
+        sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt })),
+      });
+    }
+
     if (asksAboutRates) {
       const hours = liveRates?.fetchedAt ? ageHours(liveRates.fetchedAt) : null;
-      if (hours === null || hours >= 1) {
+      // 15 minutes: prices move during the day and «قديم» complaints are real
+      if (hours === null || hours >= 0.25) {
         try {
+          const previousAt = liveRates?.fetchedAt;
+          const prevUsd = liveRates?.rates?.find((r: any) => r.code === 'USD')?.parallel ?? null;
           const snapshot = await fetchLiveRates();
           if (snapshot) {
+            const curUsd = snapshot.rates.find((r) => r.code === 'USD')?.parallel ?? null;
+            liveRates = snapshot;
             db.applyLiveRates(snapshot, 'المساعد الذكي');
             await db.flush({ lock: false }).catch(() => {});
             liveRates = db.getRatesSnapshot();
+            liveRates.__changed = prevUsd === null || curUsd === null ? null : prevUsd !== curUsd;
+            liveRates.__previousAt = previousAt;
           }
         } catch {
           /* fall back to the cached snapshot */
@@ -2946,6 +3033,19 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
       ...(context || {}),
       liveRates: asksAboutRates ? liveRates : undefined,
     };
+
+    if (!GEMINI_KEY()) {
+      // Rates still answer without a model key — everything else needs it.
+      const cached = db.getRatesSnapshot();
+      if (asksAboutRates) {
+        const offline = formatRatesAnswer(cached, {
+          changed: liveRates?.__changed ?? null,
+          previousAt: liveRates?.__previousAt,
+        });
+        if (offline) return res.json({ reply: offline, model: 'rates-live' });
+      }
+      return res.json({ reply: null, reason: 'NO_API_KEY' });
+    }
 
     const result = await geminiGenerate({
       models: ASSISTANT_MODELS,
@@ -2962,7 +3062,10 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
 
     console.warn('[assistant] failed:', result.error);
     if (asksAboutRates) {
-      const offline = formatRatesAnswer(liveRates);
+      const offline = formatRatesAnswer(liveRates, {
+        changed: liveRates?.__changed ?? null,
+        previousAt: liveRates?.__previousAt,
+      });
       if (offline) return res.json({ reply: offline, model: 'rates-cache' });
     }
     return res.json({ reply: null, reason: 'FALLBACK', detail: result.error });

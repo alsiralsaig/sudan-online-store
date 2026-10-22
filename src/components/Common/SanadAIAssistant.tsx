@@ -336,10 +336,16 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
     // Comprehensive Sudanese Dialect Knowledge Matrix:
     // Rate questions always come from the live parallel market (never hard-coded)
     if (
-      /سعر|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|ليرة|عملة|عملات|صرف/.test(query)
+      /سعر|أسعار|اسعار|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|ليرة|عملة|عملات|صرف|أخبار\s*السودان|اخبار\s*السودان|المصدرين|قارن/.test(
+        query
+      )
     ) {
       try {
-        const res = await fetch('/api/assistant/rates');
+        // Let the server pick the sources: both for «أخبار السودان»/«قارن»,
+        // and always a live read (fresh=1) so «قديم» complaints can't happen.
+        const res = await fetch(
+          `/api/assistant/rates?fresh=1&q=${encodeURIComponent(query)}`
+        );
         if (res.ok) {
           const data = await res.json();
           if (data.answer) {
@@ -358,7 +364,9 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
         /* fall through to the generic reply */
       }
       return {
-        text: 'يا هلا بيك! مصدر أسعار السوق الموازي مش متاح هسي — جرّب تسألني بعد شوية أو افتح شاشة «العملات والصرف» وشوف آخر سعر محفوظ.',
+        text:
+          'يا هلا بيك! جرّبت أسحب الأسعار من المصدرين (سوق السودان وأخبار السودان) هسي وما رجّعوا جدول صالح — ' +
+          'المشكلة في المواقع نفسها مش في المنصة. تقدر تشوف آخر قراءة محفوظة من شاشة «العملات والصرف».',
         actions: onNavigateTab
           ? [{ label: 'فتح شاشة أسعار العملات 🪙', action: () => onNavigateTab('currencies') }]
           : undefined,
