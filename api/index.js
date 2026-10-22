@@ -3270,13 +3270,56 @@ var BROWSER_HEADERS = {
   "Cache-Control": "no-cache"
 };
 var SUDANAKHBAR_HOME = "https://www.sudanakhbar.com/business-news/currency-rates-prices";
-var fetchSudanAkhbarArticle = async () => {
+var fetchSudanAkhbarViaApi = async (diag) => {
+  const queries = ["\u0633\u0639\u0631 \u0627\u0644\u062F\u0648\u0644\u0627\u0631", "\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A", "\u0627\u0644\u0639\u0645\u0644\u0627\u062A"];
+  for (const q2 of queries) {
+    try {
+      const url = `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q2)}&per_page=5&_fields=id,date,date_gmt,link,title,content`;
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 9e3);
+      const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
+      clearTimeout(t);
+      if (!res.ok) {
+        diag.push({ method: `wp-json:${q2}`, ok: false, detail: `HTTP ${res.status}` });
+        continue;
+      }
+      const posts = await res.json().catch(() => []);
+      if (!Array.isArray(posts) || !posts.length) {
+        diag.push({ method: `wp-json:${q2}`, ok: false, detail: "empty list" });
+        continue;
+      }
+      for (const post of posts) {
+        const title = String(post?.title?.rendered || "").replace(/<[^>]+>/g, " ").trim();
+        const html = String(post?.content?.rendered || "");
+        const parsed = parseSudanAkhbarArticle(html);
+        if (parsed.rates.length < 3) continue;
+        const publishedAt = post?.date_gmt ? (/* @__PURE__ */ new Date(`${post.date_gmt}Z`)).toISOString() : parsed.publishedAt;
+        diag.push({
+          method: `wp-json:${q2}`,
+          ok: true,
+          detail: `${parsed.rates.length} rates \xB7 ${post?.link || ""}`
+        });
+        return { rates: parsed.rates, publishedAt, title: title || void 0, url: post?.link };
+      }
+      diag.push({ method: `wp-json:${q2}`, ok: false, detail: "no post with a rate table" });
+    } catch (err) {
+      diag.push({ method: `wp-json:${q2}`, ok: false, detail: err.name });
+    }
+  }
+  return null;
+};
+var fetchSudanAkhbarArticle = async (diag = []) => {
+  const viaApi = await fetchSudanAkhbarViaApi(diag);
+  if (viaApi) return viaApi;
   try {
     const c1 = new AbortController();
     const t1 = setTimeout(() => c1.abort(), 9e3);
     const listing = await fetch(SUDANAKHBAR_HOME, { signal: c1.signal, headers: BROWSER_HEADERS });
     clearTimeout(t1);
-    if (!listing.ok) return null;
+    if (!listing.ok) {
+      diag.push({ method: "listing", ok: false, detail: `HTTP ${listing.status}` });
+      return null;
+    }
     const html = await listing.text();
     const linkRe = /href="(https:\/\/www\.sudanakhbar\.com\/\d{6,})"[^>]*>([^<]{10,200})</g;
     const candidates = [];
@@ -3287,15 +3330,25 @@ var fetchSudanAkhbarArticle = async () => {
         if (candidates.length >= 3) break;
       }
     }
-    if (!candidates.length) return null;
+    if (!candidates.length) {
+      diag.push({ method: "listing", ok: false, detail: "no matching article links" });
+      return null;
+    }
     for (const candidate of candidates) {
       const c2 = new AbortController();
       const t2 = setTimeout(() => c2.abort(), 9e3);
       const article = await fetch(candidate.url, { signal: c2.signal, headers: BROWSER_HEADERS });
       clearTimeout(t2);
-      if (!article.ok) continue;
+      if (!article.ok) {
+        diag.push({ method: "article", ok: false, detail: `HTTP ${article.status}` });
+        continue;
+      }
       const parsed = parseSudanAkhbarArticle(await article.text());
-      if (parsed.rates.length < 3) continue;
+      if (parsed.rates.length < 3) {
+        diag.push({ method: "article", ok: false, detail: "no rate table" });
+        continue;
+      }
+      diag.push({ method: "article", ok: true, detail: `${parsed.rates.length} rates` });
       return {
         rates: parsed.rates,
         publishedAt: parsed.publishedAt,
@@ -3304,7 +3357,8 @@ var fetchSudanAkhbarArticle = async () => {
       };
     }
     return null;
-  } catch {
+  } catch (err) {
+    diag.push({ method: "listing", ok: false, detail: err.name });
     return null;
   }
 };
@@ -3345,8 +3399,8 @@ var fetchLiveRates = async () => {
   }
   return null;
 };
-var fetchSudanAkhbarSnapshot = async () => {
-  const article = await fetchSudanAkhbarArticle();
+var fetchSudanAkhbarSnapshot = async (diag = []) => {
+  const article = await fetchSudanAkhbarArticle(diag);
   if (!article?.rates.length) return null;
   return {
     rates: article.rates.filter((r) => r.parallel !== null && r.parallel >= 100),
@@ -3378,10 +3432,10 @@ var fetchAlsougSnapshot = async () => {
     return null;
   }
 };
-var fetchAllSources = async () => {
+var fetchAllSources = async (diag = []) => {
   const [primary, backup] = await Promise.all([
     fetchAlsougSnapshot().catch(() => null),
-    fetchSudanAkhbarSnapshot().catch(() => null)
+    fetchSudanAkhbarSnapshot(diag).catch(() => null)
   ]);
   return [primary, backup].filter(Boolean);
 };
@@ -5301,8 +5355,9 @@ apiRouter.get("/assistant/rates", async (req, res) => {
     answer: formatRatesAnswer(snapshot)
   });
 });
-apiRouter.get("/currency/rates/all", async (_req, res) => {
-  const sources = await fetchAllSources().catch(() => []);
+apiRouter.get("/currency/rates/all", async (req, res) => {
+  const diag = [];
+  const sources = await fetchAllSources(diag).catch(() => []);
   const stored = db.getRatesSnapshot();
   res.json({
     success: sources.length > 0,
@@ -5314,7 +5369,9 @@ apiRouter.get("/currency/rates/all", async (_req, res) => {
       rates: s.rates
     })),
     storedAt: stored?.fetchedAt || null,
-    answer: formatMultiSourceAnswer(sources, { storedAt: stored?.fetchedAt })
+    answer: formatMultiSourceAnswer(sources, { storedAt: stored?.fetchedAt }),
+    // ?debug=1 shows why a source was skipped (region blocks, HTTP codes)
+    ...req.query.debug ? { diagnostics: diag } : {}
   });
 });
 apiRouter.get("/currency/alerts/status", (_req, res) => {

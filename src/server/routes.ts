@@ -1670,8 +1670,9 @@ apiRouter.get('/assistant/rates', async (req, res) => {
 });
 
 /** Both published sources, read live — what the «قارن المصدرين» button calls. */
-apiRouter.get('/currency/rates/all', async (_req, res) => {
-  const sources = await fetchAllSources().catch(() => []);
+apiRouter.get('/currency/rates/all', async (req, res) => {
+  const diag: { method: string; ok: boolean; detail: string }[] = [];
+  const sources = await fetchAllSources(diag).catch(() => []);
   const stored = db.getRatesSnapshot();
   res.json({
     success: sources.length > 0,
@@ -1684,6 +1685,8 @@ apiRouter.get('/currency/rates/all', async (_req, res) => {
     })),
     storedAt: stored?.fetchedAt || null,
     answer: formatMultiSourceAnswer(sources, { storedAt: stored?.fetchedAt }),
+    // ?debug=1 shows why a source was skipped (region blocks, HTTP codes)
+    ...(req.query.debug ? { diagnostics: diag } : {}),
   });
 });
 

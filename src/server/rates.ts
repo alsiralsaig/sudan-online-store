@@ -266,21 +266,88 @@ const SUDANAKHBAR_HOME = 'https://www.sudanakhbar.com/business-news/currency-rat
  * Returns the rates plus the article's own publish time — the only signal we
  * have for "when did the market actually move" on that site.
  */
-export const fetchSudanAkhbarArticle = async (): Promise<{
+export interface SourceDiag {
+  method: string;
+  ok: boolean;
+  detail: string;
+}
+
+/** WordPress REST search — structured content + the article's own date. */
+const fetchSudanAkhbarViaApi = async (
+  diag: SourceDiag[]
+): Promise<{ rates: LiveRate[]; publishedAt?: string; title?: string; url?: string } | null> => {
+  const queries = ['سعر الدولار', 'السوق الموازي', 'العملات'];
+  for (const q of queries) {
+    try {
+      const url =
+        `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q)}` +
+        `&per_page=5&_fields=id,date,date_gmt,link,title,content`;
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 9000);
+      const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
+      clearTimeout(t);
+      if (!res.ok) {
+        diag.push({ method: `wp-json:${q}`, ok: false, detail: `HTTP ${res.status}` });
+        continue;
+      }
+      const posts: any[] = await res.json().catch(() => []);
+      if (!Array.isArray(posts) || !posts.length) {
+        diag.push({ method: `wp-json:${q}`, ok: false, detail: 'empty list' });
+        continue;
+      }
+      for (const post of posts) {
+        const title = String(post?.title?.rendered || '').replace(/<[^>]+>/g, ' ').trim();
+        const html = String(post?.content?.rendered || '');
+        const parsed = parseSudanAkhbarArticle(html);
+        if (parsed.rates.length < 3) continue;
+        // date_gmt is UTC without the trailing Z
+        const publishedAt = post?.date_gmt
+          ? new Date(`${post.date_gmt}Z`).toISOString()
+          : parsed.publishedAt;
+        diag.push({
+          method: `wp-json:${q}`,
+          ok: true,
+          detail: `${parsed.rates.length} rates · ${post?.link || ''}`,
+        });
+        return { rates: parsed.rates, publishedAt, title: title || undefined, url: post?.link };
+      }
+      diag.push({ method: `wp-json:${q}`, ok: false, detail: 'no post with a rate table' });
+    } catch (err) {
+      diag.push({ method: `wp-json:${q}`, ok: false, detail: (err as Error).name });
+    }
+  }
+  return null;
+};
+
+/**
+ * Reads today's Sudan Akhbar parallel-market article.
+ *
+ * Two routes, because the site sits behind different edges in different
+ * regions: the WordPress REST API first (structured + dated), the article
+ * listing as a fallback.
+ */
+export const fetchSudanAkhbarArticle = async (
+  diag: SourceDiag[] = []
+): Promise<{
   rates: LiveRate[];
   publishedAt?: string;
   title?: string;
   url?: string;
 } | null> => {
+  const viaApi = await fetchSudanAkhbarViaApi(diag);
+  if (viaApi) return viaApi;
+
   try {
     const c1 = new AbortController();
     const t1 = setTimeout(() => c1.abort(), 9000);
     const listing = await fetch(SUDANAKHBAR_HOME, { signal: c1.signal, headers: BROWSER_HEADERS });
     clearTimeout(t1);
-    if (!listing.ok) return null;
+    if (!listing.ok) {
+      diag.push({ method: 'listing', ok: false, detail: `HTTP ${listing.status}` });
+      return null;
+    }
     const html = await listing.text();
 
-    // Newest article that mentions the parallel market (listing is newest-first)
     const linkRe = /href="(https:\/\/www\.sudanakhbar\.com\/\d{6,})"[^>]*>([^<]{10,200})</g;
     const candidates: { url: string; title: string }[] = [];
     let m: RegExpExecArray | null;
@@ -290,17 +357,26 @@ export const fetchSudanAkhbarArticle = async (): Promise<{
         if (candidates.length >= 3) break;
       }
     }
-    if (!candidates.length) return null;
+    if (!candidates.length) {
+      diag.push({ method: 'listing', ok: false, detail: 'no matching article links' });
+      return null;
+    }
 
     for (const candidate of candidates) {
       const c2 = new AbortController();
       const t2 = setTimeout(() => c2.abort(), 9000);
       const article = await fetch(candidate.url, { signal: c2.signal, headers: BROWSER_HEADERS });
       clearTimeout(t2);
-      if (!article.ok) continue;
-
+      if (!article.ok) {
+        diag.push({ method: 'article', ok: false, detail: `HTTP ${article.status}` });
+        continue;
+      }
       const parsed = parseSudanAkhbarArticle(await article.text());
-      if (parsed.rates.length < 3) continue;
+      if (parsed.rates.length < 3) {
+        diag.push({ method: 'article', ok: false, detail: 'no rate table' });
+        continue;
+      }
+      diag.push({ method: 'article', ok: true, detail: `${parsed.rates.length} rates` });
       return {
         rates: parsed.rates,
         publishedAt: parsed.publishedAt,
@@ -309,7 +385,8 @@ export const fetchSudanAkhbarArticle = async (): Promise<{
       };
     }
     return null;
-  } catch {
+  } catch (err) {
+    diag.push({ method: 'listing', ok: false, detail: (err as Error).name });
     return null;
   }
 };
@@ -360,8 +437,10 @@ export const fetchLiveRates = async (): Promise<LiveRatesSnapshot | null> => {
 };
 
 /** The backup source as a full snapshot (same shape as the primary). */
-export const fetchSudanAkhbarSnapshot = async (): Promise<LiveRatesSnapshot | null> => {
-  const article = await fetchSudanAkhbarArticle();
+export const fetchSudanAkhbarSnapshot = async (
+  diag: SourceDiag[] = []
+): Promise<LiveRatesSnapshot | null> => {
+  const article = await fetchSudanAkhbarArticle(diag);
   if (!article?.rates.length) return null;
   return {
     rates: article.rates.filter((r) => r.parallel !== null && (r.parallel as number) >= 100),
@@ -401,10 +480,12 @@ export const fetchAlsougSnapshot = async (): Promise<LiveRatesSnapshot | null> =
  * Used when the shopper asks for «أخبار السودان» or wants a comparison, so the
  * assistant never has to say «ما عندي وصول».
  */
-export const fetchAllSources = async (): Promise<LiveRatesSnapshot[]> => {
+export const fetchAllSources = async (
+  diag: SourceDiag[] = []
+): Promise<LiveRatesSnapshot[]> => {
   const [primary, backup] = await Promise.all([
     fetchAlsougSnapshot().catch(() => null),
-    fetchSudanAkhbarSnapshot().catch(() => null),
+    fetchSudanAkhbarSnapshot(diag).catch(() => null),
   ]);
   return [primary, backup].filter(Boolean) as LiveRatesSnapshot[];
 };
