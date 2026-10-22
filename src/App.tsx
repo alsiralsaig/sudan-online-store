@@ -20,6 +20,7 @@ import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx'
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
 import { SanadClientApp } from './SanadClientApp/SanadClientApp.tsx';
 import { InAppAlertBanner } from './components/Common/InAppAlertBanner.tsx';
+import { PushOptInCard } from './components/Common/PushOptInCard.tsx';
 import { SanadAIAssistant } from './components/Common/SanadAIAssistant.tsx';
 import { SanadAppModeBar, type PlatformAppMode } from './components/Common/SanadAppModeBar.tsx';
 import { AdminWelcomeBanner } from './components/Admin/AdminWelcomeBanner.tsx';
@@ -380,6 +381,11 @@ export default function App() {
 
       {/* No app-switcher bar here: merchants open their own app, and the
           platform console is reachable through its URL only. */}
+
+      {/* One-time nudge so phone notifications actually get enabled */}
+      <div className="px-3 pt-3">
+        <PushOptInCard app="merchant" />
+      </div>
 
       {/* Top Notification Toast */}
       {notification && (

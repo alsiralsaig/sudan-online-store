@@ -31,6 +31,7 @@ import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
 import { SanadLogo } from '../../components/Common/SanadLogo.tsx';
 import { TenantApplicationModal } from '../../components/Common/TenantApplicationModal.tsx';
 import { ClientSectionsDropdown } from './ClientSectionsDropdown.tsx';
+import { PushOptInCard } from '../../components/Common/PushOptInCard.tsx';
 import { api } from '../../lib/api.ts';
 import { useImpressionTracker } from '../../lib/useImpressionTracker.ts';
 import { SanadContactSection } from '../../components/Common/SanadContactSection.tsx';
@@ -356,6 +357,9 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
       </div>
 
       <div className="max-w-md md:max-w-4xl mx-auto px-3 sm:px-4 py-3 space-y-3">
+        {/* One-time invitation to allow phone notifications (drives real push) */}
+        <PushOptInCard app="client" ownerToken={ownerToken} />
+
         {/* ---------------- Banner (photo-led, like the reference) -------- */}
         <div
           ref={heroRef}
