@@ -24,6 +24,7 @@ import {
   VolumeX,
   Loader2,
 } from 'lucide-react';
+import { toChatText } from '../../lib/chatText.ts';
 
 export interface SanadAIAssistantProps {
   currentMode: 'admin' | 'client';
@@ -669,7 +670,7 @@ export const SanadAIAssistant: React.FC<SanadAIAssistantProps> = ({
                       : 'bg-white text-slate-800 border border-slate-200/80 rounded-bl-none'
                   }`}
                 >
-                  {msg.text}
+                  {toChatText(msg.text)}
 
                   {/* Render Quick Actions if available */}
                   {msg.quickActions && msg.quickActions.length > 0 && (

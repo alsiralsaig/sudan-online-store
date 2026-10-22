@@ -164,5 +164,27 @@ ok('keeps the headline', /ارتفاع جنوني/.test(parsedArticle.title || '
 ok('no rates invented from empty html', parseSudanAkhbarArticle('<html><body>لا شيء</body></html>').rates.length === 0);
 ok('date parser ignores junk', parseArabicPublishedAt('لا يوجد تاريخ') === undefined);
 
+
+/* ------------------------------------------------------------------ */
+/*  Chat text: no raw Markdown markers in any answer                   */
+/* ------------------------------------------------------------------ */
+console.log('\n=== chat text normaliser ===');
+const { toChatText } = await import('../src/lib/chatText.ts');
+
+ok('bold is unwrapped', toChatText('**دولار أمريكي:** 10,386 ج.س') === 'دولار أمريكي: 10,386 ج.س', toChatText('**دولار أمريكي:** 10,386 ج.س'));
+ok('italic underscores are unwrapped', toChatText('_سحب القراءة: الآن_') === 'سحب القراءة: الآن');
+ok('star bullets become real bullets', toChatText('* دولار\n* ريال') === '• دولار\n• ريال', JSON.stringify(toChatText('* دولار\n* ريال')));
+ok('dash bullets become real bullets', toChatText('- دولار\n- ريال') === '• دولار\n• ريال');
+ok('headings are flattened', toChatText('## أسعار اليوم') === 'أسعار اليوم');
+ok('inline code loses backticks', toChatText('`10386` ج.س') === '10386 ج.س');
+ok('bullet used inside a number list survives', /•|١|1/.test(toChatText('* 10386 ج.س')));
+ok('plain Arabic is untouched', toChatText('حبابك يا غالي 👋') === 'حبابك يا غالي 👋');
+
+const cleanAnswers = [formatRatesAnswer(snapA), formatMultiSourceAnswer([snapA, snapB], {})].join('\n');
+ok('rate answers carry no ** markers', !cleanAnswers.includes('**'));
+ok('rate answers carry no single-asterisk markers', !/[*_]/.test(cleanAnswers), (cleanAnswers.match(/[*_]/g) || []).join(''));
+ok('multi-source uses a plain separator', cleanAnswers.includes('— سوق السودان'));
+ok('answers still readable as plain text', /• الدولار الأمريكي: 10,386/.test(cleanAnswers));
+
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);
 process.exit(fail ? 1 : 0);

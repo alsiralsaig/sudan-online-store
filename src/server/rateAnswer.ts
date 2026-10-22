@@ -123,7 +123,7 @@ export const formatRatesAnswer = (
 
   const note =
     opts.changed === false
-      ? `ملاحظة مهمة: قارنت القراءة بالقراءة السابقة — الأرقام **ما اتغيّرت**، يعني السوق في المصدر ما تحرّك من ${describeAgeAr(
+      ? `ملاحظة مهمة: قارنت القراءة بالقراءة السابقة — الأرقام ما اتغيّرت، يعني السوق في المصدر ما تحرّك من ${describeAgeAr(
           opts.previousAt
         )}.`
       : opts.changed === true
@@ -161,9 +161,9 @@ export const formatMultiSourceAnswer = (
       ? ` · نُشر في المصدر: ${describeSourceDate(s.sourceUpdatedAt)}`
       : '';
     return (
-      `*${s.source}*\n` +
+      `— ${s.source} —\n` +
       (lines.length ? lines.join('\n') : '• ما لقيت جدول أسعار في الصفحة الآن') +
-      `\n_سحب القراءة: ${describeAgeAr(s.fetchedAt)}${published}_`
+      `\nسحب القراءة: ${describeAgeAr(s.fetchedAt)}${published}`
     );
   });
 
@@ -193,9 +193,9 @@ export const formatMultiSourceAnswer = (
   }
 
   return (
-    `حبابك يا غالي 👋 فتحت **المصدرين** وسحبت الأسعار منهم هسي (مش من الذاكرة):\n\n` +
+    `حبابك يا غالي 👋 فتحت المصدرين وسحبت الأسعار منهم هسي (مش من الذاكرة):\n\n` +
     `${blocks.join('\n\n')}\n\n` +
-    (comparisons.length ? `*مقارنة سريعة:*\n${comparisons.join('\n')}\n\n` : '') +
+    (comparisons.length ? `مقارنة سريعة:\n${comparisons.join('\n')}\n\n` : '') +
     (opts.storedAt
       ? `آخر قراءة محفوظة في المنصة كانت ${describeAgeAr(opts.storedAt)} — والأرقام فوق هي الأحدث.\n`
       : '') +
