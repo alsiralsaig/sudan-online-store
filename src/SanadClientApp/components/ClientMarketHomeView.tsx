@@ -31,6 +31,7 @@ import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
 import { SanadLogo } from '../../components/Common/SanadLogo.tsx';
 import { TenantApplicationModal } from '../../components/Common/TenantApplicationModal.tsx';
 import { ClientSectionsDropdown } from './ClientSectionsDropdown.tsx';
+import { SlideStrip } from './SlideStrip.tsx';
 import { PushOptInCard } from '../../components/Common/PushOptInCard.tsx';
 import { api } from '../../lib/api.ts';
 import { useImpressionTracker } from '../../lib/useImpressionTracker.ts';
@@ -80,7 +81,6 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   const [sectionsOpen, setSectionsOpen] = useState(false);
   const [tenantModalOpen, setTenantModalOpen] = useState(false);
   const [vipIndex, setVipIndex] = useState(0);
-  const [vipTick, setVipTick] = useState(0);
 
   /** Defaults shown until the admin-managed banners load (or if none are set). */
   const defaultBanners = [
@@ -190,12 +190,9 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
     if (vipSlides.length < 2) return;
     const timer = setInterval(() => {
       setVipIndex((i) => (i + 1) % vipSlides.length);
-      setVipTick((k) => k + 1);
     }, 6000);
     return () => clearInterval(timer);
   }, [vipSlides.length]);
-
-  const vip = vipSlides[vipIndex % vipSlides.length];
 
   /** The four big shortcuts from the reference page, mapped onto real screens. */
   const shortcuts = [
@@ -360,85 +357,88 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
         {/* One-time invitation to allow phone notifications (drives real push) */}
         <PushOptInCard app="client" ownerToken={ownerToken} />
 
-        {/* ---------------- Banner (photo-led, like the reference) -------- */}
-        <div
-          ref={heroRef}
-          className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 aspect-[3.4/1] sm:aspect-[3.9/1] bg-slate-900 cursor-pointer"
-          onClick={() => {
-            const shown: any = banners[currentBannerIndex];
-            if (shown?.id) {
-              // Count the tap so the advertiser sees real numbers (never blocks the open)
-              api.trackMarketBannerClick(shown.id).catch(() => {});
-            }
-            if (shown?.linkUrl) window.open(shown.linkUrl, '_blank');
+        {/* ---------------- Banner (photo-led, sliding like the reference) -- */}
+        <SlideStrip
+          containerRef={heroRef}
+          index={currentBannerIndex}
+          count={banners.length}
+          onIndexChange={(i) => {
+            setCurrentBannerIndex(i);
+            setRotationTick((t) => t + 1);
           }}
+          className="rounded-2xl shadow-sm border border-slate-200 aspect-[3.4/1] sm:aspect-[3.9/1] bg-slate-900"
         >
-          {/* Photo stays the hero: the scrim only darkens the side that carries the text */}
-          <img
-            src={banners[currentBannerIndex].image}
-            alt={banners[currentBannerIndex].title}
-            loading={currentBannerIndex === 0 ? 'eager' : 'lazy'}
-            decoding="async"
-            onError={(e) => {
-              // never leave a broken-image icon over the headline
-              (e.currentTarget as HTMLImageElement).style.opacity = '0';
-            }}
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-l from-slate-950/95 via-slate-950/45 to-transparent" />
-          <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-slate-950/70 to-transparent" />
-          <div className="relative h-full flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5">
-            <div className="min-w-0 max-w-[64%] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
-              {banners[currentBannerIndex].badge && (
-                <span className="text-[9px] sm:text-[10px] font-mono tracking-widest text-amber-300 block leading-none mb-0.5">
-                  {banners[currentBannerIndex].badge}
-                </span>
-              )}
-              <h3 className="text-[13px] sm:text-xl font-black leading-tight line-clamp-2">
-                {banners[currentBannerIndex].title}
-              </h3>
-              {banners[currentBannerIndex].subtitle && (
-                <p className="hidden sm:block text-[11px] text-slate-100 line-clamp-1 mt-0.5">
-                  {banners[currentBannerIndex].subtitle}
-                </p>
-              )}
-            </div>
-
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenCreateModal();
+          {banners.map((banner, idx) => (
+            <div
+              key={(banner as any).id ?? idx}
+              className="relative w-full shrink-0 h-full cursor-pointer"
+              onClick={() => {
+                const shown: any = banners[idx];
+                if (shown?.id) api.trackMarketBannerClick(shown.id).catch(() => {});
+                if (shown?.linkUrl) window.open(shown.linkUrl, '_blank');
               }}
-              className="shrink-0 self-end mb-1 px-2.5 py-1 sm:px-3 sm:py-1.5 bg-white text-slate-900 rounded-lg text-[10px] sm:text-[11px] font-black active:scale-95 transition-transform whitespace-nowrap shadow-sm"
             >
-              أضف إعلانك (+)
-            </button>
-          </div>
-
-          <div className="absolute bottom-1.5 inset-x-0 flex items-center justify-center gap-1.5">
-            {banners.map((_, idx) => (
-              <button
-                key={idx}
-                onClick={() => setCurrentBannerIndex(idx)}
-                aria-label={`بانر ${idx + 1}`}
-                className={`h-1.5 rounded-full transition-all ${
-                  currentBannerIndex === idx ? 'w-5 bg-amber-400' : 'w-1.5 bg-white/50'
-                }`}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* ---------------- VIP showcase (rotating, same size) ----------- */}
-        <div className="relative rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-white">
-          <div className="relative h-52 sm:h-72 w-full overflow-hidden bg-slate-100">
-            <div key={vipTick} className="absolute inset-0 animate-in fade-in duration-500">
               <img
-                src={vip.imageUrl}
-                alt={vip.title}
+                src={banner.image}
+                alt={banner.title}
+                loading={idx === 0 ? 'eager' : 'lazy'}
+                decoding="async"
+                draggable={false}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.opacity = '0';
+                }}
+                className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+              />
+              <div className="absolute inset-0 bg-gradient-to-l from-slate-950/95 via-slate-950/45 to-transparent pointer-events-none" />
+              <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-slate-950/70 to-transparent pointer-events-none" />
+
+              <div className="relative h-full flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5">
+                <div className="min-w-0 max-w-[64%] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
+                  {banner.badge && (
+                    <span className="text-[9px] sm:text-[10px] font-mono tracking-widest text-amber-300 block leading-none mb-0.5">
+                      {banner.badge}
+                    </span>
+                  )}
+                  <h3 className="text-[13px] sm:text-xl font-black leading-tight line-clamp-2">
+                    {banner.title}
+                  </h3>
+                  {banner.subtitle && (
+                    <p className="hidden sm:block text-[11px] text-slate-100 line-clamp-1 mt-0.5">
+                      {banner.subtitle}
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenCreateModal();
+                  }}
+                  className="shrink-0 self-end mb-1 px-2.5 py-1 sm:px-3 sm:py-1.5 bg-white text-slate-900 rounded-lg text-[10px] sm:text-[11px] font-black active:scale-95 transition-transform whitespace-nowrap shadow-sm"
+                >
+                  أضف إعلانك (+)
+                </button>
+              </div>
+            </div>
+          ))}
+        </SlideStrip>
+
+        {/* ---------------- VIP showcase (sliding, same size) ------------ */}
+        <SlideStrip
+          index={vipIndex}
+          count={vipSlides.length}
+          onIndexChange={setVipIndex}
+          className="rounded-2xl shadow-sm border border-slate-200 bg-white h-52 sm:h-72"
+        >
+          {vipSlides.map((slide) => (
+            <div key={slide.id} className="relative w-full shrink-0 h-full overflow-hidden bg-slate-100">
+              <img
+                src={slide.imageUrl}
+                alt={slide.title}
                 loading="lazy"
                 decoding="async"
-                onClick={() => onSelectAd(vip)}
+                draggable={false}
+                onClick={() => onSelectAd(slide)}
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.opacity = '0';
                 }}
@@ -447,51 +447,36 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent pointer-events-none" />
 
               <div className="absolute top-3 right-3 px-2.5 py-1 bg-amber-400 text-slate-950 font-black rounded-lg text-[11px] shadow flex items-center gap-1">
-                <Crown className="w-3 h-3 fill-current" /> {vip.isVip ? 'VIP' : vip.tag || 'مميّز'}
+                <Crown className="w-3 h-3 fill-current" /> {slide.isVip ? 'VIP' : slide.tag || 'مميّز'}
               </div>
 
               <button
-                onClick={() => onSelectAd(vip)}
+                onClick={() => onSelectAd(slide)}
                 className="absolute bottom-5 inset-x-3 space-y-1.5 text-right block"
               >
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-black/60 backdrop-blur-md rounded-full text-[10px] text-white">
                   <Layers className="w-3 h-3 text-amber-400" />
-                  <span>{vip.category}</span>
+                  <span>{slide.category}</span>
                   <span>•</span>
                   <MapPin className="w-3 h-3 text-red-400" />
-                  <span>{vip.location}</span>
+                  <span>{slide.location}</span>
                 </span>
                 <span className="block">
                   <span className="inline-block px-3 py-1 bg-black/75 backdrop-blur-md rounded-xl text-white font-extrabold text-sm">
-                    {vip.title}
+                    {slide.title}
                   </span>
                 </span>
                 <span className="block">
                   <span className="inline-block px-3 py-1 bg-emerald-950/85 backdrop-blur-md rounded-xl text-amber-300 font-extrabold text-sm font-mono">
-                    {vip.priceSdg > 0
-                      ? `${vip.priceSdg.toLocaleString('en-US')} جنيه سوداني`
+                    {slide.priceSdg > 0
+                      ? `${slide.priceSdg.toLocaleString('en-US')} جنيه سوداني`
                       : 'حسب الاتفاق'}
                   </span>
                 </span>
               </button>
             </div>
-
-            {vipSlides.length > 1 && (
-              <div className="absolute bottom-1.5 inset-x-0 flex items-center justify-center gap-1.5">
-                {vipSlides.map((slide, idx) => (
-                  <button
-                    key={slide.id}
-                    onClick={() => setVipIndex(idx)}
-                    aria-label={`إعلان مميّز ${idx + 1}`}
-                    className={`h-1.5 rounded-full transition-all ${
-                      vipIndex === idx ? 'w-5 bg-amber-400' : 'w-1.5 bg-white/50'
-                    }`}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+          ))}
+        </SlideStrip>
 
         {/* ---------------- آخر الإعلانات (cream card, two-up grid) ------ */}
         <div className="rounded-2xl bg-amber-50/60 border border-amber-200/70 p-3">
