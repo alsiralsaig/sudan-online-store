@@ -19,6 +19,15 @@ const BASE = `http://127.0.0.1:${port}`;
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, d = '') => { c ? (pass++, console.log(`  ✅ ${n}`)) : (fail++, console.log(`  ❌ ${n} ${d}`)); };
 
+const post = async (path: string, body: any) => {
+  const r = await fetch(BASE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { status: r.status, body: await r.json().catch(() => null) };
+};
+
 // 1x1 red PNG
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
@@ -76,6 +85,46 @@ const del = await fetch(`${BASE}/api/media/${upBody.id}`, { method: 'DELETE' });
 ok('حذف → 200', del.status === 200);
 const gone = await fetch(BASE + upBody.url);
 ok('بعد الحذف → 404', gone.status === 404, `(${gone.status})`);
+
+console.log('\n=== رفع فيديو كبير على أجزاء (chunked) ===');
+/**
+ * A 6 MB "video" split exactly like the browser does it (2,100,000-byte slices,
+ * a multiple of 3 so the base64 pieces join cleanly). This proves the 40 MB
+ * ceiling works even though one request may only carry ~3 MB.
+ */
+const CHUNK = 2_100_000;
+const bigBytes = 6 * 1024 * 1024;
+const bigPayload = Buffer.alloc(bigBytes, 7); // 6 MB of 0x07
+const uploadId = 'uptest' + Date.now().toString(36);
+const totalChunks = Math.ceil(bigBytes / CHUNK);
+let chunkOk = 0;
+for (let i = 0; i < totalChunks; i++) {
+  const slice = bigPayload.subarray(i * CHUNK, Math.min(bigBytes, (i + 1) * CHUNK));
+  const r = await post('/api/media/chunk', {
+    uploadId,
+    index: i,
+    mime: 'video/mp4',
+    kind: 'video',
+    dataUrl: `data:video/mp4;base64,${slice.toString('base64')}`,
+  });
+  if (r.status === 200) chunkOk++;
+}
+ok(`كل الأجزاء اتقبلت (${chunkOk}/${totalChunks})`, chunkOk === totalChunks);
+
+const incomplete = await post('/api/media/complete', { uploadId: 'missing-upload-1', totalChunks: 3, kind: 'video' });
+ok('تجميع بدون أجزاء → 404', incomplete.status === 404, `(${incomplete.status})`);
+
+const done = await post('/api/media/complete', { uploadId, totalChunks, kind: 'video' });
+ok('تجميع الفيديو → 200', done.status === 200, `(${done.status}) ${JSON.stringify(done.body).slice(0, 80)}`);
+ok('الحجم الكامل محفوظ (6 ميجا)', done.body?.bytes === bigBytes, String(done.body?.bytes));
+ok('يُرجع رابط الفيديو', typeof done.body?.url === 'string' && done.body.url.startsWith('/api/media/'), done.body?.url);
+
+const streamed = await fetch(BASE + done.body.url);
+const streamedBuf = Buffer.from(await streamed.arrayBuffer());
+ok('الفيديو يُقرأ كامل ومطابق', streamedBuf.length === bigBytes && streamedBuf[0] === 7 && streamedBuf[bigBytes - 1] === 7, `${streamedBuf.length}`);
+
+const replay = await post('/api/media/complete', { uploadId, totalChunks, kind: 'video' });
+ok('إعادة التجميع بعد الحذف → 404', replay.status === 404, `(${replay.status})`);
 
 console.log('\n=== الكاش ===');
 ok('Cache-Control immutable', (img.headers.get('cache-control') || '').includes('immutable'), img.headers.get('cache-control') || '');

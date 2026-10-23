@@ -4058,6 +4058,10 @@ var whatsappProviderHost = () => {
 // src/server/media.ts
 var TABLE = "sanad_media";
 var MAX_RAW_BYTES = 3 * 1024 * 1024;
+var MAX_VIDEO_BYTES = 40 * 1024 * 1024;
+var MAX_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
+var CHUNK_BYTES = 21e5;
+var CHUNK_TABLE = "sanad_media_chunks";
 var ready = null;
 function ensureMediaTable() {
   if (!ready) {
@@ -4076,6 +4080,17 @@ function ensureMediaTable() {
       await client.query(
         `CREATE INDEX IF NOT EXISTS idx_${TABLE}_created ON ${TABLE} (created_at)`
       );
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${CHUNK_TABLE} (
+          upload_id  text NOT NULL,
+          idx        integer NOT NULL,
+          mime       text NOT NULL,
+          owner_phone text,
+          data       text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (upload_id, idx)
+        )
+      `);
     }).catch((err) => {
       ready = null;
       throw err;
@@ -4117,7 +4132,7 @@ async function saveMedia(input) {
     throw new HttpError(
       413,
       "TOO_LARGE",
-      `\u062D\u062C\u0645 \u0627\u0644\u0645\u0644\u0641 ${(bytes / 1024 / 1024).toFixed(1)} \u0645\u064A\u062C\u0627\u060C \u0648\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${MAX_RAW_BYTES / 1024 / 1024} \u0645\u064A\u062C\u0627.`
+      `\u062D\u062C\u0645 \u0627\u0644\u0645\u0644\u0641 ${(bytes / 1024 / 1024).toFixed(1)} \u0645\u064A\u062C\u0627\u060C \u0648\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 \u0644\u0644\u0637\u0644\u0628 \u0627\u0644\u0648\u0627\u062D\u062F ${MAX_RAW_BYTES / 1024 / 1024} \u0645\u064A\u062C\u0627. \u0627\u0644\u0641\u064A\u062F\u064A\u0648\u0647\u0627\u062A \u0627\u0644\u0643\u0628\u064A\u0631\u0629 \u062A\u064F\u0631\u0641\u0639 \u0639\u0644\u0649 \u0623\u062C\u0632\u0627\u0621.`
     );
   }
   const id = newId(kind === "video" ? "vid" : "img");
@@ -4126,6 +4141,82 @@ async function saveMedia(input) {
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [id, kind, mime, bytes, input.ownerPhone || null, base64]
   );
+  return { id, url: `/api/media/${id}`, mime, bytes, kind };
+}
+function ceilingFor(kind) {
+  return kind === "video" ? MAX_VIDEO_BYTES : MAX_IMAGE_MAX_BYTES;
+}
+async function saveChunk(input) {
+  await ensureMediaTable();
+  const uploadId = String(input.uploadId || "");
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(uploadId)) {
+    throw new HttpError(400, "BAD_UPLOAD_ID", "\u0645\u0639\u0631\u0651\u0641 \u0627\u0644\u0631\u0641\u0639 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D.");
+  }
+  const index = Number(input.index);
+  if (!Number.isInteger(index) || index < 0 || index > 500) {
+    throw new HttpError(400, "BAD_CHUNK_INDEX", "\u0631\u0642\u0645 \u0627\u0644\u062C\u0632\u0621 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D.");
+  }
+  const dataUrl = String(input.dataUrl || "");
+  const comma = dataUrl.indexOf(",");
+  if (!dataUrl.startsWith("data:") || comma === -1) {
+    throw new HttpError(400, "BAD_DATA_URL", "\u0635\u064A\u063A\u0629 \u0627\u0644\u062C\u0632\u0621 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629.");
+  }
+  const base64 = dataUrl.slice(comma + 1);
+  const bytes = Math.floor(base64.length * 3 / 4);
+  if (bytes > CHUNK_BYTES * 1.1) {
+    throw new HttpError(413, "CHUNK_TOO_LARGE", "\u0627\u0644\u062C\u0632\u0621 \u0627\u0644\u0645\u0631\u0633\u0644 \u0623\u0643\u0628\u0631 \u0645\u0646 \u0627\u0644\u0645\u0633\u0645\u0648\u062D.");
+  }
+  const mime = (input.mime || dataUrl.slice(5, comma).split(";")[0] || "video/mp4").toLowerCase();
+  await query(
+    `INSERT INTO ${CHUNK_TABLE} (upload_id, idx, mime, owner_phone, data)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (upload_id, idx) DO UPDATE SET data = EXCLUDED.data`,
+    [uploadId, index, mime, input.ownerPhone || null, base64]
+  );
+  const { rows } = await query(
+    `SELECT count(*)::int AS n FROM ${CHUNK_TABLE} WHERE upload_id = $1`,
+    [uploadId]
+  );
+  return { received: Number(rows[0]?.n) || 0, bytes };
+}
+async function completeChunked(uploadId, totalChunks, kind) {
+  await ensureMediaTable();
+  const { rows } = await query(
+    `SELECT idx, mime, data FROM ${CHUNK_TABLE} WHERE upload_id = $1 ORDER BY idx ASC`,
+    [uploadId]
+  );
+  if (rows.length === 0) {
+    throw new HttpError(404, "UPLOAD_NOT_FOUND", "\u0644\u0645 \u064A\u0635\u0644 \u0623\u064A \u062C\u0632\u0621 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641\u060C \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.");
+  }
+  const expected = Number(totalChunks) || rows.length;
+  if (rows.length !== expected) {
+    throw new HttpError(409, "UPLOAD_INCOMPLETE", `\u0648\u0635\u0644 ${rows.length} \u062C\u0632\u0621 \u0645\u0646 ${expected}\u060C \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.`);
+  }
+  for (let i = 0; i < rows.length; i++) {
+    if (Number(rows[i].idx) !== i) {
+      throw new HttpError(409, "UPLOAD_GAP", "\u0641\u064A \u062C\u0632\u0621 \u0646\u0627\u0642\u0635 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641\u060C \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.");
+    }
+  }
+  const mime = String(rows[0].mime || (kind === "video" ? "video/mp4" : "image/jpeg"));
+  const base64 = rows.map((r) => String(r.data)).join("");
+  const bytes = Math.floor(base64.length * 3 / 4);
+  if (bytes > ceilingFor(kind)) {
+    await query(`DELETE FROM ${CHUNK_TABLE} WHERE upload_id = $1`, [uploadId]);
+    throw new HttpError(
+      413,
+      "TOO_LARGE",
+      `\u062D\u062C\u0645 \u0627\u0644\u0645\u0644\u0641 ${(bytes / 1024 / 1024).toFixed(1)} \u0645\u064A\u062C\u0627\u060C \u0648\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${ceilingFor(kind) / 1024 / 1024} \u0645\u064A\u062C\u0627.`
+    );
+  }
+  const id = newId(kind === "video" ? "vid" : "img");
+  await query(
+    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, kind, mime, bytes, rows[0].owner_phone ?? null, base64]
+  );
+  await query(`DELETE FROM ${CHUNK_TABLE} WHERE upload_id = $1`, [uploadId]);
+  await query(`DELETE FROM ${CHUNK_TABLE} WHERE created_at < now() - interval '1 day'`).catch(() => {
+  });
   return { id, url: `/api/media/${id}`, mime, bytes, kind };
 }
 async function getMedia(id) {
@@ -6592,6 +6683,43 @@ apiRouter.post("/media", async (req, res) => {
     });
   }
 });
+apiRouter.post("/media/chunk", async (req, res) => {
+  try {
+    const { uploadId, index, dataUrl, mime, kind, ownerPhone } = req.body || {};
+    const result = await saveChunk({
+      uploadId,
+      index,
+      dataUrl,
+      mime,
+      kind: kind === "image" ? "image" : "video",
+      ownerPhone: typeof ownerPhone === "string" ? ownerPhone : void 0
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ error: err.code, message: err.message });
+    }
+    console.error("[media] chunk failed:", err);
+    res.status(500).json({ error: "CHUNK_FAILED", message: "\u062A\u0639\u0630\u0631 \u0631\u0641\u0639 \u062C\u0632\u0621 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641\u060C \u062D\u0627\u0648\u0644 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649." });
+  }
+});
+apiRouter.post("/media/complete", async (req, res) => {
+  try {
+    const { uploadId, totalChunks, kind } = req.body || {};
+    const media = await completeChunked(
+      String(uploadId || ""),
+      Number(totalChunks) || 0,
+      kind === "image" ? "image" : "video"
+    );
+    res.json({ success: true, ...media });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ error: err.code, message: err.message });
+    }
+    console.error("[media] complete failed:", err);
+    res.status(500).json({ error: "UPLOAD_FAILED", message: "\u062A\u0639\u0630\u0631 \u062A\u062C\u0645\u064A\u0639 \u0627\u0644\u0645\u0644\u0641\u060C \u062D\u0627\u0648\u0644 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649." });
+  }
+});
 apiRouter.get("/media/:id", async (req, res) => {
   try {
     const media = await getMedia(req.params.id);
@@ -6608,7 +6736,12 @@ apiRouter.get("/media/:id", async (req, res) => {
   }
 });
 apiRouter.get("/media", (_req, res) => {
-  res.json({ maxUploadBytes: MAX_RAW_BYTES, kinds: ["image", "video"] });
+  res.json({
+    maxUploadBytes: MAX_RAW_BYTES,
+    maxVideoBytes: MAX_VIDEO_BYTES,
+    chunkBytes: CHUNK_BYTES,
+    kinds: ["image", "video"]
+  });
 });
 apiRouter.delete("/media/:id", async (req, res) => {
   try {

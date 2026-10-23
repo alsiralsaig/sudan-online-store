@@ -21,7 +21,10 @@ import {
 import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
 import { newId, newCode } from './ids.ts';
-import { saveMedia, getMedia, deleteMedia, HttpError, MAX_RAW_BYTES } from './media.ts';
+import {
+  saveMedia, getMedia, deleteMedia, HttpError, MAX_RAW_BYTES,
+  MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
+} from './media.ts';
 import type {
   Sale,
   SaleItem,
@@ -3153,6 +3156,49 @@ apiRouter.post('/media', async (req, res) => {
   }
 });
 
+/**
+ * Chunked upload for big videos: the browser sends small slices (each one far
+ * below the serverless body limit), then asks for the file to be stitched.
+ */
+apiRouter.post('/media/chunk', async (req, res) => {
+  try {
+    const { uploadId, index, dataUrl, mime, kind, ownerPhone } = req.body || {};
+    const result = await saveChunk({
+      uploadId,
+      index,
+      dataUrl,
+      mime,
+      kind: kind === 'image' ? 'image' : 'video',
+      ownerPhone: typeof ownerPhone === 'string' ? ownerPhone : undefined,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ error: err.code, message: err.message });
+    }
+    console.error('[media] chunk failed:', err);
+    res.status(500).json({ error: 'CHUNK_FAILED', message: 'تعذر رفع جزء من الملف، حاول مرة أخرى.' });
+  }
+});
+
+apiRouter.post('/media/complete', async (req, res) => {
+  try {
+    const { uploadId, totalChunks, kind } = req.body || {};
+    const media = await completeChunked(
+      String(uploadId || ''),
+      Number(totalChunks) || 0,
+      kind === 'image' ? 'image' : 'video'
+    );
+    res.json({ success: true, ...media });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ error: err.code, message: err.message });
+    }
+    console.error('[media] complete failed:', err);
+    res.status(500).json({ error: 'UPLOAD_FAILED', message: 'تعذر تجميع الملف، حاول مرة أخرى.' });
+  }
+});
+
 apiRouter.get('/media/:id', async (req, res) => {
   try {
     const media = await getMedia(req.params.id);
@@ -3171,7 +3217,12 @@ apiRouter.get('/media/:id', async (req, res) => {
 });
 
 apiRouter.get('/media', (_req, res) => {
-  res.json({ maxUploadBytes: MAX_RAW_BYTES, kinds: ['image', 'video'] });
+  res.json({
+    maxUploadBytes: MAX_RAW_BYTES,
+    maxVideoBytes: MAX_VIDEO_BYTES,
+    chunkBytes: CHUNK_BYTES,
+    kinds: ['image', 'video'],
+  });
 });
 
 apiRouter.delete('/media/:id', async (req, res) => {

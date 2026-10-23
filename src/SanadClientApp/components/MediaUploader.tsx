@@ -1,9 +1,14 @@
 import React, { useRef, useState } from 'react';
 import { Camera, Video, X, Loader2, ImageOff } from 'lucide-react';
 
-/** Vercel rejects serverless request bodies over ~4.5 MB, base64 adds 33%. */
-const MAX_VIDEO_BYTES = 3 * 1024 * 1024;
+/** A single request is capped at ~4.5 MB by Vercel, so big videos go in slices. */
+const SINGLE_SHOT_BYTES = 2.8 * 1024 * 1024;
+/** What a publisher may send in total (stitched on the server). */
+const MAX_VIDEO_BYTES = 40 * 1024 * 1024;
 const MAX_IMAGE_SOURCE_BYTES = 15 * 1024 * 1024;
+/** Multiple of 3 bytes, so every base64 slice joins cleanly on the server. */
+const CHUNK_BYTES = 2_100_000;
+const CHUNK_RETRIES = 3;
 
 const MAX_PHOTO_EDGE = 1280;
 const PHOTO_QUALITY = 0.82;
@@ -45,13 +50,71 @@ async function compressImage(file: File): Promise<string> {
   return canvas.toDataURL('image/jpeg', PHOTO_QUALITY);
 }
 
-function readAsDataUrl(file: File): Promise<string> {
+function readAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(new Error('تعذر قراءة الملف'));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
+}
+
+function makeUploadId(): string {
+  const rnd =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID().replace(/-/g, '')
+      : `${Date.now()}${Math.random().toString(36).slice(2)}`;
+  return `up${rnd}`.slice(0, 40);
+}
+
+/**
+ * Upload a file in small slices so a 20–30 MB video still works over a server
+ * that refuses big request bodies. Each slice is retried on a network hiccup.
+ */
+async function uploadInChunks(
+  file: File,
+  kind: 'image' | 'video',
+  onProgress: (percent: number) => void
+): Promise<{ url: string; kind: 'image' | 'video' }> {
+  const uploadId = makeUploadId();
+  const totalChunks = Math.ceil(file.size / CHUNK_BYTES);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const slice = file.slice(i * CHUNK_BYTES, Math.min(file.size, (i + 1) * CHUNK_BYTES));
+    const dataUrl = await readAsDataUrl(slice);
+
+    let lastError: Error | null = null;
+    let done = false;
+    for (let attempt = 0; attempt < CHUNK_RETRIES && !done; attempt++) {
+      try {
+        const res = await fetch('/api/media/chunk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uploadId, index: i, dataUrl, mime: file.type || 'video/mp4', kind }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.message || 'تعذر رفع جزء من الملف.');
+        done = true;
+      } catch (err) {
+        lastError = err as Error;
+        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+      }
+    }
+    if (!done) throw lastError || new Error('تعذر رفع الملف.');
+
+    onProgress(Math.round(((i + 1) / (totalChunks + 1)) * 100));
+  }
+
+  const res = await fetch('/api/media/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uploadId, totalChunks, kind }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.message || 'تعذر تجميع الملف بعد الرفع.');
+
+  onProgress(100);
+  return { url: body.url, kind };
 }
 
 export const MediaUploader: React.FC<MediaUploaderProps> = ({
@@ -62,6 +125,7 @@ export const MediaUploader: React.FC<MediaUploaderProps> = ({
   const photoInput = useRef<HTMLInputElement>(null);
   const videoInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<null | 'image' | 'video'>(null);
+  const [progress, setProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
   const upload = async (file: File, kind: 'image' | 'video') => {
@@ -90,32 +154,39 @@ export const MediaUploader: React.FC<MediaUploaderProps> = ({
     }
 
     setBusy(kind);
+    setProgress(0);
 
     try {
-      const dataUrl =
-        kind === 'image' ? await compressImage(file) : await readAsDataUrl(file);
+      let url = '';
+      let previewUrl: string;
 
-      const res = await fetch('/api/media', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataUrl, kind }),
-      });
+      if (kind === 'image' || file.size <= SINGLE_SHOT_BYTES) {
+        // Photos are compressed; small videos go in one request.
+        const dataUrl = kind === 'image' ? await compressImage(file) : await readAsDataUrl(file);
+        setProgress(45);
 
-      const body = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(body.message || 'تعذر رفع الملف.');
+        const res = await fetch('/api/media', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataUrl, kind }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.message || 'تعذر رفع الملف.');
+        url = body.url;
+        previewUrl = kind === 'image' ? dataUrl : URL.createObjectURL(file);
+      } else {
+        // Big video: slice it up so no request hits the body limit.
+        const uploaded = await uploadInChunks(file, kind, setProgress);
+        url = uploaded.url;
+        previewUrl = URL.createObjectURL(file);
       }
 
-      onChange({
-        url: body.url,
-        kind,
-        previewUrl: kind === 'image' ? dataUrl : URL.createObjectURL(file),
-      });
+      onChange({ url, kind, previewUrl });
     } catch (err) {
       setError((err as Error).message || 'تعذر رفع الملف.');
     } finally {
       setBusy(null);
+      setProgress(0);
       if (photoInput.current) photoInput.current.value = '';
       if (videoInput.current) videoInput.current.value = '';
     }
@@ -183,10 +254,24 @@ export const MediaUploader: React.FC<MediaUploaderProps> = ({
               <Video className="w-5 h-5" />
             )}
             <span className="text-[11px] font-bold">
-              {busy === 'video' ? 'جارٍ الرفع…' : 'فيديو قصير'}
+              {busy === 'video' ? `جارٍ الرفع… ${progress}%` : 'فيديو الإعلان'}
             </span>
-            <span className="text-[9px] text-slate-500">حتى 3 ميجا</span>
+            <span className="text-[9px] text-slate-500">حتى 40 ميجا</span>
           </button>
+        </div>
+      )}
+
+      {busy === 'video' && progress > 0 && (
+        <div className="mt-2">
+          <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-emerald-600 transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1 text-center">
+            رفع الفيديو… {progress}% (لا تسكّر الصفحة)
+          </p>
         </div>
       )}
 
