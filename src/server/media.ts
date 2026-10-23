@@ -24,6 +24,18 @@ export const CHUNK_BYTES = 2_100_000;
 
 const CHUNK_TABLE = 'sanad_media_chunks';
 
+/**
+ * Exact size of a base64 payload. The naive `len * 3 / 4` overshoots by up to
+ * two bytes because of the tail padding, which would wrongly reject a file that
+ * sits exactly on the ceiling.
+ */
+function base64Bytes(b64: string): number {
+  let padding = 0;
+  if (b64.endsWith('==')) padding = 2;
+  else if (b64.endsWith('=')) padding = 1;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+
 let ready: Promise<void> | null = null;
 
 export function ensureMediaTable(): Promise<void> {
@@ -115,7 +127,7 @@ export async function saveMedia(input: SaveMediaInput): Promise<SavedMedia> {
   }
 
   const base64 = dataUrl.slice(comma + 1);
-  const bytes = Math.floor((base64.length * 3) / 4);
+  const bytes = base64Bytes(base64);
   if (bytes > MAX_RAW_BYTES) {
     throw new HttpError(
       413,
@@ -170,7 +182,7 @@ export async function saveChunk(input: ChunkInput): Promise<{ received: number; 
     throw new HttpError(400, 'BAD_DATA_URL', 'صيغة الجزء غير صحيحة.');
   }
   const base64 = dataUrl.slice(comma + 1);
-  const bytes = Math.floor((base64.length * 3) / 4);
+  const bytes = base64Bytes(base64);
   if (bytes > CHUNK_BYTES * 1.1) {
     throw new HttpError(413, 'CHUNK_TOO_LARGE', 'الجزء المرسل أكبر من المسموح.');
   }
@@ -223,7 +235,7 @@ export async function completeChunked(
 
   const mime = String(rows[0].mime || (kind === 'video' ? 'video/mp4' : 'image/jpeg'));
   const base64 = rows.map((r) => String(r.data)).join('');
-  const bytes = Math.floor((base64.length * 3) / 4);
+  const bytes = base64Bytes(base64);
 
   if (bytes > ceilingFor(kind)) {
     await query(`DELETE FROM ${CHUNK_TABLE} WHERE upload_id = $1`, [uploadId]);

@@ -4062,6 +4062,12 @@ var MAX_VIDEO_BYTES = 40 * 1024 * 1024;
 var MAX_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
 var CHUNK_BYTES = 21e5;
 var CHUNK_TABLE = "sanad_media_chunks";
+function base64Bytes(b64) {
+  let padding = 0;
+  if (b64.endsWith("==")) padding = 2;
+  else if (b64.endsWith("=")) padding = 1;
+  return Math.floor(b64.length * 3 / 4) - padding;
+}
 var ready = null;
 function ensureMediaTable() {
   if (!ready) {
@@ -4127,7 +4133,7 @@ async function saveMedia(input) {
     );
   }
   const base64 = dataUrl.slice(comma + 1);
-  const bytes = Math.floor(base64.length * 3 / 4);
+  const bytes = base64Bytes(base64);
   if (bytes > MAX_RAW_BYTES) {
     throw new HttpError(
       413,
@@ -4162,7 +4168,7 @@ async function saveChunk(input) {
     throw new HttpError(400, "BAD_DATA_URL", "\u0635\u064A\u063A\u0629 \u0627\u0644\u062C\u0632\u0621 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629.");
   }
   const base64 = dataUrl.slice(comma + 1);
-  const bytes = Math.floor(base64.length * 3 / 4);
+  const bytes = base64Bytes(base64);
   if (bytes > CHUNK_BYTES * 1.1) {
     throw new HttpError(413, "CHUNK_TOO_LARGE", "\u0627\u0644\u062C\u0632\u0621 \u0627\u0644\u0645\u0631\u0633\u0644 \u0623\u0643\u0628\u0631 \u0645\u0646 \u0627\u0644\u0645\u0633\u0645\u0648\u062D.");
   }
@@ -4199,7 +4205,7 @@ async function completeChunked(uploadId, totalChunks, kind) {
   }
   const mime = String(rows[0].mime || (kind === "video" ? "video/mp4" : "image/jpeg"));
   const base64 = rows.map((r) => String(r.data)).join("");
-  const bytes = Math.floor(base64.length * 3 / 4);
+  const bytes = base64Bytes(base64);
   if (bytes > ceilingFor(kind)) {
     await query(`DELETE FROM ${CHUNK_TABLE} WHERE upload_id = $1`, [uploadId]);
     throw new HttpError(

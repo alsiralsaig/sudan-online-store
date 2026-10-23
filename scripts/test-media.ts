@@ -126,6 +126,41 @@ ok('الفيديو يُقرأ كامل ومطابق', streamedBuf.length === big
 const replay = await post('/api/media/complete', { uploadId, totalChunks, kind: 'video' });
 ok('إعادة التجميع بعد الحذف → 404', replay.status === 404, `(${replay.status})`);
 
+console.log('\n=== سقف 40 ميجا بالظبط ===');
+/**
+ * The publisher may send exactly 40 MiB. The naive base64 size estimate
+ * overshoots by a byte or two, so this guards the tolerance.
+ */
+const CEIL = 40 * 1024 * 1024;
+const ceilId = 'upceil' + Date.now().toString(36);
+const ceilPayload = Buffer.alloc(CEIL, 9);
+const ceilChunks = Math.ceil(CEIL / CHUNK);
+for (let i = 0; i < ceilChunks; i++) {
+  const slice = ceilPayload.subarray(i * CHUNK, Math.min(CEIL, (i + 1) * CHUNK));
+  await post('/api/media/chunk', {
+    uploadId: ceilId, index: i, mime: 'video/mp4', kind: 'video',
+    dataUrl: `data:video/mp4;base64,${slice.toString('base64')}`,
+  });
+}
+const ceilDone = await post('/api/media/complete', { uploadId: ceilId, totalChunks: ceilChunks, kind: 'video' });
+ok('40 ميجا بالظبط يُقبل', ceilDone.status === 200, `(${ceilDone.status}) ${ceilDone.body?.message || ''}`);
+ok('الحجم = 40 ميجا تماماً', ceilDone.body?.bytes === CEIL, String(ceilDone.body?.bytes));
+
+console.log('\n=== أكثر من 40 ميجا يُرفض برسالة واضحة ===');
+const overId = 'upover' + Date.now().toString(36);
+const overPayload = Buffer.alloc(CEIL + 3 * 1024 * 1024, 5);
+const overChunks = Math.ceil(overPayload.length / CHUNK);
+for (let i = 0; i < overChunks; i++) {
+  const slice = overPayload.subarray(i * CHUNK, Math.min(overPayload.length, (i + 1) * CHUNK));
+  await post('/api/media/chunk', {
+    uploadId: overId, index: i, mime: 'video/mp4', kind: 'video',
+    dataUrl: `data:video/mp4;base64,${slice.toString('base64')}`,
+  });
+}
+const overDone = await post('/api/media/complete', { uploadId: overId, totalChunks: overChunks, kind: 'video' });
+ok('43 ميجا يُرفض → 413', overDone.status === 413, `(${overDone.status})`);
+ok('رسالة الرفض تشرح الحد', String(overDone.body?.message || '').includes('الحد الأقصى 40'), overDone.body?.message);
+
 console.log('\n=== الكاش ===');
 ok('Cache-Control immutable', (img.headers.get('cache-control') || '').includes('immutable'), img.headers.get('cache-control') || '');
 
