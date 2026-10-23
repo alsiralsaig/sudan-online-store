@@ -26,6 +26,7 @@ import {
   Wrench,
   Package,
   Stethoscope,
+  Play,
 } from 'lucide-react';
 import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
 import { SanadLogo } from '../../components/Common/SanadLogo.tsx';
@@ -188,7 +189,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
    */
   const vipSlides: ClientMarketAd[] = [
     ...(vipAds.length > 0 ? vipAds : [vipPlaceholder]),
-    ...ads.filter((a) => !!a.imageUrl && !a.isVip).slice().sort(byNewest),
+    ...ads.filter((a) => (!!a.imageUrl || !!a.videoUrl) && !a.isVip).slice().sort(byNewest),
   ].slice(0, 8);
 
   useEffect(() => {
@@ -437,18 +438,36 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
         >
           {vipSlides.map((slide) => (
             <div key={slide.id} className="relative w-full shrink-0 h-full overflow-hidden bg-slate-100">
-              <img
-                src={slide.imageUrl}
-                alt={slide.title}
-                loading="lazy"
-                decoding="async"
-                draggable={false}
-                onClick={() => onSelectAd(slide)}
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.opacity = '0';
-                }}
-                className="w-full h-full object-cover cursor-pointer"
-              />
+              {slide.imageUrl ? (
+                <img
+                  src={slide.imageUrl}
+                  alt={slide.title}
+                  loading="lazy"
+                  decoding="async"
+                  draggable={false}
+                  onClick={() => onSelectAd(slide)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.opacity = '0';
+                  }}
+                  className="w-full h-full object-cover cursor-pointer"
+                />
+              ) : slide.videoUrl ? (
+                <video
+                  src={slide.videoUrl}
+                  className="w-full h-full object-cover cursor-pointer"
+                  muted
+                  playsInline
+                  preload="metadata"
+                  onClick={() => onSelectAd(slide)}
+                />
+              ) : (
+                <div className="w-full h-full bg-slate-200" />
+              )}
+              {slide.videoUrl && (
+                <span className="absolute bottom-2 left-2 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center pointer-events-none">
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                </span>
+              )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent pointer-events-none" />
 
               <div className="absolute top-3 right-3 px-2.5 py-1 bg-amber-400 text-slate-950 font-black rounded-lg text-[11px] shadow flex items-center gap-1">
@@ -525,10 +544,24 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
                   <div className="relative aspect-[4/3] w-full bg-slate-100 overflow-hidden">
                     {ad.imageUrl ? (
                       <img src={ad.imageUrl} alt={ad.title} className="w-full h-full object-cover" />
+                    ) : ad.videoUrl ? (
+                      // No cover photo: show the clip's own first frame.
+                      <video
+                        src={ad.videoUrl}
+                        className="w-full h-full object-cover"
+                        muted
+                        playsInline
+                        preload="metadata"
+                      />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400">
-                        فيديو
+                        بلا صورة
                       </div>
+                    )}
+                    {ad.videoUrl && (
+                      <span className="absolute bottom-2 left-2 w-6 h-6 rounded-full bg-black/65 text-white flex items-center justify-center">
+                        <Play className="w-3 h-3 fill-current" />
+                      </span>
                     )}
                     <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/95 text-slate-900 shadow-xs">
                       {ad.tag || (ad.isVip ? 'VIP' : 'للبيع')}

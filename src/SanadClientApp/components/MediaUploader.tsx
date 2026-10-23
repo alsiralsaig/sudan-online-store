@@ -18,6 +18,11 @@ export interface UploadedMedia {
   kind: 'image' | 'video';
   /** Blob URL for instant local preview before/while the server copy loads. */
   previewUrl?: string;
+  /**
+   * Cover photo grabbed from the first frames of the video, uploaded as a real
+   * image. Ads show it in the grid and the VIP strip instead of a blank box.
+   */
+  posterUrl?: string;
 }
 
 interface MediaUploaderProps {
@@ -57,6 +62,78 @@ function readAsDataUrl(blob: Blob): Promise<string> {
     reader.onerror = () => reject(new Error('تعذر قراءة الملف'));
     reader.readAsDataURL(blob);
   });
+}
+
+/**
+ * Grab a still frame from a video so the ad has a cover photo. Uses a canvas
+ * capture at ~0.5 s (past any black intro frame); returns null if the browser
+ * refuses to decode the file, in which case the card falls back to <video>.
+ */
+async function extractPoster(file: File): Promise<string | null> {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.preload = 'metadata';
+  video.muted = true;
+  video.playsInline = true;
+  video.src = url;
+
+  try {
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      video.onloadeddata = done;
+      video.onerror = done;
+      setTimeout(done, 8000);
+    });
+
+    if (!video.videoWidth) return null;
+
+    // Nudge forward a touch: the very first frame of many clips is black.
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      video.onseeked = done;
+      try {
+        video.currentTime = Math.min(0.5, (video.duration || 1) / 3);
+      } catch {
+        done();
+      }
+      setTimeout(done, 3000);
+    });
+
+    const source = video.videoWidth ? video : null;
+    const w = source?.videoWidth || 1280;
+    const h = source?.videoHeight || 720;
+    const scale = Math.min(1, MAX_PHOTO_EDGE / Math.max(w, h));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', PHOTO_QUALITY);
+    return dataUrl.length > 5000 ? dataUrl : null;
+  } catch {
+    return null;
+  } finally {
+    video.src = '';
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Upload a small poster image and return its public URL. */
+async function uploadPoster(dataUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch('/api/media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataUrl, kind: 'image' }),
+    });
+    const body = await res.json().catch(() => ({}));
+    return res.ok ? body.url : null;
+  } catch {
+    return null;
+  }
 }
 
 function makeUploadId(): string {
@@ -175,10 +252,17 @@ export const MediaUploader: React.FC<MediaUploaderProps> = ({
         url = body.url;
         previewUrl = kind === 'image' ? dataUrl : URL.createObjectURL(file);
       } else {
-        // Big video: slice it up so no request hits the body limit.
+        // Big video: slice it up so no request hits the body limit, and grab a
+        // cover frame in parallel so the card never looks empty.
+        const posterPromise = extractPoster(file);
         const uploaded = await uploadInChunks(file, kind, setProgress);
         url = uploaded.url;
         previewUrl = URL.createObjectURL(file);
+
+        const posterData = await posterPromise;
+        const posterUrl = posterData ? await uploadPoster(posterData) : null;
+        onChange({ url, kind, previewUrl, posterUrl: posterUrl || undefined });
+        return;
       }
 
       onChange({ url, kind, previewUrl });

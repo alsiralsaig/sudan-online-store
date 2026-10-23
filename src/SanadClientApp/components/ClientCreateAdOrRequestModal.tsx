@@ -137,7 +137,8 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
         phone: adForm.phone,
         whatsapp: adForm.phone,
         description: adForm.description,
-        imageUrl: adMedia.kind === 'image' ? adMedia.url : '',
+        // A video ad still carries a cover photo (grabbed from its first frame).
+        imageUrl: adMedia.kind === 'image' ? adMedia.url : adMedia.posterUrl || '',
         videoUrl: adMedia.kind === 'video' ? adMedia.url : undefined,
         isVip: adForm.isVip,
         planId: adForm.planId,
