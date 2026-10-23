@@ -3188,15 +3188,79 @@ apiRouter.delete('/media/:id', async (req, res) => {
    Market ads — publishing fee + admin moderation + deletion
    ========================================================================= */
 
+/**
+ * Publishing plans — the same subscription ladder the reference market app
+ * shows: monthly / 3 months (free later) / 6 months / yearly. A VIP slot is an
+ * optional add-on charged on top of the plan.
+ */
+const AD_PLANS: AdPlan[] = [
+  {
+    id: 'monthly',
+    label: 'خطة شهرية',
+    days: 30,
+    priceSdg: Number(process.env.AD_PLAN_MONTHLY_SDG ?? 14000),
+    available: true,
+  },
+  {
+    id: 'quarterly',
+    label: 'خطة 3 شهور',
+    days: 90,
+    priceSdg: 0,
+    available: false,
+    note: 'مجانية: لاحقاً',
+  },
+  {
+    id: 'biannual',
+    label: 'خطة 6 شهور',
+    days: 180,
+    priceSdg: Number(process.env.AD_PLAN_BIANNUAL_SDG ?? 60000),
+    available: true,
+  },
+  {
+    id: 'yearly',
+    label: 'خطة سنوية',
+    days: 365,
+    priceSdg: Number(process.env.AD_PLAN_YEARLY_SDG ?? 100000),
+    available: true,
+  },
+];
+
 /** Publishing fees. Admins can see them; publishers accept them on submit. */
 const AD_PRICING = {
   standardFeeSdg: Number(process.env.AD_FEE_STANDARD_SDG ?? 0),
   vipFeeSdg: Number(process.env.AD_FEE_VIP_SDG ?? 5000),
   currency: 'SDG',
+  plans: AD_PLANS,
 };
 
-function feeFor(isVip: boolean): number {
-  return isVip ? AD_PRICING.vipFeeSdg : AD_PRICING.standardFeeSdg;
+type AdPlanId = 'monthly' | 'quarterly' | 'biannual' | 'yearly';
+
+interface AdPlan {
+  id: AdPlanId;
+  label: string;
+  days: number;
+  priceSdg: number;
+  available: boolean;
+  note?: string;
+}
+
+/** The plan the publisher picked (monthly is the safe default). */
+function planFor(planId?: string) {
+  const wanted = AD_PLANS.find((p) => p.id === planId && p.available);
+  return wanted || AD_PLANS[0];
+}
+
+/** Plan price + the VIP add-on, if the ad asks for a VIP slot. */
+function feeFor(planId: string | undefined, isVip: boolean): number {
+  const plan = planFor(planId);
+  return plan.priceSdg + (isVip ? AD_PRICING.vipFeeSdg : 0);
+}
+
+/** An approved ad only stays in the market while its plan is running. */
+function isLiveAd(ad: { status: string; expiresAt?: string }): boolean {
+  if (ad.status !== 'approved') return false;
+  if (!ad.expiresAt) return true; // ads published before plans never expire
+  return new Date(ad.expiresAt).getTime() > Date.now();
 }
 
 apiRouter.get('/market-ads/pricing', (_req, res) => {
@@ -3208,11 +3272,16 @@ apiRouter.get('/market-ads', (req, res) => {
   const ownerToken = String(req.headers['x-owner-token'] || '');
   const all = db.getMarketAds();
 
-  const approved = all.filter((a) => a.status === 'approved');
-  // Publishers also see their own ads whatever the status, so they can track
-  // review progress and remove them.
+  // Live = approved and inside its subscription window; newest first, so a
+  // freshly approved VIP ad always leads the showcase.
+  const approved = all
+    .filter(isLiveAd)
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  // Publishers also see their own ads whatever the status (pending, rejected,
+  // live or expired), so they can track progress, the plan left, and remove it.
   const mine = ownerToken
-    ? all.filter((a) => a.ownerToken === ownerToken && a.status !== 'approved')
+    ? all.filter((a) => a.ownerToken === ownerToken)
     : [];
 
   res.json({ ads: approved, mine, pricing: AD_PRICING });
@@ -3221,7 +3290,7 @@ apiRouter.get('/market-ads', (req, res) => {
 apiRouter.post('/market-ads', (req, res) => {
   const {
     title, category, priceSdg, location, phone, whatsapp, description,
-    imageUrl, videoUrl, isVip, publisherName, ownerToken, paymentRef,
+    imageUrl, videoUrl, isVip, publisherName, ownerToken, paymentRef, planId,
   } = req.body || {};
 
   if (!title || String(title).trim().length < 4) {
@@ -3250,7 +3319,12 @@ apiRouter.post('/market-ads', (req, res) => {
     isVip: !!isVip,
     publisherName: publisherName || 'زبون منصة سند',
     ownerToken: String(ownerToken),
-    feeSdg: feeFor(!!isVip),
+    feeSdg: feeFor(planId, !!isVip),
+    planId: planFor(planId).id,
+    planLabel: planFor(planId).label,
+    durationDays: planFor(planId).days,
+    // The clock starts on approval; the ad stops showing when it runs out.
+    expiresAt: new Date(Date.now() + planFor(planId).days * 24 * 60 * 60 * 1000).toISOString(),
     paymentRef: paymentRef || undefined,
   });
 
@@ -3258,7 +3332,7 @@ apiRouter.post('/market-ads', (req, res) => {
     app: 'admin',
     kind: 'new_ad',
     title: 'إعلان جديد بانتظار الموافقة',
-    body: `${ad.title} — ${ad.location}${ad.feeSdg > 0 ? ` • رسوم ${ad.feeSdg.toLocaleString('en-US')} ج.س` : ' • نشر مجاني'}`,
+    body: `${ad.title} — ${ad.location} • ${ad.planLabel || 'خطة'}${ad.feeSdg > 0 ? ` • رسوم ${ad.feeSdg.toLocaleString('en-US')} ج.س` : ' • نشر مجاني'}`,
     linkTab: 'market_ads',
   }).catch(() => {});
 

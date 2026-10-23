@@ -11,6 +11,7 @@ import {
   RefreshCw,
   AlertTriangle,
   Banknote,
+  CalendarDays,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 
@@ -28,6 +29,8 @@ interface Ad {
   imageUrl: string;
   videoUrl?: string;
   isVip: boolean;
+  planLabel?: string;
+  expiresAt?: string;
   publisherName?: string;
   feeSdg: number;
   paymentRef?: string;
@@ -248,6 +251,16 @@ export const MarketAdsAdminView: React.FC = () => {
                       رسوم النشر: {ad.feeSdg > 0 ? `${money(ad.feeSdg)} ج.س` : 'مجاني'}
                       {ad.isVip && ' (VIP)'}
                     </span>
+                    {ad.planLabel && (
+                      <span className="text-[11px] text-sky-400 font-bold flex items-center gap-1">
+                        <CalendarDays className="w-3 h-3" /> {ad.planLabel}
+                      </span>
+                    )}
+                    {ad.expiresAt && (
+                      <span className="text-[10px] text-slate-400">
+                        ينتهي: {new Date(ad.expiresAt).toLocaleDateString('ar-EG')}
+                      </span>
+                    )}
                     {ad.paymentRef && (
                       <span className="text-[10px] text-emerald-400">سداد: {ad.paymentRef}</span>
                     )}
@@ -327,6 +340,8 @@ export const MarketAdsAdminView: React.FC = () => {
               <div className="text-xs text-slate-300 space-y-1">
                 <p>سعر السلعة: <b>{money(preview.priceSdg)} ج.س</b></p>
                 <p>رسوم النشر: <b className="text-amber-400">{preview.feeSdg > 0 ? `${money(preview.feeSdg)} ج.س` : 'مجاني'}</b></p>
+                {preview.planLabel && <p>الخطة: <b className="text-sky-400">{preview.planLabel}</b></p>}
+                {preview.expiresAt && <p>ينتهي في: <b>{new Date(preview.expiresAt).toLocaleDateString('ar-EG')}</b></p>}
                 <p>الهاتف: {preview.phone}</p>
                 <p>المعلن: {preview.publisherName}</p>
               </div>

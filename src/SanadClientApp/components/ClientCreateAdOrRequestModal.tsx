@@ -24,7 +24,19 @@ interface ClientCreateAdOrRequestModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAdCreated: (ad: ClientMarketAd) => void;
-  pricing?: { standardFeeSdg: number; vipFeeSdg: number; currency: string };
+  pricing?: {
+    standardFeeSdg: number;
+    vipFeeSdg: number;
+    currency: string;
+    plans?: {
+      id: string;
+      label: string;
+      days: number;
+      priceSdg: number;
+      available: boolean;
+      note?: string;
+    }[];
+  };
   onRequestCreated: (request: ClientPurchaseRequest) => void;
 }
 
@@ -35,6 +47,16 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
   onRequestCreated,
   pricing = { standardFeeSdg: 0, vipFeeSdg: 5000, currency: 'SDG' },
 }) => {
+  /** Fallback ladder, identical to what the server sends. */
+  const plans =
+    pricing.plans && pricing.plans.length > 0
+      ? pricing.plans
+      : [
+          { id: 'monthly', label: 'خطة شهرية', days: 30, priceSdg: 14000, available: true, note: undefined },
+          { id: 'quarterly', label: 'خطة 3 شهور', days: 90, priceSdg: 0, available: false, note: 'مجانية: لاحقاً' },
+          { id: 'biannual', label: 'خطة 6 شهور', days: 180, priceSdg: 60000, available: true, note: undefined },
+          { id: 'yearly', label: 'خطة سنوية', days: 365, priceSdg: 100000, available: true, note: undefined },
+        ];
   const [activeTab, setActiveTab] = useState<'ad' | 'request'>('ad');
   const [isSuccess, setIsSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -48,6 +70,7 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
     phone: '',
     description: '',
     isVip: false,
+    planId: 'monthly',
   });
 
   const [adMedia, setAdMedia] = useState<UploadedMedia | null>(null);
@@ -90,7 +113,9 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
     { label: 'مواد تموينية وغذائية', url: '/assets/images/product_cooking_oil_1792173269992.jpg' },
   ];
 
-  const feeSdg = adForm.isVip ? pricing.vipFeeSdg : pricing.standardFeeSdg;
+  const selectedPlan = plans.find((p) => p.id === adForm.planId) || plans[0];
+  const planFeeSdg = selectedPlan?.priceSdg || 0;
+  const feeSdg = planFeeSdg + (adForm.isVip ? pricing.vipFeeSdg : 0);
 
   const handleCreateAd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,14 +140,13 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
         imageUrl: adMedia.kind === 'image' ? adMedia.url : '',
         videoUrl: adMedia.kind === 'video' ? adMedia.url : undefined,
         isVip: adForm.isVip,
+        planId: adForm.planId,
         ownerToken: getOwnerToken(),
       });
 
       setIsSuccess(true);
       setSuccessMessage(
-        res.ad.feeSdg > 0
-          ? `تم إرسال إعلانك للإدارة. رسوم النشر ${res.ad.feeSdg.toLocaleString('en-US')} ج.س — سيظهر في السوق بعد الموافقة وتأكيد السداد.`
-          : 'تم إرسال إعلانك للإدارة. سيظهر في السوق بعد الموافقة.'
+        `${res.ad.feeSdg > 0 ? `تم إرسال إعلانك للإدارة على ${res.ad.planLabel || selectedPlan?.label || ''} — رسوم النشر ${res.ad.feeSdg.toLocaleString('en-US')} ج.س.` : 'تم إرسال إعلانك للإدارة.'} سيظهر في السوق بعد الموافقة${res.ad.feeSdg > 0 ? ' وتأكيد السداد' : ''}، ويستمر ${res.ad.durationDays || selectedPlan?.days || 30} يوم.`
       );
     } catch (err) {
       setSubmitError((err as Error).message || 'تعذر إرسال الإعلان. تحقق من الاتصال وحاول مرة أخرى.');
@@ -360,12 +384,65 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
               </span>
             </div>
 
-            {/* Publishing fee — the amount the admin will confirm */}
-            <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-              <span className="text-[11px] font-bold text-slate-600">رسوم نشر الإعلان:</span>
-              <span className="text-xs font-black text-emerald-700">
-                {feeSdg > 0 ? `${feeSdg.toLocaleString('en-US')} ج.س` : 'مجاناً'}
-              </span>
+            {/* Publishing plans — same ladder as the reference market app */}
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-black text-slate-700 flex items-center gap-1">
+                <Tag className="w-3 h-3 text-emerald-600" /> اختر خطة نشر الإعلان:
+              </p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {plans.map((plan) => {
+                  const active = adForm.planId === plan.id;
+                  return (
+                    <button
+                      key={plan.id}
+                      type="button"
+                      disabled={!plan.available}
+                      onClick={() => setAdForm({ ...adForm, planId: plan.id })}
+                      className={`text-right p-2 rounded-xl border transition-all ${
+                        active
+                          ? 'border-emerald-600 bg-emerald-50 ring-2 ring-emerald-500/20'
+                          : plan.available
+                          ? 'border-slate-200 bg-white hover:border-emerald-300'
+                          : 'border-dashed border-amber-300 bg-amber-50/60 opacity-80 cursor-not-allowed'
+                      }`}
+                    >
+                      <span className="flex items-center justify-between gap-1">
+                        <span className="text-[11px] font-black text-slate-800">{plan.label}</span>
+                        {active && <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                      </span>
+                      <span className="block text-[10px] text-slate-500 mt-0.5">
+                        {plan.available
+                          ? `${plan.priceSdg > 0 ? `${plan.priceSdg.toLocaleString('en-US')} ج.س` : 'مجاناً'} • ${plan.days} يوم`
+                          : plan.note || 'غير متاحة حالياً'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Total — plan + optional VIP slot, the amount the admin confirms */}
+            <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-slate-600">{selectedPlan?.label || 'الخطة'}:</span>
+                <span className="text-[11px] font-bold text-slate-700">
+                  {planFeeSdg > 0 ? `${planFeeSdg.toLocaleString('en-US')} ج.س` : 'مجاناً'}
+                </span>
+              </div>
+              {adForm.isVip && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-amber-700">إضافة VIP:</span>
+                  <span className="text-[11px] font-bold text-amber-700">
+                    +{pricing.vipFeeSdg.toLocaleString('en-US')} ج.س
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-200">
+                <span className="text-[11px] font-black text-slate-700">إجمالي رسوم النشر:</span>
+                <span className="text-xs font-black text-emerald-700">
+                  {feeSdg > 0 ? `${feeSdg.toLocaleString('en-US')} ج.س` : 'مجاناً'}
+                </span>
+              </div>
             </div>
 
             <p className="text-[10px] text-slate-500 leading-relaxed">

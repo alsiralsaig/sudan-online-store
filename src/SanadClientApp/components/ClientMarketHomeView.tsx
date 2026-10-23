@@ -156,35 +156,40 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
     return () => clearInterval(timer);
   }, [banners.length]);
 
-  const vipAd: ClientMarketAd =
-    ads.find((a) => a.isVip) ||
-    ({
-      id: 'vip_placeholder',
-      title: 'مكيفات أيس فخامة وجودة',
-      category: 'الإلكترونيات',
-      location: 'الخرطوم',
-      priceSdg: 1350000,
-      timeAgo: 'قبل ساعة',
-      imageUrl: '/assets/aistudio/Screenshot_________________9bd493de.jpg',
-      isVip: true,
-      tag: 'VIP',
-      phone: '0912345678',
-      whatsapp: '0912345678',
-      description: 'مكيفات أصلية موفرة للطاقة مع كفالة سنتين وتركيب فوري.',
-      publisherName: 'معرض الأجهزة المعتمد',
-      createdAt: new Date().toISOString(),
-    } as ClientMarketAd);
+  /** Newest first, so a freshly approved VIP ad always leads the showcase. */
+  const byNewest = (a: ClientMarketAd, b: ClientMarketAd) =>
+    new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+
+  const vipAds = ads.filter((a) => a.isVip).slice().sort(byNewest);
+
+  const vipPlaceholder: ClientMarketAd = {
+    id: 'vip_placeholder',
+    title: 'مكيفات أيس فخامة وجودة',
+    category: 'الإلكترونيات',
+    location: 'الخرطوم',
+    priceSdg: 1350000,
+    timeAgo: 'قبل ساعة',
+    imageUrl: '/assets/aistudio/Screenshot_________________9bd493de.jpg',
+    isVip: true,
+    tag: 'VIP',
+    phone: '0912345678',
+    whatsapp: '0912345678',
+    description: 'مكيفات أصلية موفرة للطاقة مع كفالة سنتين وتركيب فوري.',
+    publisherName: 'معرض الأجهزة المعتمد',
+    createdAt: new Date().toISOString(),
+  } as ClientMarketAd;
 
   const latestAds = ads.slice(0, 10);
 
   /**
-   * The VIP showcase rotates exactly like the banner above it (same size, its
-   * own timer): VIP ads first, then the newest ads that carry a photo.
+   * The VIP showcase slides exactly like the banner above it (same size, its
+   * own timer): **every** VIP ad first, then the newest ads that carry a photo
+   * so the strip never looks empty.
    */
   const vipSlides: ClientMarketAd[] = [
-    vipAd,
-    ...ads.filter((a) => !!a.imageUrl && a.id !== vipAd.id && !a.isVip),
-  ].slice(0, 6);
+    ...(vipAds.length > 0 ? vipAds : [vipPlaceholder]),
+    ...ads.filter((a) => !!a.imageUrl && !a.isVip).slice().sort(byNewest),
+  ].slice(0, 8);
 
   useEffect(() => {
     if (vipSlides.length < 2) return;

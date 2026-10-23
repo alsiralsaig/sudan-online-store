@@ -708,6 +708,13 @@ export interface MarketAd {
   ownerToken: string;
   /** Publishing fee charged for this ad, in SDG. */
   feeSdg: number;
+  /** Subscription plan the publisher bought (monthly / 6 months / yearly). */
+  planId?: AdPlanId;
+  planLabel?: string;
+  /** How long the ad stays live once approved. */
+  durationDays?: number;
+  /** The ad drops out of the market automatically after this moment. */
+  expiresAt?: string;
   /** Payment reference supplied by the publisher (bank transfer, etc.). */
   paymentRef?: string;
   status: MarketAdStatus;
@@ -719,10 +726,27 @@ export interface MarketAd {
   applicantToken?: string;
 }
 
+export type AdPlanId = 'monthly' | 'quarterly' | 'biannual' | 'yearly';
+
+/** One publishing subscription plan, mirroring the reference market app. */
+export interface AdPlan {
+  id: AdPlanId;
+  label: string;
+  /** How long the ad runs, in days. */
+  days: number;
+  /** Plan price in SDG (VIP add-on is charged separately). */
+  priceSdg: number;
+  /** Available for purchase right now? */
+  available: boolean;
+  /** Shown instead of a price when the plan is not sellable yet. */
+  note?: string;
+}
+
 export interface MarketAdPricing {
   standardFeeSdg: number;
   vipFeeSdg: number;
   currency: string;
+  plans: AdPlan[];
 }
 
 /* ------------------------------------------------------------------ */

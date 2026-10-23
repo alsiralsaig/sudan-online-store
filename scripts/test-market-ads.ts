@@ -36,6 +36,14 @@ console.log('\n=== pricing ===');
 const pricing = await call('/api/market-ads/pricing');
 ok('pricing endpoint', pricing.code === 200 && typeof pricing.body.pricing.vipFeeSdg === 'number', JSON.stringify(pricing.body));
 
+console.log('\n=== publishing plans (same ladder as the reference app) ===');
+const plans = pricing.body.pricing.plans || [];
+ok('four plans offered', plans.length === 4, String(plans.length));
+ok('monthly = 14,000 SDG / 30 days', plans[0]?.priceSdg === 14000 && plans[0]?.days === 30 && plans[0]?.available === true, JSON.stringify(plans[0]));
+ok('3-month plan is free later (not sellable)', plans[1]?.available === false && plans[1]?.note === 'مجانية: لاحقاً', JSON.stringify(plans[1]));
+ok('6-month = 60,000 SDG / 180 days', plans[2]?.priceSdg === 60000 && plans[2]?.days === 180, JSON.stringify(plans[2]));
+ok('yearly = 100,000 SDG / 365 days', plans[3]?.priceSdg === 100000 && plans[3]?.days === 365, JSON.stringify(plans[3]));
+
 console.log('\n=== seeded ads are public ===');
 const before = await call('/api/market-ads');
 ok('public feed loads', before.code === 200 && Array.isArray(before.body.ads));
@@ -62,7 +70,9 @@ const created = await call('/api/market-ads', json({
 ok('created 201', created.code === 201 || created.code === 200, `${created.code}`);
 const ad = created.body?.ad;
 ok('status pending', ad?.status === 'pending', ad?.status);
-ok('vip fee applied', ad?.feeSdg === 5000, String(ad?.feeSdg));
+ok('default plan is monthly', ad?.planId === 'monthly' && ad?.planLabel === 'خطة شهرية', `${ad?.planId}`);
+ok('fee = monthly plan 14,000 + VIP 5,000', ad?.feeSdg === 19000, String(ad?.feeSdg));
+ok('expiry = 30 days out', !!ad?.expiresAt && Math.round((new Date(ad.expiresAt).getTime() - Date.now()) / 86400000) === 30, String(ad?.expiresAt));
 
 const pubAfter = await call('/api/market-ads');
 ok('pending ad hidden from public', !pubAfter.body.ads.some((a: any) => a.id === ad.id));
@@ -77,7 +87,23 @@ ok('other owner cannot see it', !foreign.body.mine.some((a: any) => a.id === ad.
 console.log('\n=== admin queue ===');
 const queue = await call('/api/admin/market-ads?status=pending');
 ok('admin pending queue', queue.code === 200 && queue.body.ads.some((a: any) => a.id === ad.id));
-ok('fee visible to admin', queue.body.ads.find((a: any) => a.id === ad.id)?.feeSdg === 5000);
+ok('fee visible to admin', queue.body.ads.find((a: any) => a.id === ad.id)?.feeSdg === 19000);
+ok('plan visible to admin', queue.body.ads.find((a: any) => a.id === ad.id)?.planLabel === 'خطة شهرية');
+
+console.log('\n=== yearly plan without VIP ===');
+const yearly = await call('/api/market-ads', json({
+  title: 'محل ملابس جاهزة بالجملة', category: 'أزياء', priceSdg: 0, location: 'بحري',
+  phone: '0913009060', imageUrl: '/assets/images/air-conditioner.jpg', isVip: false,
+  planId: 'yearly', publisherName: 'سوق بحري', ownerToken: 'owner-test-token-yearly',
+}));
+ok('yearly plan fee = 100,000', yearly.body?.ad?.feeSdg === 100000, String(yearly.body?.ad?.feeSdg));
+ok('yearly expiry = 365 days', Math.round((new Date(yearly.body.ad.expiresAt).getTime() - Date.now()) / 86400000) === 365, String(yearly.body?.ad?.expiresAt));
+const quarterly = await call('/api/market-ads', json({
+  title: 'إعلان على الخطة المجانية', category: 'عام', priceSdg: 0, location: 'الخرطوم',
+  phone: '0913009060', imageUrl: '/assets/images/air-conditioner.jpg', isVip: false,
+  planId: 'quarterly', publisherName: 'تجربة', ownerToken: 'owner-test-token-quarterly',
+}));
+ok('unavailable plan falls back to monthly', quarterly.body?.ad?.planId === 'monthly', String(quarterly.body?.ad?.planId));
 ok('counts expose fees due', queue.body.counts.feesDueSdg >= 5000, JSON.stringify(queue.body.counts));
 
 console.log('\n=== approve ===');

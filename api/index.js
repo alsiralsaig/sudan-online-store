@@ -6619,13 +6619,55 @@ apiRouter.delete("/media/:id", async (req, res) => {
     res.status(500).json({ error: "DELETE_FAILED" });
   }
 });
+var AD_PLANS = [
+  {
+    id: "monthly",
+    label: "\u062E\u0637\u0629 \u0634\u0647\u0631\u064A\u0629",
+    days: 30,
+    priceSdg: Number(process.env.AD_PLAN_MONTHLY_SDG ?? 14e3),
+    available: true
+  },
+  {
+    id: "quarterly",
+    label: "\u062E\u0637\u0629 3 \u0634\u0647\u0648\u0631",
+    days: 90,
+    priceSdg: 0,
+    available: false,
+    note: "\u0645\u062C\u0627\u0646\u064A\u0629: \u0644\u0627\u062D\u0642\u0627\u064B"
+  },
+  {
+    id: "biannual",
+    label: "\u062E\u0637\u0629 6 \u0634\u0647\u0648\u0631",
+    days: 180,
+    priceSdg: Number(process.env.AD_PLAN_BIANNUAL_SDG ?? 6e4),
+    available: true
+  },
+  {
+    id: "yearly",
+    label: "\u062E\u0637\u0629 \u0633\u0646\u0648\u064A\u0629",
+    days: 365,
+    priceSdg: Number(process.env.AD_PLAN_YEARLY_SDG ?? 1e5),
+    available: true
+  }
+];
 var AD_PRICING = {
   standardFeeSdg: Number(process.env.AD_FEE_STANDARD_SDG ?? 0),
   vipFeeSdg: Number(process.env.AD_FEE_VIP_SDG ?? 5e3),
-  currency: "SDG"
+  currency: "SDG",
+  plans: AD_PLANS
 };
-function feeFor(isVip) {
-  return isVip ? AD_PRICING.vipFeeSdg : AD_PRICING.standardFeeSdg;
+function planFor(planId) {
+  const wanted = AD_PLANS.find((p) => p.id === planId && p.available);
+  return wanted || AD_PLANS[0];
+}
+function feeFor(planId, isVip) {
+  const plan = planFor(planId);
+  return plan.priceSdg + (isVip ? AD_PRICING.vipFeeSdg : 0);
+}
+function isLiveAd(ad) {
+  if (ad.status !== "approved") return false;
+  if (!ad.expiresAt) return true;
+  return new Date(ad.expiresAt).getTime() > Date.now();
 }
 apiRouter.get("/market-ads/pricing", (_req, res) => {
   res.json({ pricing: AD_PRICING });
@@ -6633,8 +6675,8 @@ apiRouter.get("/market-ads/pricing", (_req, res) => {
 apiRouter.get("/market-ads", (req, res) => {
   const ownerToken = String(req.headers["x-owner-token"] || "");
   const all = db.getMarketAds();
-  const approved = all.filter((a) => a.status === "approved");
-  const mine = ownerToken ? all.filter((a) => a.ownerToken === ownerToken && a.status !== "approved") : [];
+  const approved = all.filter(isLiveAd).slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const mine = ownerToken ? all.filter((a) => a.ownerToken === ownerToken) : [];
   res.json({ ads: approved, mine, pricing: AD_PRICING });
 });
 apiRouter.post("/market-ads", (req, res) => {
@@ -6651,7 +6693,8 @@ apiRouter.post("/market-ads", (req, res) => {
     isVip,
     publisherName,
     ownerToken,
-    paymentRef
+    paymentRef,
+    planId
   } = req.body || {};
   if (!title || String(title).trim().length < 4) {
     return res.status(400).json({ error: "TITLE_REQUIRED", message: "\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u0645\u0637\u0644\u0648\u0628 (4 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644)." });
@@ -6678,14 +6721,19 @@ apiRouter.post("/market-ads", (req, res) => {
     isVip: !!isVip,
     publisherName: publisherName || "\u0632\u0628\u0648\u0646 \u0645\u0646\u0635\u0629 \u0633\u0646\u062F",
     ownerToken: String(ownerToken),
-    feeSdg: feeFor(!!isVip),
+    feeSdg: feeFor(planId, !!isVip),
+    planId: planFor(planId).id,
+    planLabel: planFor(planId).label,
+    durationDays: planFor(planId).days,
+    // The clock starts on approval; the ad stops showing when it runs out.
+    expiresAt: new Date(Date.now() + planFor(planId).days * 24 * 60 * 60 * 1e3).toISOString(),
     paymentRef: paymentRef || void 0
   });
   notify({
     app: "admin",
     kind: "new_ad",
     title: "\u0625\u0639\u0644\u0627\u0646 \u062C\u062F\u064A\u062F \u0628\u0627\u0646\u062A\u0638\u0627\u0631 \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629",
-    body: `${ad.title} \u2014 ${ad.location}${ad.feeSdg > 0 ? ` \u2022 \u0631\u0633\u0648\u0645 ${ad.feeSdg.toLocaleString("en-US")} \u062C.\u0633` : " \u2022 \u0646\u0634\u0631 \u0645\u062C\u0627\u0646\u064A"}`,
+    body: `${ad.title} \u2014 ${ad.location} \u2022 ${ad.planLabel || "\u062E\u0637\u0629"}${ad.feeSdg > 0 ? ` \u2022 \u0631\u0633\u0648\u0645 ${ad.feeSdg.toLocaleString("en-US")} \u062C.\u0633` : " \u2022 \u0646\u0634\u0631 \u0645\u062C\u0627\u0646\u064A"}`,
     linkTab: "market_ads"
   }).catch(() => {
   });

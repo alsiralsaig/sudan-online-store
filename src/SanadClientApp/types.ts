@@ -102,6 +102,12 @@ export interface ClientMarketAd {
   status?: 'pending' | 'approved' | 'rejected';
   feeSdg?: number;
   rejectionReason?: string;
+  /** Subscription plan bought for this ad (monthly / 6 months / yearly). */
+  planId?: string;
+  planLabel?: string;
+  durationDays?: number;
+  /** The ad leaves the market automatically after this date. */
+  expiresAt?: string;
 }
 
 // Customer Custom Purchase Requests (RFQ from registered stores)

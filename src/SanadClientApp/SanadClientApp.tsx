@@ -390,7 +390,15 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         publisherName: a.publisherName,
         createdAt: a.createdAt,
         // extra fields used by the owner panel
-        ...(a.status ? { status: a.status, feeSdg: a.feeSdg, rejectionReason: a.rejectionReason } : {}),
+        ...(a.status
+          ? {
+              status: a.status,
+              feeSdg: a.feeSdg,
+              rejectionReason: a.rejectionReason,
+              planLabel: a.planLabel,
+              expiresAt: a.expiresAt,
+            }
+          : {}),
       } as ClientMarketAd);
 
       setMarketAds(res.ads.map(toAd));
@@ -874,10 +882,19 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                     <p className="text-[11px] font-bold text-slate-800 truncate">{ad.title}</p>
                     <p className="text-[10px] text-slate-500">
                       {ad.status === 'pending'
-                        ? `قيد المراجعة${ad.feeSdg ? ` • رسوم ${ad.feeSdg.toLocaleString('en-US')} ج.س` : ''}`
+                        ? `قيد المراجعة${ad.planLabel ? ` • ${ad.planLabel}` : ''}${ad.feeSdg ? ` • رسوم ${ad.feeSdg.toLocaleString('en-US')} ج.س` : ''}`
                         : ad.status === 'rejected'
                         ? `مرفوض: ${ad.rejectionReason || 'لم يستوف الشروط'}`
-                        : 'منشور'}
+                        : `${ad.planLabel || 'منشور'}${
+                            ad.expiresAt
+                              ? ` • باقي ${Math.max(
+                                  0,
+                                  Math.ceil(
+                                    (new Date(ad.expiresAt).getTime() - Date.now()) / 86400000
+                                  )
+                                )} يوم`
+                              : ''
+                          }`}
                     </p>
                   </div>
                   <button
