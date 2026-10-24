@@ -10,6 +10,22 @@
     font-family: var(--font-sans);
     direction: rtl;
   }
+
+  /**
+   * لا تمرير أفقي على مستوى الصفحة.
+   *
+   * السبب: كان أي عنصر أعرض من الشاشة (شريحة سحب، قائمة منسدلة، شارة ملتصقة
+   * بالحافة) يجعل الصفحة كلها قابلة للسحب يميناً ويساراً، فيحسّ المستخدم أن
+   * «الشاشة بتنسحب». `clip` لا ينشئ حاوية تمرير مثل `hidden` فلا يكسر
+   * العناصر الملتصقة (sticky) ولا الشريط السفلي الثابت.
+   */
+  html,
+  body {
+    overflow-x: hidden;
+    overflow-x: clip;
+    max-width: 100%;
+    overscroll-behavior-x: none;
+  }
 }
 
 /* Thermal receipt printing styling */

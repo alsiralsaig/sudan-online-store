@@ -4225,7 +4225,37 @@ async function completeChunked(uploadId, totalChunks, kind) {
   });
   return { id, url: `/api/media/${id}`, mime, bytes, kind };
 }
+var MEDIA_CACHE_MAX_BYTES = 120 * 1024 * 1024;
+var MEDIA_CACHE_MAX_ITEM = 45 * 1024 * 1024;
+var mediaCache = /* @__PURE__ */ new Map();
+var mediaCacheBytes = 0;
+function cacheGet(id) {
+  const hit = mediaCache.get(id);
+  if (!hit) return null;
+  mediaCache.delete(id);
+  mediaCache.set(id, hit);
+  return hit;
+}
+function cachePut(id, value) {
+  if (value.data.length > MEDIA_CACHE_MAX_ITEM) return;
+  const existing = mediaCache.get(id);
+  if (existing) {
+    mediaCacheBytes -= existing.data.length;
+    mediaCache.delete(id);
+  }
+  mediaCache.set(id, value);
+  mediaCacheBytes += value.data.length;
+  while (mediaCacheBytes > MEDIA_CACHE_MAX_BYTES && mediaCache.size > 1) {
+    const oldestKey = mediaCache.keys().next().value;
+    if (!oldestKey) break;
+    const oldest = mediaCache.get(oldestKey);
+    mediaCache.delete(oldestKey);
+    mediaCacheBytes -= oldest?.data.length ?? 0;
+  }
+}
 async function getMedia(id) {
+  const cached = cacheGet(id);
+  if (cached) return cached;
   await ensureMediaTable();
   const { rows } = await query(
     `SELECT mime, data, bytes FROM ${TABLE} WHERE id = $1`,
@@ -4233,11 +4263,52 @@ async function getMedia(id) {
   );
   const row = rows[0];
   if (!row) return null;
-  return {
+  const value = {
     mime: row.mime,
     bytes: Number(row.bytes) || 0,
     data: Buffer.from(row.data, "base64")
   };
+  cachePut(id, value);
+  return value;
+}
+function buildMediaResponse(data, mime, rangeHeader) {
+  const total = data.length;
+  const headers = {
+    "Content-Type": mime,
+    "Cache-Control": "public, max-age=31536000, immutable",
+    "Accept-Ranges": "bytes"
+  };
+  if (!/^(image|text)\//.test(mime)) headers["Content-Disposition"] = "inline";
+  const partial = (start2, end2) => ({
+    status: 206,
+    headers: {
+      ...headers,
+      "Content-Range": `bytes ${start2}-${end2}/${total}`,
+      "Content-Length": String(end2 - start2 + 1)
+    },
+    body: data.subarray(start2, end2 + 1)
+  });
+  const unsatisfiable = () => ({
+    status: 416,
+    headers: { ...headers, "Content-Range": `bytes */${total}` },
+    body: null
+  });
+  if (!rangeHeader) {
+    return { status: 200, headers: { ...headers, "Content-Length": String(total) }, body: data };
+  }
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+  if (!match) return unsatisfiable();
+  let start = match[1] === "" ? NaN : Number(match[1]);
+  let end = match[2] === "" ? NaN : Number(match[2]);
+  if (Number.isNaN(start) && Number.isNaN(end)) return unsatisfiable();
+  if (Number.isNaN(start)) {
+    start = Math.max(0, total - end);
+    end = total - 1;
+  } else if (Number.isNaN(end) || end >= total) {
+    end = total - 1;
+  }
+  if (start > end || start >= total) return unsatisfiable();
+  return partial(start, end);
 }
 async function deleteMedia(id) {
   await ensureMediaTable();
@@ -6732,10 +6803,10 @@ apiRouter.get("/media/:id", async (req, res) => {
     if (!media) {
       return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
     }
-    res.setHeader("Content-Type", media.mime);
-    res.setHeader("Content-Length", String(media.data.length));
-    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    res.end(media.data);
+    const answer = buildMediaResponse(media.data, media.mime, req.headers.range);
+    res.status(answer.status);
+    Object.entries(answer.headers).forEach(([key, value]) => res.setHeader(key, value));
+    res.end(answer.body ?? void 0);
   } catch (err) {
     console.error("[media] read failed:", err);
     res.status(500).json({ error: "READ_FAILED" });

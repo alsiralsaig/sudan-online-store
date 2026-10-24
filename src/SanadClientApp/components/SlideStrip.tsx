@@ -69,7 +69,18 @@ export const SlideStrip: React.FC<SlideStripProps> = ({
   const onPointerMove = (e: React.PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
-    d.delta = e.clientX - d.startX;
+    const raw = e.clientX - d.startX;
+    /**
+     * لا نسمح بسحب الشريحة خارج أول/آخر شريحة.
+     *
+     * لماذا: الشريط يتبع الإصبع بلا حد، فسحب لليمين من الشريحة الأولى يزيح
+     * المحتوى ويكشف فراغاً — ويحسّ المستخدم أن «الشاشة بتنسحب» بدل أن يُبدّل
+     * الشريحة. هنا نترك ٣٠% شدّ مطاطي كأقصى حد عند الطرفين.
+     */
+    const limit = width * 0.3;
+    const atStart = index <= 0 && raw > 0;
+    const atEnd = index >= count - 1 && raw < 0;
+    d.delta = atStart || atEnd ? Math.max(-limit, Math.min(limit, raw)) : raw;
     setDragDelta(d.delta);
   };
 
@@ -101,12 +112,13 @@ export const SlideStrip: React.FC<SlideStripProps> = ({
           finishDrag();
         }
       }}
-      style={{ touchAction: 'pan-y' }}
+      // pan-y يمنع المتصفح من سحب الصفحة أفقياً أثناء تمرير الشرائح
+      style={{ touchAction: 'pan-y', overscrollBehaviorX: 'contain' }}
     >
       <div
         ref={trackRef}
         className={`flex h-full w-full ${dragging ? '' : 'transition-transform duration-[550ms] ease-out'}`}
-        style={{ transform: `translateX(${livePercent}%)` }}
+        style={{ transform: `translateX(${livePercent}%)`, willChange: 'transform' }}
       >
         {children}
       </div>

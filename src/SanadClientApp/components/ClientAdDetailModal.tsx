@@ -20,6 +20,8 @@ interface ClientAdDetailModalProps {
 
 export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, onClose }) => {
   const [copied, setCopied] = React.useState(false);
+  /** الفيديو فشل تحميله (شبكة ضعيفة أو صيغة غير مدعومة) — نعرض بديلاً بدل شاشة ميتة */
+  const [videoFailed, setVideoFailed] = React.useState(false);
 
   if (!ad) return null;
 
@@ -44,7 +46,7 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
       >
         {/* Header Media */}
         <div className="relative aspect-[16/10] w-full bg-slate-900">
-          {ad.videoUrl ? (
+          {ad.videoUrl && !videoFailed ? (
             <video
               src={ad.videoUrl}
               poster={ad.imageUrl || undefined}
@@ -52,7 +54,23 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
               controls
               playsInline
               preload="metadata"
+              // Keep the video inside the card: iOS otherwise opens its own
+              // fullscreen player and the ad text disappears behind it.
+              controlsList="nodownload"
+              onError={() => setVideoFailed(true)}
             />
+          ) : ad.videoUrl && videoFailed ? (
+            <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-slate-900 text-center px-4">
+              <p className="text-white/90 text-xs font-bold">الفيديو ما قدر يتحمّل على الشبكة الحالية</p>
+              <a
+                href={ad.videoUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-black"
+              >
+                افتح الفيديو في تاب جديد
+              </a>
+            </div>
           ) : ad.imageUrl ? (
             <img src={ad.imageUrl} alt={ad.title} className="w-full h-full object-cover" />
           ) : (

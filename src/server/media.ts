@@ -259,9 +259,53 @@ export async function completeChunked(
   return { id, url: `/api/media/${id}`, mime, bytes, kind };
 }
 
+/**
+ * Small in-memory cache for the files being streamed.
+ *
+ * Why: a video is stored as one base64 column, so every range request would
+ * otherwise pull and decode the whole clip again (a 28 MB video ≈ 38 MB of
+ * base64). A player asks for a dozen ranges per playback, which means hundreds
+ * of megabytes of unnecessary work — and the video stutters or times out.
+ * The cache keeps the few clips being watched by this warm instance.
+ */
+const MEDIA_CACHE_MAX_BYTES = 120 * 1024 * 1024;
+const MEDIA_CACHE_MAX_ITEM = 45 * 1024 * 1024;
+const mediaCache = new Map<string, { mime: string; data: Buffer; bytes: number }>();
+let mediaCacheBytes = 0;
+
+function cacheGet(id: string) {
+  const hit = mediaCache.get(id);
+  if (!hit) return null;
+  // Refresh recency so the clip being watched is not evicted first.
+  mediaCache.delete(id);
+  mediaCache.set(id, hit);
+  return hit;
+}
+
+function cachePut(id: string, value: { mime: string; data: Buffer; bytes: number }) {
+  if (value.data.length > MEDIA_CACHE_MAX_ITEM) return;
+  const existing = mediaCache.get(id);
+  if (existing) {
+    mediaCacheBytes -= existing.data.length;
+    mediaCache.delete(id);
+  }
+  mediaCache.set(id, value);
+  mediaCacheBytes += value.data.length;
+  while (mediaCacheBytes > MEDIA_CACHE_MAX_BYTES && mediaCache.size > 1) {
+    const oldestKey = mediaCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    const oldest = mediaCache.get(oldestKey);
+    mediaCache.delete(oldestKey);
+    mediaCacheBytes -= oldest?.data.length ?? 0;
+  }
+}
+
 export async function getMedia(
   id: string
 ): Promise<{ mime: string; data: Buffer; bytes: number } | null> {
+  const cached = cacheGet(id);
+  if (cached) return cached;
+
   await ensureMediaTable();
 
   const { rows } = await query(
@@ -271,11 +315,72 @@ export async function getMedia(
   const row = rows[0];
   if (!row) return null;
 
-  return {
-    mime: row.mime,
+  const value = {
+    mime: row.mime as string,
     bytes: Number(row.bytes) || 0,
     data: Buffer.from(row.data, 'base64'),
   };
+  cachePut(id, value);
+  return value;
+}
+
+
+/**
+ * Builds the HTTP answer for a stored file, honouring a `Range` header.
+ *
+ * Extracted from the route so it can be tested without a database: mobile
+ * browsers only play video when the server answers `206 Partial Content`
+ * (see the note in routes.ts). Every branch below is covered by
+ * `scripts/test-media-range.ts`.
+ */
+export function buildMediaResponse(
+  data: Buffer,
+  mime: string,
+  rangeHeader?: string
+): { status: number; headers: Record<string, string>; body: Buffer | null } {
+  const total = data.length;
+  const headers: Record<string, string> = {
+    'Content-Type': mime,
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'Accept-Ranges': 'bytes',
+  };
+  if (!/^(image|text)\//.test(mime)) headers['Content-Disposition'] = 'inline';
+
+  const partial = (start: number, end: number) => ({
+    status: 206,
+    headers: {
+      ...headers,
+      'Content-Range': `bytes ${start}-${end}/${total}`,
+      'Content-Length': String(end - start + 1),
+    },
+    body: data.subarray(start, end + 1),
+  });
+  const unsatisfiable = () => ({
+    status: 416,
+    headers: { ...headers, 'Content-Range': `bytes */${total}` },
+    body: null,
+  });
+
+  if (!rangeHeader) {
+    return { status: 200, headers: { ...headers, 'Content-Length': String(total) }, body: data };
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+  if (!match) return unsatisfiable();
+
+  let start = match[1] === '' ? NaN : Number(match[1]);
+  let end = match[2] === '' ? NaN : Number(match[2]);
+
+  if (Number.isNaN(start) && Number.isNaN(end)) return unsatisfiable();
+  if (Number.isNaN(start)) {
+    // `bytes=-500` → the last 500 bytes
+    start = Math.max(0, total - end);
+    end = total - 1;
+  } else if (Number.isNaN(end) || end >= total) {
+    end = total - 1;
+  }
+  if (start > end || start >= total) return unsatisfiable();
+  return partial(start, end);
 }
 
 export async function deleteMedia(id: string): Promise<boolean> {

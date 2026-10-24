@@ -22,7 +22,8 @@
     "db:test:tenants": "tsx scripts/test-tenant-applications.ts",
     "db:test:notify": "tsx scripts/test-notifications.ts",
     "db:test:notify-auto": "tsx scripts/test-notifications-auto.ts",
-    "db:test:assistant": "tsx scripts/test-assistant.ts"
+    "db:test:assistant": "tsx scripts/test-assistant.ts",
+    "test:media-range": "tsx scripts/test-media-range.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -22,7 +22,7 @@ import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, 
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
 import { newId, newCode } from './ids.ts';
 import {
-  saveMedia, getMedia, deleteMedia, HttpError, MAX_RAW_BYTES,
+  saveMedia, getMedia, deleteMedia, buildMediaResponse, HttpError, MAX_RAW_BYTES,
   MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
 } from './media.ts';
 import type {
@@ -3199,17 +3199,37 @@ apiRouter.post('/media/complete', async (req, res) => {
   }
 });
 
+/**
+ * Serving uploaded media, with HTTP Range support.
+ *
+ * Why this matters (real bug report: «الفيديو مابفتح خالص»): mobile browsers
+ * refuse to play a video unless the server answers ranged requests. Without
+ * `Accept-Ranges` + `206 Partial Content`, Chrome asks for byte 0, gets the
+ * whole 28 MB with a plain 200, cannot seek or resume, retries a few times and
+ * finally reports MEDIA_ERR_SRC_NOT_SUPPORTED (code 4) — the poster shows and
+ * the clip never starts. Safari/iOS refuses outright.
+ */
+/**
+ * Serving uploaded media, with HTTP Range support.
+ *
+ * Why this matters (real bug report: «الفيديو مابفتح خالص»): mobile browsers
+ * refuse to play a video unless the server answers ranged requests. Without
+ * `Accept-Ranges` + `206 Partial Content`, Chrome asks for byte 0, gets the
+ * whole 28 MB with a plain 200, cannot seek or resume, retries a few times and
+ * finally reports MEDIA_ERR_SRC_NOT_SUPPORTED (code 4) — the poster shows and
+ * the clip never starts. Safari/iOS refuses outright.
+ * The range maths lives in `buildMediaResponse` so it can be unit-tested.
+ */
 apiRouter.get('/media/:id', async (req, res) => {
   try {
     const media = await getMedia(req.params.id);
     if (!media) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'الملف غير موجود.' });
     }
-    res.setHeader('Content-Type', media.mime);
-    res.setHeader('Content-Length', String(media.data.length));
-    // Uploaded media is immutable, so it can be cached hard.
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.end(media.data);
+    const answer = buildMediaResponse(media.data, media.mime, req.headers.range);
+    res.status(answer.status);
+    Object.entries(answer.headers).forEach(([key, value]) => res.setHeader(key, value));
+    res.end(answer.body ?? undefined);
   } catch (err) {
     console.error('[media] read failed:', err);
     res.status(500).json({ error: 'READ_FAILED' });
