@@ -4055,6 +4055,126 @@ var whatsappProviderHost = () => {
   }
 };
 
+// src/server/mp4.ts
+var CONTAINERS = /* @__PURE__ */ new Set(["moov", "trak", "mdia", "minf", "stbl", "edts", "dinf", "mvex"]);
+function readBoxes(buf, start, end) {
+  const boxes = [];
+  let i = start;
+  while (i + 8 <= end) {
+    let size = buf.readUInt32BE(i);
+    const type = buf.toString("latin1", i + 4, i + 8);
+    let headerSize = 8;
+    if (size === 1) {
+      if (i + 16 > end) return null;
+      const big = buf.readBigUInt64BE(i + 8);
+      if (big > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      size = Number(big);
+      headerSize = 16;
+    } else if (size === 0) {
+      size = end - i;
+    }
+    if (size < headerSize || i + size > end) return null;
+    boxes.push({ type, start: i, size, headerSize });
+    i += size;
+  }
+  if (i !== end) return null;
+  return boxes;
+}
+function findBox(boxes, type) {
+  return boxes.find((b) => b.type === type);
+}
+function isFastStart(buf) {
+  if (buf.length < 16) return false;
+  const top = readBoxes(buf, 0, buf.length);
+  if (!top) return false;
+  const moov = findBox(top, "moov");
+  const mdat = findBox(top, "mdat");
+  if (!moov) return false;
+  if (!mdat) return true;
+  return moov.start < mdat.start;
+}
+function looksLikeMp4(buf) {
+  return buf.length >= 12 && buf.toString("latin1", 4, 8) === "ftyp";
+}
+function fastStart(buf) {
+  if (!looksLikeMp4(buf)) return null;
+  const top = readBoxes(buf, 0, buf.length);
+  if (!top) return null;
+  const moov = findBox(top, "moov");
+  const mdats = top.filter((b) => b.type === "mdat");
+  if (!moov) return null;
+  if (mdats.length > 1) return null;
+  const mdat = mdats[0];
+  if (!mdat) return null;
+  if (moov.start < mdat.start) return buf;
+  const newMoovStart = top.filter((b) => b !== moov && b !== mdat && b.start < mdat.start).reduce((sum, b) => sum + b.size, 0);
+  const delta = newMoovStart + moov.size - mdat.start;
+  if (delta === 0) return buf;
+  const moovCopy = Buffer.from(buf.subarray(moov.start, moov.start + moov.size));
+  const patched = patchChunkOffsets(moovCopy, delta);
+  if (!patched) return null;
+  const parts = [];
+  for (const box of top) {
+    if (box === moov) continue;
+    if (box === mdat) parts.push(patched);
+    parts.push(buf.subarray(box.start, box.start + box.size));
+  }
+  const out = Buffer.concat(parts);
+  if (out.length !== buf.length) return null;
+  return out;
+}
+function patchChunkOffsets(moov, delta) {
+  let ok = true;
+  const walk = (start, end) => {
+    const boxes = readBoxes(moov, start, end);
+    if (!boxes) {
+      ok = false;
+      return;
+    }
+    for (const box of boxes) {
+      const bodyStart = box.start + box.headerSize;
+      const bodyEnd = box.start + box.size;
+      if (box.type === "stco" || box.type === "co64") {
+        const entrySize = box.type === "stco" ? 4 : 8;
+        if (bodyStart + 8 > bodyEnd) {
+          ok = false;
+          return;
+        }
+        const count = moov.readUInt32BE(bodyStart + 4);
+        const entriesStart = bodyStart + 8;
+        if (entriesStart + count * entrySize > bodyEnd) {
+          ok = false;
+          return;
+        }
+        for (let i = 0; i < count; i++) {
+          const at = entriesStart + i * entrySize;
+          if (entrySize === 4) {
+            const value = moov.readUInt32BE(at) + delta;
+            if (value < 0 || value > 4294967295) {
+              ok = false;
+              return;
+            }
+            moov.writeUInt32BE(value, at);
+          } else {
+            const value = moov.readBigUInt64BE(at);
+            const next = value + BigInt(delta);
+            if (next < 0n || next > BigInt("18446744073709551615")) {
+              ok = false;
+              return;
+            }
+            moov.writeBigUInt64BE(next, at);
+          }
+        }
+      } else if (CONTAINERS.has(box.type)) {
+        walk(bodyStart, bodyEnd);
+        if (!ok) return;
+      }
+    }
+  };
+  walk(0, moov.length);
+  return ok ? moov : null;
+}
+
 // src/server/media.ts
 var TABLE = "sanad_media";
 var MAX_RAW_BYTES = 3 * 1024 * 1024;
@@ -4270,6 +4390,29 @@ async function getMedia(id) {
   };
   cachePut(id, value);
   return value;
+}
+var streamCache = /* @__PURE__ */ new Map();
+var streamCacheBytes = 0;
+var STREAM_CACHE_MAX_BYTES = 120 * 1024 * 1024;
+var STREAM_CACHE_MAX_ITEM = 45 * 1024 * 1024;
+function prepareForStreaming(id, mime, data) {
+  if (!/^video\//.test(mime) || !looksLikeMp4(data) || isFastStart(data)) return data;
+  const hit = streamCache.get(id);
+  if (hit && hit.length === data.length) return hit;
+  const fixed = fastStart(data);
+  if (!fixed || fixed === data || fixed.length > STREAM_CACHE_MAX_ITEM) {
+    return fixed ?? data;
+  }
+  streamCache.set(id, fixed);
+  streamCacheBytes += fixed.length;
+  while (streamCacheBytes > STREAM_CACHE_MAX_BYTES && streamCache.size > 1) {
+    const oldest = streamCache.keys().next().value;
+    if (!oldest) break;
+    const dropped = streamCache.get(oldest);
+    streamCache.delete(oldest);
+    streamCacheBytes -= dropped?.length ?? 0;
+  }
+  return fixed;
 }
 function buildMediaResponse(data, mime, rangeHeader) {
   const total = data.length;
@@ -6803,7 +6946,8 @@ apiRouter.get("/media/:id", async (req, res) => {
     if (!media) {
       return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
     }
-    const answer = buildMediaResponse(media.data, media.mime, req.headers.range);
+    const body = prepareForStreaming(req.params.id, media.mime, media.data);
+    const answer = buildMediaResponse(body, media.mime, req.headers.range);
     res.status(answer.status);
     Object.entries(answer.headers).forEach(([key, value]) => res.setHeader(key, value));
     res.end(answer.body ?? void 0);

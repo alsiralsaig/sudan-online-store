@@ -82,6 +82,15 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   const [sectionsOpen, setSectionsOpen] = useState(false);
   const [tenantModalOpen, setTenantModalOpen] = useState(false);
   const [vipIndex, setVipIndex] = useState(0);
+  /**
+   * إيقاف الدوران التلقائي مؤقتاً بعد أي لمسة من المستخدم.
+   *
+   * الشريط كان يدور كل ٦ ثواني، فلو المستخدم مدّ إيده يفتح إعلان الفيديو
+   * بالضبط وقت الدوران، الشريحة تنزلق من تحت صبعه ويحس إن الشاشة «بتنسحب».
+   * أي تفاعل يدوي يوقف الدوران ٣٠ ثانية.
+   */
+  const [rotationPausedUntil, setRotationPausedUntil] = useState(0);
+  const pauseRotation = () => setRotationPausedUntil(Date.now() + 30_000);
 
   /** Defaults shown until the admin-managed banners load (or if none are set). */
   const defaultBanners = [
@@ -151,11 +160,12 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   useEffect(() => {
     if (banners.length < 2) return;
     const timer = setInterval(() => {
+      if (Date.now() < rotationPausedUntil) return;
       setCurrentBannerIndex((i) => (i + 1) % banners.length);
       setRotationTick((t) => t + 1);
     }, 6000);
     return () => clearInterval(timer);
-  }, [banners.length]);
+  }, [banners.length, rotationPausedUntil]);
 
   /** Newest first, so a freshly approved VIP ad always leads the showcase. */
   const byNewest = (a: ClientMarketAd, b: ClientMarketAd) =>
@@ -195,10 +205,20 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   useEffect(() => {
     if (vipSlides.length < 2) return;
     const timer = setInterval(() => {
+      if (Date.now() < rotationPausedUntil) return;
       setVipIndex((i) => (i + 1) % vipSlides.length);
     }, 6000);
     return () => clearInterval(timer);
-  }, [vipSlides.length]);
+  }, [vipSlides.length, rotationPausedUntil]);
+
+  // لو الشرائح قلّت (إعلان انتهى/انسحب) والمؤشر فضل برّه، نرجعه لأول شريحة.
+  useEffect(() => {
+    if (vipIndex >= vipSlides.length) setVipIndex(0);
+  }, [vipIndex, vipSlides.length]);
+  useEffect(() => {
+    if (currentBannerIndex >= banners.length) setCurrentBannerIndex(0);
+  }, [currentBannerIndex, banners.length]);
+
 
   /** The four big shortcuts from the reference page, mapped onto real screens. */
   const shortcuts = [
@@ -369,6 +389,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
           index={currentBannerIndex}
           count={banners.length}
           onIndexChange={(i) => {
+            pauseRotation();
             setCurrentBannerIndex(i);
             setRotationTick((t) => t + 1);
           }}
@@ -433,7 +454,10 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
         <SlideStrip
           index={vipIndex}
           count={vipSlides.length}
-          onIndexChange={setVipIndex}
+          onIndexChange={(i) => {
+            pauseRotation();
+            setVipIndex(i);
+          }}
           className="rounded-2xl shadow-sm border border-slate-200 bg-white h-52 sm:h-72"
         >
           {vipSlides.map((slide) => (

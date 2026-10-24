@@ -22,6 +22,9 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
   const [copied, setCopied] = React.useState(false);
   /** الفيديو فشل تحميله (شبكة ضعيفة أو صيغة غير مدعومة) — نعرض بديلاً بدل شاشة ميتة */
   const [videoFailed, setVideoFailed] = React.useState(false);
+  // يظهر شريط «جاري التحميل» لحد ما تيجي أول كادرات، عشان المستخدم ما يشوف
+  // شاشة سوداء ويحس إن الفيديو ما فتح.
+  const [videoLoading, setVideoLoading] = React.useState(Boolean(ad.videoUrl));
 
   if (!ad) return null;
 
@@ -53,12 +56,22 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
               className="w-full h-full object-cover"
               controls
               playsInline
-              preload="metadata"
+              preload="auto"
+              onLoadedData={() => setVideoLoading(false)}
+              onCanPlay={() => setVideoLoading(false)}
+              onPlaying={() => setVideoLoading(false)}
               // Keep the video inside the card: iOS otherwise opens its own
               // fullscreen player and the ad text disappears behind it.
               controlsList="nodownload"
               onError={() => setVideoFailed(true)}
             />
+          ) : null}
+          {ad.videoUrl && !videoFailed && videoLoading ? (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span className="px-3 py-1.5 rounded-full bg-black/60 text-white text-[11px] font-bold animate-pulse">
+                جاري تحميل الفيديو…
+              </span>
+            </div>
           ) : ad.videoUrl && videoFailed ? (
             <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-slate-900 text-center px-4">
               <p className="text-white/90 text-xs font-bold">الفيديو ما قدر يتحمّل على الشبكة الحالية</p>
@@ -78,7 +91,9 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
               <span className="text-white/70 text-sm font-bold">إعلان سند</span>
             </div>
           )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+          {/* pointer-events-none ضروري: بدونها الستارة المتدرجة تلتقط اللمس
+              وأزرار الفيديو (تشغيل/صوت/تقديم) ما تستجيب أبداً. */}
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
 
           <button
             onClick={onClose}

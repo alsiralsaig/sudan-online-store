@@ -51,7 +51,16 @@ export const SlideStrip: React.FC<SlideStripProps> = ({
 
   const direction = rtl ? 1 : -1;
   const width = trackRef.current?.offsetWidth || 1;
-  const basePercent = index * 100 * direction;
+  /**
+   * الحماية من مؤشر شريحة غير موجود.
+   *
+   * لو الإعلانات اتحدّثت والعدد قلّ (إعلان انتهى أو انسحب) والمؤشر فضل على ٣
+   * مثلاً، كان الشريط يفضل مزحوم لبرّه ويظهر مكانه فراغ أبيض — والمستخدم
+   * يحس إن «الشاشة انسحبت لليمين». هنا نقيّد المؤشر داخل حدود الشرائح.
+   */
+  const lastIndex = Math.max(count - 1, 0);
+  const safeIndex = Math.min(Math.max(index, 0), lastIndex);
+  const basePercent = safeIndex * 100 * direction;
   const livePercent = dragging ? basePercent - (dragDelta / width) * 100 * direction : basePercent;
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -78,8 +87,8 @@ export const SlideStrip: React.FC<SlideStripProps> = ({
      * الشريحة. هنا نترك ٣٠% شدّ مطاطي كأقصى حد عند الطرفين.
      */
     const limit = width * 0.3;
-    const atStart = index <= 0 && raw > 0;
-    const atEnd = index >= count - 1 && raw < 0;
+    const atStart = safeIndex <= 0 && raw > 0;
+    const atEnd = safeIndex >= lastIndex && raw < 0;
     d.delta = atStart || atEnd ? Math.max(-limit, Math.min(limit, raw)) : raw;
     setDragDelta(d.delta);
   };
@@ -93,7 +102,7 @@ export const SlideStrip: React.FC<SlideStripProps> = ({
 
     const threshold = Math.max(35, width * 0.12);
     if (Math.abs(d.delta) < threshold) return; // a tap, not a swipe
-    const next = d.delta < 0 ? index + 1 : index - 1;
+    const next = d.delta < 0 ? safeIndex + 1 : safeIndex - 1;
     if (next < 0) onIndexChange(count - 1);
     else if (next >= count) onIndexChange(0);
     else onIndexChange(next);
@@ -134,7 +143,7 @@ export const SlideStrip: React.FC<SlideStripProps> = ({
               }}
               aria-label={`شريحة ${i + 1}`}
               className={`h-1.5 rounded-full transition-all ${
-                i === index ? 'w-5 bg-amber-400' : 'w-1.5 bg-white/60'
+                i === safeIndex ? 'w-5 bg-amber-400' : 'w-1.5 bg-white/60'
               }`}
             />
           ))}

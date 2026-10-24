@@ -8,6 +8,7 @@
  */
 import { query, transaction } from './pg.ts';
 import { newId } from './ids.ts';
+import { fastStart, isFastStart, looksLikeMp4 } from './mp4.ts';
 
 const TABLE = 'sanad_media';
 
@@ -324,6 +325,49 @@ export async function getMedia(
   return value;
 }
 
+
+/**
+ * Video bytes ready for progressive playback, cached per media id.
+ *
+ * `getMedia` hands back the file exactly as it was uploaded, which for a phone
+ * recording means the index (`moov`) sits at the very end — the player has to
+ * pull the whole clip before the first frame. `prepareForStreaming` rewrites it
+ * index-first (see mp4.ts) once and keeps the result, so the player starts after
+ * the first few hundred kilobytes even on a 2G/3G connection.
+ *
+ * Deliberately non-destructive: if the rewrite fails the original bytes are
+ * served, never a corrupted file.
+ */
+const streamCache = new Map<string, Buffer>();
+let streamCacheBytes = 0;
+const STREAM_CACHE_MAX_BYTES = 120 * 1024 * 1024;
+const STREAM_CACHE_MAX_ITEM = 45 * 1024 * 1024;
+
+export function prepareForStreaming(
+  id: string,
+  mime: string,
+  data: Buffer
+): Buffer {
+  if (!/^video\//.test(mime) || !looksLikeMp4(data) || isFastStart(data)) return data;
+
+  const hit = streamCache.get(id);
+  if (hit && hit.length === data.length) return hit;
+
+  const fixed = fastStart(data);
+  if (!fixed || fixed === data || fixed.length > STREAM_CACHE_MAX_ITEM) {
+    return fixed ?? data;
+  }
+  streamCache.set(id, fixed);
+  streamCacheBytes += fixed.length;
+  while (streamCacheBytes > STREAM_CACHE_MAX_BYTES && streamCache.size > 1) {
+    const oldest = streamCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    const dropped = streamCache.get(oldest);
+    streamCache.delete(oldest);
+    streamCacheBytes -= dropped?.length ?? 0;
+  }
+  return fixed;
+}
 
 /**
  * Builds the HTTP answer for a stored file, honouring a `Range` header.

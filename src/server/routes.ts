@@ -22,7 +22,7 @@ import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, 
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
 import { newId, newCode } from './ids.ts';
 import {
-  saveMedia, getMedia, deleteMedia, buildMediaResponse, HttpError, MAX_RAW_BYTES,
+  saveMedia, getMedia, deleteMedia, buildMediaResponse, prepareForStreaming, HttpError, MAX_RAW_BYTES,
   MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
 } from './media.ts';
 import type {
@@ -3226,7 +3226,9 @@ apiRouter.get('/media/:id', async (req, res) => {
     if (!media) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'الملف غير موجود.' });
     }
-    const answer = buildMediaResponse(media.data, media.mime, req.headers.range);
+    // Index-first video: lets the player start before the whole clip arrives.
+    const body = prepareForStreaming(req.params.id, media.mime, media.data);
+    const answer = buildMediaResponse(body, media.mime, req.headers.range);
     res.status(answer.status);
     Object.entries(answer.headers).forEach(([key, value]) => res.setHeader(key, value));
     res.end(answer.body ?? undefined);
