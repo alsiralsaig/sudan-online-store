@@ -9,6 +9,7 @@
 import { query, transaction } from './pg.ts';
 import { newId } from './ids.ts';
 import { fastStart, isFastStart, looksLikeMp4 } from './mp4.ts';
+import { blobEnabled, putMedia, storageMode } from './storage.ts';
 
 const TABLE = 'sanad_media';
 
@@ -56,6 +57,9 @@ export function ensureMediaTable(): Promise<void> {
       await client.query(
         `CREATE INDEX IF NOT EXISTS idx_${TABLE}_created ON ${TABLE} (created_at)`
       );
+      // Blob era: the row keeps a public URL and no longer holds the bytes.
+      // `data` stays NOT NULL for backwards compatibility, it just becomes ''.
+      await client.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS url text`);
       // Slices of a video that is still uploading. Rows are deleted as soon as
       // the upload is stitched together (or swept after a day).
       await client.query(`
@@ -75,6 +79,20 @@ export function ensureMediaTable(): Promise<void> {
     });
   }
   return ready;
+}
+
+
+/**
+ * Shape of the row to store for a freshly uploaded file.
+ *
+ * Extracted so the storage decision is testable without a network or a
+ * database: blob-backed files keep only a URL, everything else stays inline.
+ */
+export function mediaRowFor(
+  base64: string,
+  blobUrl: string | null
+): { data: string; url: string | null } {
+  return blobUrl ? { data: '', url: blobUrl } : { data: base64, url: null };
 }
 
 export interface SaveMediaInput {
@@ -139,10 +157,22 @@ export async function saveMedia(input: SaveMediaInput): Promise<SavedMedia> {
 
   const id = newId(kind === 'video' ? 'vid' : 'img');
 
+  // Files go to object storage; only the URL is written to the database.
+  // If the upload fails we keep the old behaviour rather than losing the file.
+  let blobUrl: string | null = null;
+  if (blobEnabled()) {
+    try {
+      blobUrl = await putMedia(id, Buffer.from(base64, 'base64'), mime, kind);
+    } catch (err) {
+      console.error('[media] blob upload failed, falling back to database:', err);
+    }
+  }
+
+  const row = mediaRowFor(base64, blobUrl);
   await query(
-    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, kind, mime, bytes, input.ownerPhone || null, base64]
+    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data, url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, kind, mime, bytes, input.ownerPhone || null, row.data, row.url]
   );
 
   return { id, url: `/api/media/${id}`, mime, bytes, kind };
@@ -248,10 +278,21 @@ export async function completeChunked(
   }
 
   const id = newId(kind === 'video' ? 'vid' : 'img');
+
+  let blobUrl: string | null = null;
+  if (blobEnabled()) {
+    try {
+      blobUrl = await putMedia(id, Buffer.from(base64, 'base64'), mime, kind);
+    } catch (err) {
+      console.error('[media] blob upload failed, falling back to database:', err);
+    }
+  }
+
+  const row = mediaRowFor(base64, blobUrl);
   await query(
-    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, kind, mime, bytes, rows[0].owner_phone ?? null, base64]
+    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data, url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, kind, mime, bytes, rows[0].owner_phone ?? null, row.data, row.url]
   );
   await query(`DELETE FROM ${CHUNK_TABLE} WHERE upload_id = $1`, [uploadId]);
   // Housekeeping: drop slices abandoned more than a day ago.
@@ -303,25 +344,29 @@ function cachePut(id: string, value: { mime: string; data: Buffer; bytes: number
 
 export async function getMedia(
   id: string
-): Promise<{ mime: string; data: Buffer; bytes: number } | null> {
+): Promise<{ mime: string; data: Buffer; bytes: number; url: string | null } | null> {
   const cached = cacheGet(id);
-  if (cached) return cached;
+  // Only byte-backed rows live in the cache; blob rows are a URL and no bytes.
+  if (cached) return { ...cached, url: null };
 
   await ensureMediaTable();
 
   const { rows } = await query(
-    `SELECT mime, data, bytes FROM ${TABLE} WHERE id = $1`,
+    `SELECT mime, data, bytes, url FROM ${TABLE} WHERE id = $1`,
     [id]
   );
   const row = rows[0];
   if (!row) return null;
 
+  const url = (row.url as string | null) || null;
   const value = {
     mime: row.mime as string,
     bytes: Number(row.bytes) || 0,
-    data: Buffer.from(row.data, 'base64'),
+    // Blob-backed rows carry no bytes; the route redirects instead.
+    data: url ? Buffer.alloc(0) : Buffer.from(row.data, 'base64'),
+    url,
   };
-  cachePut(id, value);
+  if (!url) cachePut(id, value);
   return value;
 }
 

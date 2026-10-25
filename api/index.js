@@ -4175,6 +4175,38 @@ function patchChunkOffsets(moov, delta) {
   return ok ? moov : null;
 }
 
+// src/server/storage.ts
+import { put } from "@vercel/blob";
+function blobEnabled() {
+  return !!process.env.BLOB_READ_WRITE_TOKEN;
+}
+function storageMode() {
+  return blobEnabled() ? "blob" : "database";
+}
+var EXTENSIONS = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/quicktime": "mov"
+};
+function extensionFor(mime) {
+  return EXTENSIONS[mime] || "bin";
+}
+async function putMedia(id, data, mime, kind) {
+  const path2 = `sanad/${kind}/${id}.${extensionFor(mime)}`;
+  const result = await put(path2, data, {
+    access: "public",
+    contentType: mime,
+    // Immutable ids: a re-upload always gets a new id, so caching is safe.
+    addRandomSuffix: false,
+    cacheControlMaxAge: 60 * 60 * 24 * 365
+  });
+  return result.url;
+}
+
 // src/server/media.ts
 var TABLE = "sanad_media";
 var MAX_RAW_BYTES = 3 * 1024 * 1024;
@@ -4206,6 +4238,7 @@ function ensureMediaTable() {
       await client.query(
         `CREATE INDEX IF NOT EXISTS idx_${TABLE}_created ON ${TABLE} (created_at)`
       );
+      await client.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS url text`);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${CHUNK_TABLE} (
           upload_id  text NOT NULL,
@@ -4223,6 +4256,9 @@ function ensureMediaTable() {
     });
   }
   return ready;
+}
+function mediaRowFor(base64, blobUrl) {
+  return blobUrl ? { data: "", url: blobUrl } : { data: base64, url: null };
 }
 var ALLOWED_PREFIXES = {
   image: ["data:image/jpeg", "data:image/png", "data:image/webp", "data:image/gif"],
@@ -4262,10 +4298,19 @@ async function saveMedia(input) {
     );
   }
   const id = newId(kind === "video" ? "vid" : "img");
+  let blobUrl = null;
+  if (blobEnabled()) {
+    try {
+      blobUrl = await putMedia(id, Buffer.from(base64, "base64"), mime, kind);
+    } catch (err) {
+      console.error("[media] blob upload failed, falling back to database:", err);
+    }
+  }
+  const row = mediaRowFor(base64, blobUrl);
   await query(
-    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, kind, mime, bytes, input.ownerPhone || null, base64]
+    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data, url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, kind, mime, bytes, input.ownerPhone || null, row.data, row.url]
   );
   return { id, url: `/api/media/${id}`, mime, bytes, kind };
 }
@@ -4335,10 +4380,19 @@ async function completeChunked(uploadId, totalChunks, kind) {
     );
   }
   const id = newId(kind === "video" ? "vid" : "img");
+  let blobUrl = null;
+  if (blobEnabled()) {
+    try {
+      blobUrl = await putMedia(id, Buffer.from(base64, "base64"), mime, kind);
+    } catch (err) {
+      console.error("[media] blob upload failed, falling back to database:", err);
+    }
+  }
+  const row = mediaRowFor(base64, blobUrl);
   await query(
-    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, kind, mime, bytes, rows[0].owner_phone ?? null, base64]
+    `INSERT INTO ${TABLE} (id, kind, mime, bytes, owner_phone, data, url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, kind, mime, bytes, rows[0].owner_phone ?? null, row.data, row.url]
   );
   await query(`DELETE FROM ${CHUNK_TABLE} WHERE upload_id = $1`, [uploadId]);
   await query(`DELETE FROM ${CHUNK_TABLE} WHERE created_at < now() - interval '1 day'`).catch(() => {
@@ -4375,20 +4429,23 @@ function cachePut(id, value) {
 }
 async function getMedia(id) {
   const cached = cacheGet(id);
-  if (cached) return cached;
+  if (cached) return { ...cached, url: null };
   await ensureMediaTable();
   const { rows } = await query(
-    `SELECT mime, data, bytes FROM ${TABLE} WHERE id = $1`,
+    `SELECT mime, data, bytes, url FROM ${TABLE} WHERE id = $1`,
     [id]
   );
   const row = rows[0];
   if (!row) return null;
+  const url = row.url || null;
   const value = {
     mime: row.mime,
     bytes: Number(row.bytes) || 0,
-    data: Buffer.from(row.data, "base64")
+    // Blob-backed rows carry no bytes; the route redirects instead.
+    data: url ? Buffer.alloc(0) : Buffer.from(row.data, "base64"),
+    url
   };
-  cachePut(id, value);
+  if (!url) cachePut(id, value);
   return value;
 }
 var streamCache = /* @__PURE__ */ new Map();
@@ -6946,6 +7003,10 @@ apiRouter.get("/media/:id", async (req, res) => {
     if (!media) {
       return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0645\u0644\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
     }
+    if (media.url) {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      return res.redirect(302, media.url);
+    }
     const body = prepareForStreaming(req.params.id, media.mime, media.data);
     const answer = buildMediaResponse(body, media.mime, req.headers.range);
     res.status(answer.status);
@@ -6958,6 +7019,7 @@ apiRouter.get("/media/:id", async (req, res) => {
 });
 apiRouter.get("/media", (_req, res) => {
   res.json({
+    storage: storageMode(),
     maxUploadBytes: MAX_RAW_BYTES,
     maxVideoBytes: MAX_VIDEO_BYTES,
     chunkBytes: CHUNK_BYTES,

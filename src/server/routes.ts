@@ -25,6 +25,7 @@ import {
   saveMedia, getMedia, deleteMedia, buildMediaResponse, prepareForStreaming, HttpError, MAX_RAW_BYTES,
   MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
 } from './media.ts';
+import { storageMode } from './storage.ts';
 import type {
   Sale,
   SaleItem,
@@ -3226,6 +3227,19 @@ apiRouter.get('/media/:id', async (req, res) => {
     if (!media) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'الملف غير موجود.' });
     }
+
+    /**
+     * Blob-backed media: send the browser to the CDN copy.
+     *
+     * The 302 keeps this URL stable (`/api/media/<id>`) while the bytes live in
+     * object storage, so the database never streams a video again — and the CDN
+     * answers range requests itself, which is what the mobile player needs.
+     */
+    if (media.url) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return res.redirect(302, media.url);
+    }
+
     // Index-first video: lets the player start before the whole clip arrives.
     const body = prepareForStreaming(req.params.id, media.mime, media.data);
     const answer = buildMediaResponse(body, media.mime, req.headers.range);
@@ -3240,6 +3254,7 @@ apiRouter.get('/media/:id', async (req, res) => {
 
 apiRouter.get('/media', (_req, res) => {
   res.json({
+    storage: storageMode(),
     maxUploadBytes: MAX_RAW_BYTES,
     maxVideoBytes: MAX_VIDEO_BYTES,
     chunkBytes: CHUNK_BYTES,
