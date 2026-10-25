@@ -3867,6 +3867,24 @@ apiRouter.get('/cron/watchdog', async (_req, res) => {
   res.status(report.ok ? 200 : 503).json(report);
 });
 
+/**
+ * رسالة تجريبية للتأكد أن قناة التنبيهات وصلت.
+ *
+ * بتستخدم التوكن من متغيّرات البيئة على السيرفر، فما تحتاج تبعت التوكن في أي
+ * محادثة — الرد بيقول اتبعتت ولا لأ والسبب.
+ */
+apiRouter.get('/cron/test-alert', async (_req, res) => {
+  if (!telegramConfigured()) {
+    return res.status(400).json({
+      ok: false,
+      error: 'TELEGRAM_NOT_CONFIGURED',
+      hint: 'ضيف TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_IDS في Vercel ثم أعد النشر.',
+    });
+  }
+  const verdict = await sendTelegram('🔔 *تجربة تنبيهات سند*\nلو وصلتك الرسالة دي، التنبيهات شغالة.');
+  res.status(verdict.sent > 0 ? 200 : 502).json({ ok: verdict.sent > 0, ...verdict });
+});
+
 /** نسخة احتياطية يدوية (اليومية بتشتغل مع كرون الأسعار). */
 apiRouter.get('/cron/backup', async (_req, res) => {
   const result = await runBackup();

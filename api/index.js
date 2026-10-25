@@ -7795,6 +7795,17 @@ apiRouter.get("/cron/watchdog", async (_req, res) => {
   const report = await runWatchdog();
   res.status(report.ok ? 200 : 503).json(report);
 });
+apiRouter.get("/cron/test-alert", async (_req, res) => {
+  if (!telegramConfigured()) {
+    return res.status(400).json({
+      ok: false,
+      error: "TELEGRAM_NOT_CONFIGURED",
+      hint: "\u0636\u064A\u0641 TELEGRAM_BOT_TOKEN \u0648 TELEGRAM_CHAT_IDS \u0641\u064A Vercel \u062B\u0645 \u0623\u0639\u062F \u0627\u0644\u0646\u0634\u0631."
+    });
+  }
+  const verdict = await sendTelegram("\u{1F514} *\u062A\u062C\u0631\u0628\u0629 \u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0633\u0646\u062F*\n\u0644\u0648 \u0648\u0635\u0644\u062A\u0643 \u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u062F\u064A\u060C \u0627\u0644\u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0634\u063A\u0627\u0644\u0629.");
+  res.status(verdict.sent > 0 ? 200 : 502).json({ ok: verdict.sent > 0, ...verdict });
+});
 apiRouter.get("/cron/backup", async (_req, res) => {
   const result = await runBackup();
   res.status(result.ok ? 200 : 500).json(result);
