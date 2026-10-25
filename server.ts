@@ -5,7 +5,7 @@ import { apiRouter } from './src/server/routes.ts';
 import { db } from './src/server/db.ts';
 import { isDbEnabled, dbTarget, lastDbError, recordDbError } from './src/server/pg.ts';
 import { storageMode } from './src/server/storage.ts';
-import { telegramConfigured } from './src/server/telegram.ts';
+import { channelsConfigured } from './src/server/alerts.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -141,7 +141,7 @@ export function createApp() {
       },
       // الملفات فين بتتخزن، والتنبيهات مفعّلة ولا لأ — من نظرة واحدة.
       media: { storage: storageMode() },
-      alerts: { telegram: telegramConfigured() },
+      alerts: { channels: channelsConfigured() },
     });
   });
 

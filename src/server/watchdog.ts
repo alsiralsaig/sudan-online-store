@@ -10,7 +10,7 @@
  *  • ما بنكرر نفس الرسالة كل دقيقة: في كتم زمني لكل نوع مشكلة.
  *  • لما المشكلة تتحل، بنبعت رسالة «رجعت تمام» — عشان تعرف تقفل الموضوع.
  */
-import { sendTelegram, telegramConfigured } from './telegram.ts';
+import { notifyAll, anyChannelConfigured, channelsConfigured } from './alerts.ts';
 import { isDbEnabled, dbTarget, lastDbError } from './pg.ts';
 import { storageMode } from './storage.ts';
 
@@ -123,7 +123,9 @@ export async function runWatch(deps: WatchDeps): Promise<WatchReport & { notifie
 }
 
 /** الفحص الحقيقي: قاعدة البيانات + التخزين. */
-export async function runWatchdog(): Promise<WatchReport & { notified: string; telegram: boolean }> {
+export async function runWatchdog(): Promise<
+  WatchReport & { notified: string; channels: string[]; telegram: boolean; email: boolean }
+> {
   const { query } = await import('./pg.ts');
 
   const checkDb = async (): Promise<Check> => {
@@ -162,8 +164,11 @@ export async function runWatchdog(): Promise<WatchReport & { notified: string; t
   };
 
   return {
-    ...(await runWatch({ checkDb, checkStorage, notify: sendTelegram })),
-    telegram: telegramConfigured(),
+    ...(await runWatch({ checkDb, checkStorage, notify: notifyAll })),
+    channels: channelsConfigured(),
+    // توافق للخلف مع أي عميل لسه بيقرأ الحقل القديم.
+    telegram: channelsConfigured().includes('telegram'),
+    email: channelsConfigured().includes('email'),
   };
 }
 
@@ -186,5 +191,5 @@ export function alertDbFailure(err: unknown): void {
     .filter(Boolean)
     .join('\n');
   // ما بننتظر الرد: الطلب الأصلي ما لازم يتأخر بسبب تليجرام.
-  void sendTelegram(text).catch(() => {});
+  void notifyAll(text).catch(() => {});
 }

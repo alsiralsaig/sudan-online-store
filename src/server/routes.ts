@@ -27,6 +27,7 @@ import {
 } from './media.ts';
 import { storageMode } from './storage.ts';
 import { runWatchdog } from './watchdog.ts';
+import { notifyAll, anyChannelConfigured, channelsConfigured } from './alerts.ts';
 import { runBackup } from './backup.ts';
 import type {
   Sale,
@@ -3874,14 +3875,15 @@ apiRouter.get('/cron/watchdog', async (_req, res) => {
  * محادثة — الرد بيقول اتبعتت ولا لأ والسبب.
  */
 apiRouter.get('/cron/test-alert', async (_req, res) => {
-  if (!telegramConfigured()) {
+  if (!anyChannelConfigured()) {
     return res.status(400).json({
       ok: false,
-      error: 'TELEGRAM_NOT_CONFIGURED',
-      hint: 'ضيف TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_IDS في Vercel ثم أعد النشر.',
+      error: 'ALERTS_NOT_CONFIGURED',
+      hint: 'ضيف RESEND_API_KEY و ALERT_EMAIL_TO (أو تليجرام) في Vercel ثم أعد النشر.',
+      channels: [],
     });
   }
-  const verdict = await sendTelegram('🔔 *تجربة تنبيهات سند*\nلو وصلتك الرسالة دي، التنبيهات شغالة.');
+  const verdict = await notifyAll('🔔 *تجربة تنبيهات سند*\nوصلك التنبيه ده يعني القناة شغالة.');
   res.status(verdict.sent > 0 ? 200 : 502).json({ ok: verdict.sent > 0, ...verdict });
 });
 

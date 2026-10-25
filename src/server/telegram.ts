@@ -15,30 +15,38 @@
  * web push still deliver, and the reason is reported back to the caller.
  */
 
-const TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const CHAT_IDS = String(process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-const KIND_LIST = String(process.env.TELEGRAM_KINDS || 'system')
-  .split(',')
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
+/**
+ * المتغيّرات تُقرأ عند الاستخدام لا عند التحميل.
+ * في الإنتاج الفرق ما بيظهر (البيئة ثابتة)، لكن القراءة المتأخرة تجعل
+ * السلوك قابلاً للاختبار وتحمي من أي إعداد بيتغيّر بعد الإقلاع.
+ */
+const token = () => String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+const chatIds = () =>
+  String(process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+const kindList = () =>
+  String(process.env.TELEGRAM_KINDS || 'system')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
 
 export interface TelegramVerdict {
   sent: number;
   skipped: string;
 }
 
-export const telegramConfigured = (): boolean => !!TOKEN && CHAT_IDS.length > 0;
-export const telegramChatCount = (): number => CHAT_IDS.length;
+export const telegramConfigured = (): boolean => !!token() && chatIds().length > 0;
+export const telegramChatCount = (): number => chatIds().length;
 export const telegramEnabledFor = (kind?: string): boolean => {
   if (!telegramConfigured()) return false;
-  if (KIND_LIST.includes('all')) return true;
-  return !!kind && KIND_LIST.includes(String(kind).toLowerCase());
+  const kinds = kindList();
+  if (kinds.includes('all')) return true;
+  return !!kind && kinds.includes(String(kind).toLowerCase());
 };
 
-const api = (method: string) => `https://api.telegram.org/bot${TOKEN}/${method}`;
+const api = (method: string) => `https://api.telegram.org/bot${token()}/${method}`;
 
 const withTimeout = async (url: string, init?: RequestInit, ms = 8000) => {
   const controller = new AbortController();
@@ -55,12 +63,13 @@ export async function sendTelegram(
   text: string,
   opts: { markdown?: boolean } = {}
 ): Promise<TelegramVerdict> {
-  if (!TOKEN) return { sent: 0, skipped: 'NOT_CONFIGURED' };
-  if (CHAT_IDS.length === 0) return { sent: 0, skipped: 'NO_CHAT_ID' };
+  if (!token()) return { sent: 0, skipped: 'NOT_CONFIGURED' };
+  const ids = chatIds();
+  if (ids.length === 0) return { sent: 0, skipped: 'NO_CHAT_ID' };
 
   let sent = 0;
   let skipped = '';
-  for (const chatId of CHAT_IDS) {
+  for (const chatId of ids) {
     try {
       const res = await withTimeout(api('sendMessage'), {
         method: 'POST',
@@ -92,7 +101,7 @@ export async function discoverChats(): Promise<{
   hint: string;
   chats: { id: string; name: string; username?: string }[];
 }> {
-  if (!TOKEN) {
+  if (!token()) {
     return { ok: false, hint: 'TELEGRAM_BOT_TOKEN غير مضبوط في إعدادات الخادم.', chats: [] };
   }
   try {
@@ -137,5 +146,5 @@ export async function discoverChats(): Promise<{
 export const telegramStatus = () => ({
   configured: telegramConfigured(),
   chats: telegramChatCount(),
-  kinds: KIND_LIST,
+  kinds: kindList(),
 });

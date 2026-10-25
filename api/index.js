@@ -10,11 +10,12 @@ var __export = (target, all) => {
 
 // src/server/telegram.ts
 async function sendTelegram(text, opts = {}) {
-  if (!TOKEN) return { sent: 0, skipped: "NOT_CONFIGURED" };
-  if (CHAT_IDS.length === 0) return { sent: 0, skipped: "NO_CHAT_ID" };
+  if (!token()) return { sent: 0, skipped: "NOT_CONFIGURED" };
+  const ids = chatIds();
+  if (ids.length === 0) return { sent: 0, skipped: "NO_CHAT_ID" };
   let sent = 0;
   let skipped = "";
-  for (const chatId of CHAT_IDS) {
+  for (const chatId of ids) {
     try {
       const res = await withTimeout(api("sendMessage"), {
         method: "POST",
@@ -36,7 +37,7 @@ async function sendTelegram(text, opts = {}) {
   return { sent, skipped };
 }
 async function discoverChats() {
-  if (!TOKEN) {
+  if (!token()) {
     return { ok: false, hint: "TELEGRAM_BOT_TOKEN \u063A\u064A\u0631 \u0645\u0636\u0628\u0648\u0637 \u0641\u064A \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u062E\u0627\u062F\u0645.", chats: [] };
   }
   try {
@@ -72,20 +73,21 @@ async function discoverChats() {
     };
   }
 }
-var TOKEN, CHAT_IDS, KIND_LIST, telegramConfigured, telegramChatCount, telegramEnabledFor, api, withTimeout, telegramStatus;
+var token, chatIds, kindList, telegramConfigured, telegramChatCount, telegramEnabledFor, api, withTimeout, telegramStatus;
 var init_telegram = __esm({
   "src/server/telegram.ts"() {
-    TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-    CHAT_IDS = String(process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
-    KIND_LIST = String(process.env.TELEGRAM_KINDS || "system").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-    telegramConfigured = () => !!TOKEN && CHAT_IDS.length > 0;
-    telegramChatCount = () => CHAT_IDS.length;
+    token = () => String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
+    chatIds = () => String(process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
+    kindList = () => String(process.env.TELEGRAM_KINDS || "system").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    telegramConfigured = () => !!token() && chatIds().length > 0;
+    telegramChatCount = () => chatIds().length;
     telegramEnabledFor = (kind) => {
       if (!telegramConfigured()) return false;
-      if (KIND_LIST.includes("all")) return true;
-      return !!kind && KIND_LIST.includes(String(kind).toLowerCase());
+      const kinds = kindList();
+      if (kinds.includes("all")) return true;
+      return !!kind && kinds.includes(String(kind).toLowerCase());
     };
-    api = (method) => `https://api.telegram.org/bot${TOKEN}/${method}`;
+    api = (method) => `https://api.telegram.org/bot${token()}/${method}`;
     withTimeout = async (url, init, ms = 8e3) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), ms);
@@ -98,8 +100,94 @@ var init_telegram = __esm({
     telegramStatus = () => ({
       configured: telegramConfigured(),
       chats: telegramChatCount(),
-      kinds: KIND_LIST
+      kinds: kindList()
     });
+  }
+});
+
+// src/server/email.ts
+function toEmailBody(report) {
+  return report.replace(/\*/g, "").replace(/^✅ /gm, "[\u0633\u0644\u064A\u0645] ").replace(/^❌ /gm, "[\u0645\u0634\u0643\u0644\u0629] ").replace(/^🚨 /gm, "[\u062A\u0646\u0628\u064A\u0647] ").replace(/^🕒 /gm, "\u0627\u0644\u0648\u0642\u062A: ");
+}
+function emailSubject(report) {
+  return report.includes("\u{1F6A8}") || report.includes("\u274C") ? "\u062A\u0646\u0628\u064A\u0647 \u0633\u0646\u062F: \u0641\u064A \u0645\u0634\u0643\u0644\u0629 \u0645\u062D\u062A\u0627\u062C\u0629 \u0646\u0638\u0631\u0629" : "\u0633\u0646\u062F: \u0643\u0644 \u0627\u0644\u0641\u062D\u0648\u0635\u0627\u062A \u0633\u0644\u064A\u0645\u0629";
+}
+async function sendEmail(subject, report) {
+  const key = apiKey();
+  const to = recipients();
+  if (!key) return { sent: 0, skipped: "NOT_CONFIGURED" };
+  if (to.length === 0) return { sent: 0, skipped: "NO_RECIPIENT" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ from: sender(), to, subject, text: toEmailBody(report) }),
+      signal: controller.signal
+    });
+    const payload = await res.json().catch(() => null);
+    if (res.ok && payload?.id) return { sent: to.length, skipped: "" };
+    return { sent: 0, skipped: `API_${payload?.statusCode ?? res.status}` };
+  } catch (err) {
+    return { sent: 0, skipped: err.name === "AbortError" ? "TIMEOUT" : "NETWORK" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+var API_URL, TIMEOUT_MS, apiKey, recipients, sender, emailConfigured;
+var init_email = __esm({
+  "src/server/email.ts"() {
+    API_URL = "https://api.resend.com/emails";
+    TIMEOUT_MS = 8e3;
+    apiKey = () => String(process.env.RESEND_API_KEY || "").trim();
+    recipients = () => String(process.env.ALERT_EMAIL_TO || "").split(",").map((s) => s.trim()).filter((s) => s.includes("@"));
+    sender = () => String(process.env.ALERT_EMAIL_FROM || "Sanad Alerts <onboarding@resend.dev>").trim();
+    emailConfigured = () => !!apiKey() && recipients().length > 0;
+  }
+});
+
+// src/server/alerts.ts
+async function notifyAll(text) {
+  const channels = channelsConfigured();
+  if (channels.length === 0) return { sent: 0, skipped: "NOT_CONFIGURED", channels };
+  let sent = 0;
+  let skipped = "";
+  if (channels.includes("telegram")) {
+    try {
+      const v = await sendTelegram(text);
+      sent += v.sent;
+      if (v.sent === 0 && !skipped) skipped = `telegram:${v.skipped}`;
+    } catch (err) {
+      if (!skipped) skipped = `telegram:THREW:${err.message.slice(0, 30)}`;
+    }
+  }
+  if (channels.includes("email")) {
+    try {
+      const v = await sendEmail(emailSubject(text), text);
+      sent += v.sent;
+      if (v.sent === 0 && !skipped) skipped = `email:${v.skipped}`;
+    } catch (err) {
+      if (!skipped) skipped = `email:THREW:${err.message.slice(0, 30)}`;
+    }
+  }
+  return { sent, skipped, channels };
+}
+var channelsConfigured, anyChannelConfigured;
+var init_alerts = __esm({
+  "src/server/alerts.ts"() {
+    init_telegram();
+    init_email();
+    channelsConfigured = () => {
+      const list2 = [];
+      if (telegramConfigured()) list2.push("telegram");
+      if (emailConfigured()) list2.push("email");
+      return list2;
+    };
+    anyChannelConfigured = () => channelsConfigured().length > 0;
   }
 });
 
@@ -253,8 +341,11 @@ async function runWatchdog() {
     };
   };
   return {
-    ...await runWatch({ checkDb, checkStorage, notify: sendTelegram }),
-    telegram: telegramConfigured()
+    ...await runWatch({ checkDb, checkStorage, notify: notifyAll }),
+    channels: channelsConfigured(),
+    // توافق للخلف مع أي عميل لسه بيقرأ الحقل القديم.
+    telegram: channelsConfigured().includes("telegram"),
+    email: channelsConfigured().includes("email")
   };
 }
 function alertDbFailure(err) {
@@ -267,13 +358,13 @@ function alertDbFailure(err) {
     "",
     "\u0627\u0644\u0641\u062D\u0635: /api/health"
   ].filter(Boolean).join("\n");
-  void sendTelegram(text).catch(() => {
+  void notifyAll(text).catch(() => {
   });
 }
 var ALERT_COOLDOWN_MS, lastAlertAt, lastAlertKey, lastWasHealthy;
 var init_watchdog = __esm({
   "src/server/watchdog.ts"() {
-    init_telegram();
+    init_alerts();
     init_pg();
     init_storage();
     ALERT_COOLDOWN_MS = 30 * 60 * 1e3;
@@ -4170,12 +4261,12 @@ init_telegram();
 var THRESHOLD_PERCENT = 3;
 var PHONE = (process.env.WHATSAPP_ALERT_PHONE || "").replace(/[^\d]/g, "");
 var CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || "";
-var API_URL = process.env.WHATSAPP_API_URL || "https://api.callmebot.com/whatsapp.php";
+var API_URL2 = process.env.WHATSAPP_API_URL || "https://api.callmebot.com/whatsapp.php";
 var QUOTA_MARKERS = ["full", "limit", "quota", "not allowed", "blocked", "invalid apikey"];
 var sendWhatsApp = async (text) => {
   if (!PHONE || !CALLMEBOT_KEY) return { ok: false, reason: "NOT_CONFIGURED" };
   try {
-    const url = `${API_URL}?phone=${encodeURIComponent(PHONE)}&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
+    const url = `${API_URL2}?phone=${encodeURIComponent(PHONE)}&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     const res = await fetch(url, { signal: controller.signal });
@@ -4272,7 +4363,7 @@ function detectMoves() {
 var whatsappConfigured = () => !!PHONE && !!CALLMEBOT_KEY;
 var whatsappProviderHost = () => {
   try {
-    return new URL(API_URL).host;
+    return new URL(API_URL2).host;
   } catch {
     return "invalid-url";
   }
@@ -4724,6 +4815,7 @@ var HttpError = class extends Error {
 // src/server/routes.ts
 init_storage();
 init_watchdog();
+init_alerts();
 
 // src/server/backup.ts
 init_pg();
@@ -7796,14 +7888,15 @@ apiRouter.get("/cron/watchdog", async (_req, res) => {
   res.status(report.ok ? 200 : 503).json(report);
 });
 apiRouter.get("/cron/test-alert", async (_req, res) => {
-  if (!telegramConfigured()) {
+  if (!anyChannelConfigured()) {
     return res.status(400).json({
       ok: false,
-      error: "TELEGRAM_NOT_CONFIGURED",
-      hint: "\u0636\u064A\u0641 TELEGRAM_BOT_TOKEN \u0648 TELEGRAM_CHAT_IDS \u0641\u064A Vercel \u062B\u0645 \u0623\u0639\u062F \u0627\u0644\u0646\u0634\u0631."
+      error: "ALERTS_NOT_CONFIGURED",
+      hint: "\u0636\u064A\u0641 RESEND_API_KEY \u0648 ALERT_EMAIL_TO (\u0623\u0648 \u062A\u0644\u064A\u062C\u0631\u0627\u0645) \u0641\u064A Vercel \u062B\u0645 \u0623\u0639\u062F \u0627\u0644\u0646\u0634\u0631.",
+      channels: []
     });
   }
-  const verdict = await sendTelegram("\u{1F514} *\u062A\u062C\u0631\u0628\u0629 \u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0633\u0646\u062F*\n\u0644\u0648 \u0648\u0635\u0644\u062A\u0643 \u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u062F\u064A\u060C \u0627\u0644\u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0634\u063A\u0627\u0644\u0629.");
+  const verdict = await notifyAll("\u{1F514} *\u062A\u062C\u0631\u0628\u0629 \u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0633\u0646\u062F*\n\u0648\u0635\u0644\u0643 \u0627\u0644\u062A\u0646\u0628\u064A\u0647 \u062F\u0647 \u064A\u0639\u0646\u064A \u0627\u0644\u0642\u0646\u0627\u0629 \u0634\u063A\u0627\u0644\u0629.");
   res.status(verdict.sent > 0 ? 200 : 502).json({ ok: verdict.sent > 0, ...verdict });
 });
 apiRouter.get("/cron/backup", async (_req, res) => {
@@ -7912,7 +8005,7 @@ apiRouter.delete("/admin/market-banners/:id", (req, res) => {
 // server.ts
 init_pg();
 init_storage();
-init_telegram();
+init_alerts();
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
 var tail = Promise.resolve();
@@ -7999,7 +8092,7 @@ function createApp() {
       },
       // الملفات فين بتتخزن، والتنبيهات مفعّلة ولا لأ — من نظرة واحدة.
       media: { storage: storageMode() },
-      alerts: { telegram: telegramConfigured() }
+      alerts: { channels: channelsConfigured() }
     });
   });
   app.use("/assets", express.static(path.resolve(__dirname, "public/assets")));
