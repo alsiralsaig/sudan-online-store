@@ -24,7 +24,19 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
   const [videoFailed, setVideoFailed] = React.useState(false);
   // يظهر شريط «جاري التحميل» لحد ما تيجي أول كادرات، عشان المستخدم ما يشوف
   // شاشة سوداء ويحس إن الفيديو ما فتح.
-  const [videoLoading, setVideoLoading] = React.useState(Boolean(ad.videoUrl));
+  const [videoLoading, setVideoLoading] = React.useState(false);
+
+  /**
+   * المكوّن بيترسم وهو `ad = null` (النافذة مقفولة)، فأي قراءة مباشرة من
+   * `ad` قبل الشرط تحت بتكسر الصفحة كلها:
+   *   Cannot read properties of null (reading 'videoUrl')
+   * عشان كده كل حاجة هنا بتستخدم `ad?.` وبعدين نرجّع null.
+   * ولما المستخدم يفتح إعلان تاني، نرجّع حالة الفيديو للأصل.
+   */
+  React.useEffect(() => {
+    setVideoFailed(false);
+    setVideoLoading(Boolean(ad?.videoUrl));
+  }, [ad?.id]);
 
   if (!ad) return null;
 
