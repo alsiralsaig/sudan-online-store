@@ -24,7 +24,8 @@
     "db:test:notify-auto": "tsx scripts/test-notifications-auto.ts",
     "db:test:assistant": "tsx scripts/test-assistant.ts",
     "test:media-range": "tsx scripts/test-media-range.ts",
-    "test:storage": "tsx scripts/test-storage.ts"
+    "test:storage": "tsx scripts/test-storage.ts",
+    "test:watchdog": "tsx scripts/test-watchdog.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

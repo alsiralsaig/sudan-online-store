@@ -26,6 +26,8 @@ import {
   MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
 } from './media.ts';
 import { storageMode } from './storage.ts';
+import { runWatchdog } from './watchdog.ts';
+import { runBackup } from './backup.ts';
 import type {
   Sale,
   SaleItem,
@@ -1744,7 +1746,17 @@ apiRouter.post('/admin/currency/alerts/run', async (_req, res) => {
 apiRouter.get('/cron/currency-rates', async (_req, res) => {
   const result = await refreshLiveRates('تحديث يومي تلقائي');
   await db.flush({ lock: false }).catch(() => {});
-  res.json({ ok: result.refreshed, updated: (result as any).updated ?? 0, snapshot: result.snapshot });
+  // الخطة المجانية بتسمح بكرونين بس، فبنستغل الكرون اليومي ده في:
+  // نسخة احتياطية + فحص كامل مع تنبيه تليجرام.
+  const backup = await runBackup().catch((err) => ({ ok: false, error: String(err) }));
+  const watch = await runWatchdog().catch((err) => ({ ok: false, error: String(err) }));
+  res.json({
+    ok: result.refreshed,
+    updated: (result as any).updated ?? 0,
+    snapshot: result.snapshot,
+    backup,
+    watch: { ok: (watch as any).ok, notified: (watch as any).notified, problems: (watch as any).problems },
+  });
 });
 
 apiRouter.get('/currencies', requireTenant, async (_req, res) => {
@@ -3842,6 +3854,23 @@ apiRouter.post('/notifications/scan', async (_req, res) => {
 apiRouter.get('/cron/notify-scan', async (_req, res) => {
   const result = await runNotificationScan();
   res.json({ success: true, ...result });
+});
+
+/**
+ * المراقبة اليومية: قاعدة البيانات + التخزين، وتنبيه تليجرام لو في مشكلة.
+ *
+ * في كرون واحد بس متاح على الخطة المجانية، فبنجمع أكتر من مهمة في نفس الطلب:
+ * تحديث الأسعار اليومي كمان بينادي المراقبة، والفحص هنا للطلب اليدوي.
+ */
+apiRouter.get('/cron/watchdog', async (_req, res) => {
+  const report = await runWatchdog();
+  res.status(report.ok ? 200 : 503).json(report);
+});
+
+/** نسخة احتياطية يدوية (اليومية بتشتغل مع كرون الأسعار). */
+apiRouter.get('/cron/backup', async (_req, res) => {
+  const result = await runBackup();
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
 /** Called by the merchant app on load — throttled to once every 6 hours per process. */

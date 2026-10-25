@@ -24,6 +24,16 @@ export let lastDbError: string | null = null;
 
 export function recordDbError(err: unknown): void {
   lastDbError = err instanceof Error ? err.message : String(err);
+  /**
+   * تنبيه فوري على تليجرام.
+   *
+   * الاستيراد ديناميكي عن قصد: watchdog بيستورد من الملف ده، والاستيراد
+   * الثابت من هنا كان بيعمل دورة. وما بننتظر الوعد — الطلب الأصلي ما لازم
+   * يتأخر بسبب تليجرام.
+   */
+  void import('./watchdog.ts')
+    .then((m) => m.alertDbFailure(err))
+    .catch(() => {});
 }
 
 export function clearDbError(): void {

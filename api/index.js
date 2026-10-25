@@ -1,18 +1,308 @@
-// server.ts
-import express from "express";
-import path from "path";
-import { fileURLToPath } from "url";
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 
-// src/server/routes.ts
-import { Router } from "express";
+// src/server/telegram.ts
+async function sendTelegram(text, opts = {}) {
+  if (!TOKEN) return { sent: 0, skipped: "NOT_CONFIGURED" };
+  if (CHAT_IDS.length === 0) return { sent: 0, skipped: "NO_CHAT_ID" };
+  let sent = 0;
+  let skipped = "";
+  for (const chatId of CHAT_IDS) {
+    try {
+      const res = await withTimeout(api("sendMessage"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          disable_web_page_preview: true,
+          ...opts.markdown === false ? {} : { parse_mode: "Markdown" }
+        })
+      });
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok) sent += 1;
+      else if (!skipped) skipped = `API_${payload?.error_code ?? res.status}`;
+    } catch (err) {
+      if (!skipped) skipped = err.name === "AbortError" ? "TIMEOUT" : "NETWORK";
+    }
+  }
+  return { sent, skipped };
+}
+async function discoverChats() {
+  if (!TOKEN) {
+    return { ok: false, hint: "TELEGRAM_BOT_TOKEN \u063A\u064A\u0631 \u0645\u0636\u0628\u0648\u0637 \u0641\u064A \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u062E\u0627\u062F\u0645.", chats: [] };
+  }
+  try {
+    const res = await withTimeout(api("getUpdates?timeout=0"));
+    const payload = await res.json().catch(() => null);
+    if (!payload?.ok) {
+      return {
+        ok: false,
+        hint: payload?.description || "\u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u0631\u0641\u0636 \u0627\u0644\u0637\u0644\u0628 \u2014 \u062A\u0623\u0643\u062F \u0625\u0646 \u0627\u0644\u062A\u0648\u0643\u0646 \u0635\u062D\u064A\u062D \u0648\u0625\u0646\u0643 \u0623\u0631\u0633\u0644\u062A /start \u0644\u0644\u0628\u0648\u062A.",
+        chats: []
+      };
+    }
+    const seen = /* @__PURE__ */ new Map();
+    for (const update of payload.result || []) {
+      const chat = update?.message?.chat || update?.channel_post?.chat || update?.my_chat_member?.chat;
+      if (!chat?.id) continue;
+      seen.set(String(chat.id), {
+        id: String(chat.id),
+        name: [chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.title || chat.username || "\u2014",
+        username: chat.username
+      });
+    }
+    return {
+      ok: true,
+      hint: seen.size ? "\u0627\u0646\u0633\u062E \u0627\u0644\u0640 id \u0648\u062D\u0637\u0651\u0647 \u0641\u064A TELEGRAM_CHAT_IDS." : "\u0645\u0627 \u0641\u064A \u0645\u062D\u0627\u062F\u062B\u0627\u062A \u0628\u0639\u062F \u2014 \u0627\u0641\u062A\u062D \u0627\u0644\u0628\u0648\u062A \u0641\u064A \u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u0648\u0627\u0636\u063A\u0637 Start \u0623\u0648 \u0623\u0631\u0633\u0644 /start \u062B\u0645 \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
+      chats: [...seen.values()]
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      hint: err.name === "AbortError" ? "\u0627\u0646\u062A\u0647\u0649 \u0648\u0642\u062A \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u062A\u0644\u064A\u062C\u0631\u0627\u0645." : "\u0641\u0634\u0644 \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u062A\u0644\u064A\u062C\u0631\u0627\u0645.",
+      chats: []
+    };
+  }
+}
+var TOKEN, CHAT_IDS, KIND_LIST, telegramConfigured, telegramChatCount, telegramEnabledFor, api, withTimeout, telegramStatus;
+var init_telegram = __esm({
+  "src/server/telegram.ts"() {
+    TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+    CHAT_IDS = String(process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
+    KIND_LIST = String(process.env.TELEGRAM_KINDS || "system").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    telegramConfigured = () => !!TOKEN && CHAT_IDS.length > 0;
+    telegramChatCount = () => CHAT_IDS.length;
+    telegramEnabledFor = (kind) => {
+      if (!telegramConfigured()) return false;
+      if (KIND_LIST.includes("all")) return true;
+      return !!kind && KIND_LIST.includes(String(kind).toLowerCase());
+    };
+    api = (method) => `https://api.telegram.org/bot${TOKEN}/${method}`;
+    withTimeout = async (url, init, ms = 8e3) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ms);
+      try {
+        return await fetch(url, { ...init, signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    telegramStatus = () => ({
+      configured: telegramConfigured(),
+      chats: telegramChatCount(),
+      kinds: KIND_LIST
+    });
+  }
+});
+
+// src/server/storage.ts
+import { put } from "@vercel/blob";
+function blobEnabled() {
+  return !!process.env.BLOB_READ_WRITE_TOKEN;
+}
+function storageMode() {
+  return blobEnabled() ? "blob" : "database";
+}
+function extensionFor(mime) {
+  return EXTENSIONS[mime] || "bin";
+}
+async function putMedia(id, data, mime, kind) {
+  const path2 = `sanad/${kind}/${id}.${extensionFor(mime)}`;
+  const result = await put(path2, data, {
+    access: "public",
+    contentType: mime,
+    // Immutable ids: a re-upload always gets a new id, so caching is safe.
+    addRandomSuffix: false,
+    cacheControlMaxAge: 60 * 60 * 24 * 365
+  });
+  return result.url;
+}
+var EXTENSIONS;
+var init_storage = __esm({
+  "src/server/storage.ts"() {
+    EXTENSIONS = {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+      "image/gif": "gif",
+      "video/mp4": "mp4",
+      "video/webm": "webm",
+      "video/quicktime": "mov"
+    };
+  }
+});
+
+// src/server/watchdog.ts
+var watchdog_exports = {};
+__export(watchdog_exports, {
+  alertDbFailure: () => alertDbFailure,
+  buildReport: () => buildReport,
+  resetAlertState: () => resetAlertState,
+  runWatch: () => runWatch,
+  runWatchdog: () => runWatchdog,
+  shouldSendAlert: () => shouldSendAlert
+});
+function buildReport(checks, at = /* @__PURE__ */ new Date()) {
+  const problems = checks.filter((c) => !c.ok);
+  const stamp2 = at.toISOString().slice(0, 16).replace("T", " ");
+  const lines = [];
+  if (problems.length === 0) {
+    lines.push("\u2705 *\u0633\u0646\u062F \u0628\u062E\u064A\u0631*");
+  } else {
+    lines.push("\u{1F6A8} *\u0645\u0634\u0643\u0644\u0629 \u0641\u064A \u0633\u0646\u062F*");
+  }
+  lines.push(`\u{1F552} ${stamp2} UTC`);
+  for (const c of checks) {
+    lines.push(`${c.ok ? "\u2705" : "\u274C"} ${c.name}: ${c.detail}`);
+  }
+  if (problems.length > 0) {
+    lines.push("");
+    lines.push("\u0627\u0644\u062E\u0637\u0648\u0629 \u0627\u0644\u0623\u0648\u0644\u0649: \u0627\u0641\u062A\u062D /api/health \u0648\u0634\u0648\u0641 \u0631\u062F \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A.");
+  }
+  return { ok: problems.length === 0, checks, problems, text: lines.join("\n") };
+}
+function shouldSendAlert(key, now = Date.now()) {
+  if (key === lastAlertKey && now - lastAlertAt < ALERT_COOLDOWN_MS) return false;
+  lastAlertKey = key;
+  lastAlertAt = now;
+  return true;
+}
+function resetAlertState() {
+  lastAlertAt = 0;
+  lastAlertKey = "";
+  lastWasHealthy = true;
+}
+async function runWatch(deps) {
+  const checks = [];
+  try {
+    checks.push(await deps.checkDb());
+  } catch (err) {
+    checks.push({ name: "\u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A", ok: false, detail: `\u0641\u0634\u0644 \u0627\u0644\u0641\u062D\u0635: ${err.message.slice(0, 80)}` });
+  }
+  try {
+    checks.push(deps.checkStorage());
+  } catch (err) {
+    checks.push({ name: "\u062A\u062E\u0632\u064A\u0646 \u0627\u0644\u0645\u0644\u0641\u0627\u062A", ok: false, detail: `\u0641\u0634\u0644 \u0627\u0644\u0641\u062D\u0635: ${err.message.slice(0, 80)}` });
+  }
+  const report = buildReport(checks);
+  let notified = "SKIPPED";
+  const notifySafe = async (text) => {
+    try {
+      return await deps.notify(text);
+    } catch (err) {
+      return { sent: 0, skipped: `THREW:${err.message.slice(0, 40)}` };
+    }
+  };
+  const key = report.problems.map((p) => p.name).sort().join("|");
+  if (!report.ok) {
+    if (shouldSendAlert(key)) {
+      const verdict = await notifySafe(report.text);
+      notified = verdict.sent > 0 ? "SENT" : `FAILED:${verdict.skipped}`;
+      lastWasHealthy = false;
+    } else {
+      notified = "THROTTLED";
+    }
+  } else if (!lastWasHealthy) {
+    const verdict = await notifySafe("\u2705 *\u0633\u0646\u062F \u0631\u062C\u0639 \u062A\u0645\u0627\u0645*\n\u0643\u0644 \u0627\u0644\u0641\u062D\u0648\u0635\u0627\u062A \u0633\u0644\u064A\u0645\u0629 \u0627\u0644\u0622\u0646.");
+    notified = verdict.sent > 0 ? "RECOVERY_SENT" : `FAILED:${verdict.skipped}`;
+    lastWasHealthy = true;
+  }
+  return { ...report, notified };
+}
+async function runWatchdog() {
+  const { query: query2 } = await Promise.resolve().then(() => (init_pg(), pg_exports));
+  const checkDb = async () => {
+    if (!isDbEnabled()) {
+      return { name: "\u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A", ok: false, detail: "DATABASE_URL \u063A\u064A\u0631 \u0645\u0636\u0628\u0648\u0637" };
+    }
+    try {
+      const t0 = Date.now();
+      const { rows } = await query2("SELECT 1 AS ok");
+      const ms = Date.now() - t0;
+      if (!rows[0]) return { name: "\u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A", ok: false, detail: "\u0645\u0627 \u0631\u062C\u0639\u062A \u0646\u062A\u064A\u062C\u0629" };
+      const tables = await query2(
+        "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'sanad%'"
+      );
+      return {
+        name: "\u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A",
+        ok: true,
+        detail: `${ms}ms \xB7 ${tables.rows[0]?.n ?? 0} \u062C\u062F\u0648\u0644 \xB7 ${String(dbTarget()).split(" ")[0]}`
+      };
+    } catch (err) {
+      const msg = err.message || String(err);
+      return { name: "\u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A", ok: false, detail: msg.slice(0, 120) };
+    }
+  };
+  const checkStorage = () => {
+    const mode = storageMode();
+    if (mode === "blob") {
+      return { name: "\u062A\u062E\u0632\u064A\u0646 \u0627\u0644\u0645\u0644\u0641\u0627\u062A", ok: true, detail: "Blob \u0645\u0631\u0628\u0648\u0637" };
+    }
+    return {
+      name: "\u062A\u062E\u0632\u064A\u0646 \u0627\u0644\u0645\u0644\u0641\u0627\u062A",
+      ok: false,
+      detail: "\u063A\u064A\u0631 \u0645\u0631\u0628\u0648\u0637 \u2014 \u0627\u0644\u0645\u0644\u0641\u0627\u062A \u0628\u062A\u062A\u062E\u0632\u0646 \u0641\u064A \u0627\u0644\u0642\u0627\u0639\u062F\u0629 (\u062E\u0637\u0631 \u0639\u0644\u0649 \u0627\u0644\u062D\u0635\u0629)"
+    };
+  };
+  return {
+    ...await runWatch({ checkDb, checkStorage, notify: sendTelegram }),
+    telegram: telegramConfigured()
+  };
+}
+function alertDbFailure(err) {
+  const message = err?.message || String(err);
+  if (!shouldSendAlert(`db:${message.slice(0, 60)}`)) return;
+  const text = [
+    "\u{1F6A8} *\u0642\u0627\u0639\u062F\u0629 \u0628\u064A\u0627\u0646\u0627\u062A \u0633\u0646\u062F \u0641\u0634\u0644\u062A*",
+    `\u0627\u0644\u062E\u0637\u0623: ${message.slice(0, 200)}`,
+    lastDbError && lastDbError !== message ? `\u0633\u0627\u0628\u0642\u0627\u064B: ${lastDbError.slice(0, 120)}` : "",
+    "",
+    "\u0627\u0644\u0641\u062D\u0635: /api/health"
+  ].filter(Boolean).join("\n");
+  void sendTelegram(text).catch(() => {
+  });
+}
+var ALERT_COOLDOWN_MS, lastAlertAt, lastAlertKey, lastWasHealthy;
+var init_watchdog = __esm({
+  "src/server/watchdog.ts"() {
+    init_telegram();
+    init_pg();
+    init_storage();
+    ALERT_COOLDOWN_MS = 30 * 60 * 1e3;
+    lastAlertAt = 0;
+    lastAlertKey = "";
+    lastWasHealthy = true;
+  }
+});
 
 // src/server/pg.ts
+var pg_exports = {};
+__export(pg_exports, {
+  acquireWriteLock: () => acquireWriteLock,
+  clearDbError: () => clearDbError,
+  closePool: () => closePool,
+  dbTarget: () => dbTarget,
+  getPool: () => getPool,
+  isDbEnabled: () => isDbEnabled,
+  lastDbError: () => lastDbError,
+  query: () => query,
+  recordDbError: () => recordDbError,
+  setSqlClient: () => setSqlClient,
+  transaction: () => transaction
+});
 import pg from "pg";
-var pool = null;
-var injected = null;
-var lastDbError = null;
 function recordDbError(err) {
   lastDbError = err instanceof Error ? err.message : String(err);
+  void Promise.resolve().then(() => (init_watchdog(), watchdog_exports)).then((m) => m.alertDbFailure(err)).catch(() => {
+  });
 }
 function clearDbError() {
   lastDbError = null;
@@ -50,6 +340,9 @@ function getPool() {
   }
   return pool;
 }
+function setSqlClient(client) {
+  injected = client;
+}
 function activeClient() {
   if (injected) return injected;
   return getPool();
@@ -84,7 +377,6 @@ async function transaction(fn) {
     throw err;
   }
 }
-var LOCK_KEY = 982451301;
 async function acquireWriteLock(waitMs = 15e3) {
   if (injected) {
     return async () => {
@@ -127,6 +419,26 @@ async function closePool() {
     pool = null;
   }
 }
+var pool, injected, lastDbError, LOCK_KEY;
+var init_pg = __esm({
+  "src/server/pg.ts"() {
+    pool = null;
+    injected = null;
+    lastDbError = null;
+    LOCK_KEY = 982451301;
+  }
+});
+
+// server.ts
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+
+// src/server/routes.ts
+import { Router } from "express";
+
+// src/server/db.ts
+init_pg();
 
 // src/server/ids.ts
 import { randomUUID } from "crypto";
@@ -140,6 +452,7 @@ function newCode(prefix, pad = 6) {
 }
 
 // src/server/repository.ts
+init_pg();
 var PRIMARY_KEY_OVERRIDES = {
   currencies: "code"
 };
@@ -2568,14 +2881,14 @@ var Database = class {
   }
   // Customer Management & Loyalty Points
   getCustomers(tenantId, search) {
-    let list = (this.data.customers || []).filter((c) => c.tenantId === tenantId);
+    let list2 = (this.data.customers || []).filter((c) => c.tenantId === tenantId);
     if (search) {
       const q2 = search.trim().toLowerCase();
-      list = list.filter(
+      list2 = list2.filter(
         (c) => c.name.toLowerCase().includes(q2) || c.phone.includes(q2) || c.taxNumber && c.taxNumber.includes(q2)
       );
     }
-    return list;
+    return list2;
   }
   getCustomer(tenantId, id) {
     return (this.data.customers || []).find((c) => c.id === id && c.tenantId === tenantId);
@@ -2614,11 +2927,11 @@ var Database = class {
   // Recurring Expenses (المصروفات الدورية)
   // ==========================================
   getRecurringExpenses(tenantId, branchId) {
-    let list = (this.data.recurringExpenses || []).filter((r) => r.tenantId === tenantId);
+    let list2 = (this.data.recurringExpenses || []).filter((r) => r.tenantId === tenantId);
     if (branchId) {
-      list = list.filter((r) => r.branchId === branchId);
+      list2 = list2.filter((r) => r.branchId === branchId);
     }
-    return list;
+    return list2;
   }
   addRecurringExpense(item) {
     if (!this.data.recurringExpenses) this.data.recurringExpenses = [];
@@ -2711,14 +3024,14 @@ var Database = class {
   // Kitchen Display System (KDS)
   // ==========================================
   getKitchenTickets(tenantId, branchId, status) {
-    let list = (this.data.kitchenTickets || []).filter((t) => t.tenantId === tenantId);
+    let list2 = (this.data.kitchenTickets || []).filter((t) => t.tenantId === tenantId);
     if (branchId) {
-      list = list.filter((t) => t.branchId === branchId);
+      list2 = list2.filter((t) => t.branchId === branchId);
     }
     if (status && status !== "all") {
-      list = list.filter((t) => t.status === status);
+      list2 = list2.filter((t) => t.status === status);
     }
-    return list;
+    return list2;
   }
   updateKitchenTicketStatus(ticketId, status) {
     if (!this.data.kitchenTickets) this.data.kitchenTickets = [];
@@ -3673,98 +3986,7 @@ ${comparisons.join("\n")}
 
 // src/server/notifications.ts
 import webpush from "web-push";
-
-// src/server/telegram.ts
-var TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-var CHAT_IDS = String(process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
-var KIND_LIST = String(process.env.TELEGRAM_KINDS || "system").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-var telegramConfigured = () => !!TOKEN && CHAT_IDS.length > 0;
-var telegramChatCount = () => CHAT_IDS.length;
-var telegramEnabledFor = (kind) => {
-  if (!telegramConfigured()) return false;
-  if (KIND_LIST.includes("all")) return true;
-  return !!kind && KIND_LIST.includes(String(kind).toLowerCase());
-};
-var api = (method) => `https://api.telegram.org/bot${TOKEN}/${method}`;
-var withTimeout = async (url, init, ms = 8e3) => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-};
-async function sendTelegram(text, opts = {}) {
-  if (!TOKEN) return { sent: 0, skipped: "NOT_CONFIGURED" };
-  if (CHAT_IDS.length === 0) return { sent: 0, skipped: "NO_CHAT_ID" };
-  let sent = 0;
-  let skipped = "";
-  for (const chatId of CHAT_IDS) {
-    try {
-      const res = await withTimeout(api("sendMessage"), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          disable_web_page_preview: true,
-          ...opts.markdown === false ? {} : { parse_mode: "Markdown" }
-        })
-      });
-      const payload = await res.json().catch(() => null);
-      if (payload?.ok) sent += 1;
-      else if (!skipped) skipped = `API_${payload?.error_code ?? res.status}`;
-    } catch (err) {
-      if (!skipped) skipped = err.name === "AbortError" ? "TIMEOUT" : "NETWORK";
-    }
-  }
-  return { sent, skipped };
-}
-async function discoverChats() {
-  if (!TOKEN) {
-    return { ok: false, hint: "TELEGRAM_BOT_TOKEN \u063A\u064A\u0631 \u0645\u0636\u0628\u0648\u0637 \u0641\u064A \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u062E\u0627\u062F\u0645.", chats: [] };
-  }
-  try {
-    const res = await withTimeout(api("getUpdates?timeout=0"));
-    const payload = await res.json().catch(() => null);
-    if (!payload?.ok) {
-      return {
-        ok: false,
-        hint: payload?.description || "\u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u0631\u0641\u0636 \u0627\u0644\u0637\u0644\u0628 \u2014 \u062A\u0623\u0643\u062F \u0625\u0646 \u0627\u0644\u062A\u0648\u0643\u0646 \u0635\u062D\u064A\u062D \u0648\u0625\u0646\u0643 \u0623\u0631\u0633\u0644\u062A /start \u0644\u0644\u0628\u0648\u062A.",
-        chats: []
-      };
-    }
-    const seen = /* @__PURE__ */ new Map();
-    for (const update of payload.result || []) {
-      const chat = update?.message?.chat || update?.channel_post?.chat || update?.my_chat_member?.chat;
-      if (!chat?.id) continue;
-      seen.set(String(chat.id), {
-        id: String(chat.id),
-        name: [chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.title || chat.username || "\u2014",
-        username: chat.username
-      });
-    }
-    return {
-      ok: true,
-      hint: seen.size ? "\u0627\u0646\u0633\u062E \u0627\u0644\u0640 id \u0648\u062D\u0637\u0651\u0647 \u0641\u064A TELEGRAM_CHAT_IDS." : "\u0645\u0627 \u0641\u064A \u0645\u062D\u0627\u062F\u062B\u0627\u062A \u0628\u0639\u062F \u2014 \u0627\u0641\u062A\u062D \u0627\u0644\u0628\u0648\u062A \u0641\u064A \u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u0648\u0627\u0636\u063A\u0637 Start \u0623\u0648 \u0623\u0631\u0633\u0644 /start \u062B\u0645 \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
-      chats: [...seen.values()]
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      hint: err.name === "AbortError" ? "\u0627\u0646\u062A\u0647\u0649 \u0648\u0642\u062A \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u062A\u0644\u064A\u062C\u0631\u0627\u0645." : "\u0641\u0634\u0644 \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u062A\u0644\u064A\u062C\u0631\u0627\u0645.",
-      chats: []
-    };
-  }
-}
-var telegramStatus = () => ({
-  configured: telegramConfigured(),
-  chats: telegramChatCount(),
-  kinds: KIND_LIST
-});
-
-// src/server/notifications.ts
+init_telegram();
 var CONTACT = process.env.VAPID_CONTACT || "mailto:admin@sanad.sd";
 var configured = false;
 function initPush() {
@@ -3944,6 +4166,7 @@ async function runNotificationScan() {
 }
 
 // src/server/rateAlerts.ts
+init_telegram();
 var THRESHOLD_PERCENT = 3;
 var PHONE = (process.env.WHATSAPP_ALERT_PHONE || "").replace(/[^\d]/g, "");
 var CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || "";
@@ -4054,6 +4277,12 @@ var whatsappProviderHost = () => {
     return "invalid-url";
   }
 };
+
+// src/server/routes.ts
+init_telegram();
+
+// src/server/media.ts
+init_pg();
 
 // src/server/mp4.ts
 var CONTAINERS = /* @__PURE__ */ new Set(["moov", "trak", "mdia", "minf", "stbl", "edts", "dinf", "mvex"]);
@@ -4175,39 +4404,8 @@ function patchChunkOffsets(moov, delta) {
   return ok ? moov : null;
 }
 
-// src/server/storage.ts
-import { put } from "@vercel/blob";
-function blobEnabled() {
-  return !!process.env.BLOB_READ_WRITE_TOKEN;
-}
-function storageMode() {
-  return blobEnabled() ? "blob" : "database";
-}
-var EXTENSIONS = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/gif": "gif",
-  "video/mp4": "mp4",
-  "video/webm": "webm",
-  "video/quicktime": "mov"
-};
-function extensionFor(mime) {
-  return EXTENSIONS[mime] || "bin";
-}
-async function putMedia(id, data, mime, kind) {
-  const path2 = `sanad/${kind}/${id}.${extensionFor(mime)}`;
-  const result = await put(path2, data, {
-    access: "public",
-    contentType: mime,
-    // Immutable ids: a re-upload always gets a new id, so caching is safe.
-    addRandomSuffix: false,
-    cacheControlMaxAge: 60 * 60 * 24 * 365
-  });
-  return result.url;
-}
-
 // src/server/media.ts
+init_storage();
 var TABLE = "sanad_media";
 var MAX_RAW_BYTES = 3 * 1024 * 1024;
 var MAX_VIDEO_BYTES = 40 * 1024 * 1024;
@@ -4522,6 +4720,89 @@ var HttpError = class extends Error {
     this.code = code;
   }
 };
+
+// src/server/routes.ts
+init_storage();
+init_watchdog();
+
+// src/server/backup.ts
+init_pg();
+init_storage();
+import { gzipSync } from "node:zlib";
+import { put as put2, list, del } from "@vercel/blob";
+var MAX_BACKUP_BYTES = 32 * 1024 * 1024;
+var KEEP_BACKUPS = 7;
+var stamp = (d) => d.toISOString().replace(/[:T]/g, "-").slice(0, 16);
+function backupName(at = /* @__PURE__ */ new Date()) {
+  return `backups/sanad-${stamp(at)}.json.gz`;
+}
+function buildBackupPayload(tables, at = /* @__PURE__ */ new Date()) {
+  let rows = 0;
+  for (const list2 of Object.values(tables)) rows += list2.length;
+  return {
+    json: JSON.stringify({ tool: "sanad-backup", version: 1, createdAt: at.toISOString(), rows, tables }),
+    rows
+  };
+}
+async function runBackup(at = /* @__PURE__ */ new Date()) {
+  if (storageMode() !== "blob") {
+    return { ok: false, skipped: "NO_BLOB_STORE", error: "\u062A\u062E\u0632\u064A\u0646 Blob \u063A\u064A\u0631 \u0645\u0631\u0628\u0648\u0637 \u2014 \u0627\u0644\u0646\u0633\u062E\u0629 \u0645\u0627 \u0627\u062A\u062D\u0641\u0638\u062A\u0634." };
+  }
+  try {
+    const { rows: tableRows } = await query(
+      `SELECT table_name FROM information_schema.tables
+        WHERE table_schema='public' AND table_name LIKE 'sanad%'
+        ORDER BY table_name`
+    );
+    const tables = {};
+    let bytesSoFar = 0;
+    let rowCount = 0;
+    for (const { table_name: table } of tableRows) {
+      const name2 = String(table);
+      const { rows } = await query(`SELECT * FROM "${name2}"`);
+      tables[name2] = rows;
+      rowCount += rows.length;
+      bytesSoFar += JSON.stringify(rows).length;
+      if (bytesSoFar > MAX_BACKUP_BYTES) {
+        return {
+          ok: false,
+          error: `\u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0623\u0643\u0628\u0631 \u0645\u0646 ${MAX_BACKUP_BYTES / 1024 / 1024} \u0645\u064A\u062C\u0627 \u2014 \u0627\u0644\u0646\u0633\u062E\u0629 \u0645\u062D\u062A\u0627\u062C\u0629 \u062A\u0642\u0633\u064A\u0645.`,
+          tables: Object.keys(tables).length,
+          rows: rowCount
+        };
+      }
+    }
+    const payload = buildBackupPayload(tables, at);
+    const gz = gzipSync(Buffer.from(payload.json, "utf8"), { level: 9 });
+    const name = backupName(at);
+    const uploaded = await put2(name, gz, {
+      access: "public",
+      contentType: "application/gzip",
+      addRandomSuffix: false
+    });
+    let pruned = 0;
+    try {
+      const existing = await list({ prefix: "backups/" });
+      const old = existing.blobs.filter((b) => b.pathname !== name).sort((a, b) => a.uploadedAt > b.uploadedAt ? -1 : 1).slice(KEEP_BACKUPS - 1);
+      if (old.length) {
+        await del(old.map((b) => b.url));
+        pruned = old.length;
+      }
+    } catch {
+    }
+    return {
+      ok: true,
+      url: uploaded.url,
+      name,
+      tables: Object.keys(tables).length,
+      rows: payload.rows,
+      bytes: gz.length,
+      pruned
+    };
+  } catch (err) {
+    return { ok: false, error: err.message.slice(0, 200) };
+  }
+}
 
 // src/server/routes.ts
 var apiRouter = Router();
@@ -5868,7 +6149,15 @@ apiRouter.get("/cron/currency-rates", async (_req, res) => {
   const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u0648\u0645\u064A \u062A\u0644\u0642\u0627\u0626\u064A");
   await db.flush({ lock: false }).catch(() => {
   });
-  res.json({ ok: result.refreshed, updated: result.updated ?? 0, snapshot: result.snapshot });
+  const backup = await runBackup().catch((err) => ({ ok: false, error: String(err) }));
+  const watch = await runWatchdog().catch((err) => ({ ok: false, error: String(err) }));
+  res.json({
+    ok: result.refreshed,
+    updated: result.updated ?? 0,
+    snapshot: result.snapshot,
+    backup,
+    watch: { ok: watch.ok, notified: watch.notified, problems: watch.problems }
+  });
 });
 apiRouter.get("/currencies", requireTenant, async (_req, res) => {
   if (needsRefresh()) {
@@ -6523,8 +6812,8 @@ apiRouter.put("/kitchen/tickets/:id/items/:itemId/status", requireTenant, (req, 
 apiRouter.get("/recurring-expenses", requireTenant, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
-  const list = db.getRecurringExpenses(authReq.tenantId, branchId);
-  res.json({ recurringExpenses: list });
+  const list2 = db.getRecurringExpenses(authReq.tenantId, branchId);
+  res.json({ recurringExpenses: list2 });
 });
 apiRouter.post("/recurring-expenses", requireTenant, (req, res) => {
   const authReq = req;
@@ -7502,6 +7791,14 @@ apiRouter.get("/cron/notify-scan", async (_req, res) => {
   const result = await runNotificationScan();
   res.json({ success: true, ...result });
 });
+apiRouter.get("/cron/watchdog", async (_req, res) => {
+  const report = await runWatchdog();
+  res.status(report.ok ? 200 : 503).json(report);
+});
+apiRouter.get("/cron/backup", async (_req, res) => {
+  const result = await runBackup();
+  res.status(result.ok ? 200 : 500).json(result);
+});
 var lastLazyScan = 0;
 apiRouter.post("/notifications/scan-lazy", async (_req, res) => {
   const now = Date.now();
@@ -7602,6 +7899,9 @@ apiRouter.delete("/admin/market-banners/:id", (req, res) => {
 });
 
 // server.ts
+init_pg();
+init_storage();
+init_telegram();
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
 var tail = Promise.resolve();
@@ -7685,7 +7985,10 @@ function createApp() {
         tables: db.tableCount(),
         persisted: db.isPersisting(),
         lastError: lastDbError
-      }
+      },
+      // الملفات فين بتتخزن، والتنبيهات مفعّلة ولا لأ — من نظرة واحدة.
+      media: { storage: storageMode() },
+      alerts: { telegram: telegramConfigured() }
     });
   });
   app.use("/assets", express.static(path.resolve(__dirname, "public/assets")));
