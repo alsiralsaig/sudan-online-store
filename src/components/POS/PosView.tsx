@@ -30,6 +30,7 @@ import {
   Users,
   Star,
   UserPlus,
+  Mic,
 } from 'lucide-react';
 import type {
   Product,
@@ -49,6 +50,7 @@ import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
 import { CameraBarcodeScanner } from './CameraBarcodeScanner.tsx';
 import { PosPrinterModal } from './PosPrinterModal.tsx';
 import { PosCustomerModal } from './PosCustomerModal.tsx';
+import { VoiceSaleAssistant } from './VoiceSaleAssistant.tsx';
 import {
   getThermalReceiptSettings,
   getPosPrinterSettings,
@@ -227,6 +229,37 @@ export const PosView: React.FC<PosViewProps> = ({
       setScannerNotification(null);
     }, 2800);
   };
+
+  /** البيع بالصوت */
+  const [isVoiceOpen, setIsVoiceOpen] = useState(false);
+
+  /** إضافة أصناف تحلّلت من اللهجة السودانية — بكمية وسعر وحدة محسوبين */
+  const applyVoiceItems = useCallback(
+    (items: { product: Product; quantity: number; unitPrice: number; note: string }[]) => {
+      setCart((prev) => {
+        const next = [...prev];
+        for (const item of items) {
+          const idx = next.findIndex(
+            (line) => line.product.id === item.product.id && line.unitPrice === item.unitPrice
+          );
+          if (idx >= 0) {
+            next[idx] = { ...next[idx], quantity: next[idx].quantity + item.quantity };
+          } else {
+            next.push({
+              product: item.product,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              discount: 0,
+              notes: item.note,
+            } as any);
+          }
+        }
+        return next;
+      });
+      playBeep(true);
+    },
+    [playBeep]
+  );
 
   // Add to cart
   const addToCart = useCallback((product: Product) => {
@@ -710,6 +743,14 @@ export const PosView: React.FC<PosViewProps> = ({
         </div>
       )}
 
+      {isVoiceOpen && (
+        <VoiceSaleAssistant
+          products={products}
+          onClose={() => setIsVoiceOpen(false)}
+          onApply={applyVoiceItems}
+        />
+      )}
+
       {/* Floating Hardware Scanner Toast Alert */}
       {scannerNotification && (
         <div
@@ -780,6 +821,17 @@ export const PosView: React.FC<PosViewProps> = ({
             >
               <Camera className="w-3.5 h-3.5" />
               <span>مسح بالكاميرا</span>
+            </button>
+
+            {/* البيع بالصوت — اللهجة السودانية */}
+            <button
+              type="button"
+              onClick={() => setIsVoiceOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-l from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-lg text-xs font-black shadow-sm transition-all"
+              title="اتكلم باللهجة السودانية والسلة تتملى وحدها"
+            >
+              <Mic className="w-3.5 h-3.5" />
+              <span>بيع بالصوت</span>
             </button>
 
             {/* Default Printer Settings Trigger Button */}
