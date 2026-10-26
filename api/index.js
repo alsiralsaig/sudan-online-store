@@ -5464,14 +5464,17 @@ var requireTenant = (req, res, next) => {
 apiRouter.get("/tenants/list", (req, res) => {
   const schema = db.getSchema();
   res.json({
-    tenants: schema.tenants.map((t) => ({
+    tenants: schema.tenants.filter((t) => t.status !== "suspended").map((t) => ({
       id: t.id,
       name: t.name,
       tradeName: t.tradeName,
       slug: t.slug,
       status: t.status,
       planId: t.subscriptionPlanId,
-      city: t.city
+      city: t.city,
+      phone: t.phone,
+      address: t.address,
+      logo: t.logo
     }))
   });
 });

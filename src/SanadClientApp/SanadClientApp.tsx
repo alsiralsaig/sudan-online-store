@@ -562,12 +562,13 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         )}
 
         {/* 2b. استعراض السوق: الأقسام والمعارض والإعلانات الحقيقية */}
-        {activeTab === 'market_browse' && (
+        {!openStore && activeTab === 'market_browse' && (
           <ClientMarketBrowseView
             mode={browseMode}
             initialCategory={browseCategory}
             onBack={() => setActiveTab('market_home')}
             onCreateAd={() => setIsCreateModalOpen(true)}
+            onOpenStore={(slug, name) => setOpenStore({ slug, name })}
           />
         )}
 
