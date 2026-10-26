@@ -27,6 +27,8 @@ export interface Tenant {
   slug: string;
   name: string;
   tradeName: string;
+  /** صاحب المتجر كما كتبه في طلب التسجيل — يُستخدم في شريط المستخدم */
+  ownerName?: string;
   logo?: string;
   taxNumber?: string;
   phone: string;

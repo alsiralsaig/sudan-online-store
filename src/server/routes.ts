@@ -3706,6 +3706,31 @@ apiRouter.get('/tenant-applications/status', (req, res) => {
 });
 
 /**
+ * ينشئ حساب «المالك» للمتجر إن لم يكن موجوداً.
+ *
+ * ليه: شريط المستخدم في تطبيق التاجر كان يعرض «أحمد الطيب الرواد» (مالك
+ * المتجر التجريبي) في كل المتاجر، فيظهر اسم رجل آخر كمالك متجر «أبو أحمد».
+ * المالك الحقيقي هو صاحب الطلب، فيُنشأ له سجل موظف بدور owner.
+ */
+function ensureOwnerEmployee(tenantId: string, ownerName: string, phone: string): void {
+  const employees = db.getSchema().employees.filter((e) => e.tenantId === tenantId);
+  const hasOwner = (employees || []).some((e: any) => e.role === 'owner');
+  if (hasOwner) return;
+  db.getSchema().employees.push({
+    id: `emp_owner_${tenantId}`,
+    tenantId,
+    name: ownerName,
+    phone,
+    role: 'owner',
+    pin: '1234',
+    permissions: ['all'],
+    maxDiscountPct: 50,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  } as any);
+}
+
+/**
  * Public: activate the approved store with the code the admin sent.
  *
  * ليه: كود الدخول كان يُصدر عند الموافقة ولا يوجد أي مكان في المنصة لإدخاله،
@@ -3742,6 +3767,12 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
     : db.getSchema().tenants.find((t) => t.phone === application.phone && t.name === application.storeName);
 
   if (existing) {
+    /* مُفعَّل من قبل: نُكمل الناقص (اسم المالك وحساب المالك) بلا إنشاء متجر ثانٍ */
+    if (!(existing as any).ownerName && application.ownerName) {
+      (existing as any).ownerName = application.ownerName;
+    }
+    ensureOwnerEmployee(existing.id, application.ownerName, application.phone);
+    db.commit();
     return res.json({ success: true, created: false, tenant: existing });
   }
 
@@ -3749,6 +3780,7 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
   const tenantId = `tenant_${application.id.replace(/^tapp_?/, '').slice(0, 10) || Date.now()}`;
   const tenant = {
     id: tenantId,
+    ownerName: application.ownerName,
     slug: (application.storeName || 'store').trim().replace(/\s+/g, '-').slice(0, 40) + '-' + tenantId.slice(-4),
     name: application.storeName,
     tradeName: application.storeName,
@@ -3794,6 +3826,8 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
       isActive: true,
     } as any);
   }
+
+  ensureOwnerEmployee(tenantId, application.ownerName, application.phone);
 
   (application as any).tenantId = tenantId;
   (application as any).activatedAt = now.toISOString();

@@ -100,11 +100,11 @@ export const AdminWelcomeBanner: React.FC<AdminWelcomeBannerProps> = ({
         <div className="flex items-start justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
             <SanadLogo size="lg" theme="dark" variant="full" />
-            <div className="flex flex-col border-r border-white/15 pr-3 mr-1 lg:pr-4 lg:mr-2">
-              <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-wider">
-                منظومة الإدارة المركزية
+            <div className="flex min-w-0 flex-col border-r border-white/15 pr-3 mr-1 lg:pr-4 lg:mr-2">
+              <span className="whitespace-nowrap text-[10px] sm:text-[11px] text-emerald-400 font-bold tracking-wider">
+                الإدارة المركزية
               </span>
-              <span className="text-xs text-slate-300 font-medium">
+              <span className="truncate text-[11px] sm:text-xs text-slate-300 font-medium max-w-[34vw] sm:max-w-none">
                 {tenantName} · {branchName}
               </span>
             </div>

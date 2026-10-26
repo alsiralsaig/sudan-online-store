@@ -38,9 +38,14 @@ import {
 
 class ApiClient {
   private tenantId: string = 'tenant_alrowad';
+  /**
+   * الافتراضي «مالك المتجر» لا اسم شخص بعينه — الاسم الحقيقي يأتي من بيانات
+   * المتجر بعد التحميل (كان الافتراضي اسم مالك المتجر التجريبي، فيظهر في كل
+   * المتاجر كأنه المالك).
+   */
   private currentActor = {
-    id: 'emp_owner_rowad',
-    name: 'أحمد الطيب الرواد',
+    id: 'owner_default',
+    name: 'مالك المتجر',
     role: 'owner',
   };
   private currentBranchId: string = 'branch_kht_main';

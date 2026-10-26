@@ -193,7 +193,22 @@ export default function App() {
         setCurrentBranch(activeBr);
       }
 
-      if (empRes.status === 'fulfilled') setEmployees(empRes.value.employees);
+      if (empRes.status === 'fulfilled') {
+        setEmployees(empRes.value.employees);
+        /*
+         * المالك في شريط المستخدم كان ثابتاً على مالك المتجر التجريبي في كل
+         * المتاجر. الآن: الاسم يأتي من صاحب المتجر الحالي (من سجل الموظفين
+         * بدور owner)، ولا نغيّر اختيار المستخدم لأي دور آخر.
+         */
+        setActor((prev) => {
+          if (prev.role !== 'owner') return prev;
+          const owner = (empRes.value.employees || []).find((e: any) => e.role === 'owner');
+          if (!owner || owner.name === prev.name) return prev;
+          const next = { id: owner.id, name: owner.name, role: 'owner' };
+          api.setActor(next);
+          return next;
+        });
+      }
       if (prodRes.status === 'fulfilled') setProducts(prodRes.value.products);
       if (shiftsRes.status === 'fulfilled') {
         setShifts(shiftsRes.value.shifts);
@@ -340,6 +355,12 @@ export default function App() {
     const name = tenant?.tradeName || tenant?.name;
     document.title = name ? `${name} — سند` : 'سند — منظومة التجارة ونقاط البيع';
   }, [tenant?.tradeName, tenant?.name]);
+
+  /** اسم مالك المتجر الحالي — من بيانات المتجر ثم من سجل الموظفين */
+  const ownerDisplayName =
+    (tenant as any)?.ownerName ||
+    employees.find((e: any) => e.role === 'owner')?.name ||
+    'مالك المتجر';
 
   const handleTenantSwitch = (tenantId: string) => {
     api.setTenantId(tenantId);
@@ -576,7 +597,9 @@ export default function App() {
               onChange={(e) => handleActorSwitch(e.target.value)}
               className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-0.5 text-[11px] focus:outline-none font-semibold"
             >
-              <option value="owner">المالك (أحمد الطيب - صلاحيات كاملة)</option>
+              <option value="owner">
+                المالك ({ownerDisplayName} - صلاحيات كاملة)
+              </option>
               <option value="branch_manager">مدير فرع (عثمان عبد الرحيم)</option>
               <option value="cashier">كاشير نقاط البيع (محمد عبد الله)</option>
               <option value="accountant">محاسب مالي (سارة مصطفى)</option>

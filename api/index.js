@@ -7944,6 +7944,23 @@ apiRouter.get("/tenant-applications/status", (req, res) => {
     }
   });
 });
+function ensureOwnerEmployee(tenantId, ownerName, phone) {
+  const employees = db.getSchema().employees.filter((e) => e.tenantId === tenantId);
+  const hasOwner = (employees || []).some((e) => e.role === "owner");
+  if (hasOwner) return;
+  db.getSchema().employees.push({
+    id: `emp_owner_${tenantId}`,
+    tenantId,
+    name: ownerName,
+    phone,
+    role: "owner",
+    pin: "1234",
+    permissions: ["all"],
+    maxDiscountPct: 50,
+    isActive: true,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  });
+}
 apiRouter.post("/tenant-applications/activate", (req, res) => {
   const code = String(req.body?.code || "").trim().toUpperCase();
   if (!code) {
@@ -7961,12 +7978,18 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
   }
   const existing = application.tenantId ? db.getTenant(application.tenantId) : db.getSchema().tenants.find((t) => t.phone === application.phone && t.name === application.storeName);
   if (existing) {
+    if (!existing.ownerName && application.ownerName) {
+      existing.ownerName = application.ownerName;
+    }
+    ensureOwnerEmployee(existing.id, application.ownerName, application.phone);
+    db.commit();
     return res.json({ success: true, created: false, tenant: existing });
   }
   const now = /* @__PURE__ */ new Date();
   const tenantId = `tenant_${application.id.replace(/^tapp_?/, "").slice(0, 10) || Date.now()}`;
   const tenant = {
     id: tenantId,
+    ownerName: application.ownerName,
     slug: (application.storeName || "store").trim().replace(/\s+/g, "-").slice(0, 40) + "-" + tenantId.slice(-4),
     name: application.storeName,
     tradeName: application.storeName,
@@ -8010,6 +8033,7 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
       isActive: true
     });
   }
+  ensureOwnerEmployee(tenantId, application.ownerName, application.phone);
   application.tenantId = tenantId;
   application.activatedAt = now.toISOString();
   db.commit();
