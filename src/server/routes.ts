@@ -3855,7 +3855,8 @@ apiRouter.post('/notifications/scan', async (_req, res) => {
 });
 
 apiRouter.get('/cron/notify-scan', async (_req, res) => {
-  const result = await runNotificationScan();
+  /* الفحص المجدول هو المصدر الوحيد لتنبيه الجوال — مرة واحدة في اليوم */
+  const result = await runNotificationScan({ push: true });
   res.json({ success: true, ...result });
 });
 

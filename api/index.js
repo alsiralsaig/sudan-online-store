@@ -4323,7 +4323,7 @@ async function notifyLowStock(tenantId, opts = {}) {
     fresh.push(body);
     sent++;
   }
-  if (fresh.length > 0 && ntfyEnabledFor("low_stock")) {
+  if (fresh.length > 0 && opts.push === true && ntfyEnabledFor("low_stock")) {
     const head = fresh.slice(0, 4).join("\n\u2022 ");
     const rest = fresh.length > 4 ? `
 \u2022 \u0648${fresh.length - 4} \u0635\u0646\u0641\u0627\u064B \u0622\u062E\u0631 \u0641\u064A \u062A\u0628\u0648\u064A\u0628 \u0627\u0644\u0645\u062E\u0632\u0648\u0646` : "";
@@ -4379,14 +4379,14 @@ async function notifySubscriptionExpiry() {
   }
   return sent;
 }
-async function runNotificationScan() {
+async function runNotificationScan(opts = {}) {
   let lowStock = 0;
   const seen = /* @__PURE__ */ new Set();
   for (const tenant of db.getSchema().tenants) {
     if (seen.has(tenant.id)) continue;
     seen.add(tenant.id);
     try {
-      lowStock += await notifyLowStock(tenant.id);
+      lowStock += await notifyLowStock(tenant.id, { push: opts.push === true });
     } catch (err) {
       console.warn("[notify] low stock scan failed:", err);
     }
@@ -8026,7 +8026,7 @@ apiRouter.post("/notifications/scan", async (_req, res) => {
   res.json({ success: true, ...result });
 });
 apiRouter.get("/cron/notify-scan", async (_req, res) => {
-  const result = await runNotificationScan();
+  const result = await runNotificationScan({ push: true });
   res.json({ success: true, ...result });
 });
 apiRouter.get("/cron/watchdog", async (_req, res) => {

@@ -172,7 +172,10 @@ function buildUrl(app: NotificationApp, linkTab?: string, extra?: Record<string,
  * per product per day (tracked with a `low_stock:<product>:<day>` key so a
  * busy shop does not get flooded).
  */
-export async function notifyLowStock(tenantId: string, opts: { branchId?: string } = {}): Promise<number> {
+export async function notifyLowStock(
+  tenantId: string,
+  opts: { branchId?: string; push?: boolean } = {}
+): Promise<number> {
   const alerts = db.syncInventoryAlerts(tenantId);
   const relevant = opts.branchId ? alerts.filter((a) => a.branchId === opts.branchId) : alerts;
   const day = new Date().toISOString().slice(0, 10);
@@ -208,7 +211,13 @@ export async function notifyLowStock(tenantId: string, opts: { branchId?: string
     sent++;
   }
 
-  if (fresh.length > 0 && ntfyEnabledFor('low_stock')) {
+  /*
+   * التنبيه الخارجي (ntfy) يُرسل من الفحص المجدول فقط، لا من كل فتح للتطبيق
+   * ولا من كل عملية بيع. السبب: Vercel يشغّل عدة نسخ، وكل نسخة تنفّذ الفحص
+   * عند طلب العميل — فيتكرر التنبيه ٣–٤ مرات. الحساب الداخلي (الجرس) يظل
+   * فورياً لكل صنف، أما الجوال فيوصله ملخّص واحد في اليوم.
+   */
+  if (fresh.length > 0 && opts.push === true && ntfyEnabledFor('low_stock')) {
     const head = fresh.slice(0, 4).join('\n• ');
     const rest = fresh.length > 4 ? `\n• و${fresh.length - 4} صنفاً آخر في تبويب المخزون` : '';
     await sendNtfy(
@@ -288,7 +297,9 @@ export async function notifySubscriptionExpiry(): Promise<number> {
 }
 
 /** Runs every automatic scan; safe to call often (everything is de-duplicated). */
-export async function runNotificationScan(): Promise<{ lowStock: number; subscriptions: number }> {
+export async function runNotificationScan(
+  opts: { push?: boolean } = {}
+): Promise<{ lowStock: number; subscriptions: number }> {
   let lowStock = 0;
   const seen = new Set<string>();
 
@@ -296,7 +307,7 @@ export async function runNotificationScan(): Promise<{ lowStock: number; subscri
     if (seen.has(tenant.id)) continue;
     seen.add(tenant.id);
     try {
-      lowStock += await notifyLowStock(tenant.id);
+      lowStock += await notifyLowStock(tenant.id, { push: opts.push === true });
     } catch (err) {
       console.warn('[notify] low stock scan failed:', err);
     }
