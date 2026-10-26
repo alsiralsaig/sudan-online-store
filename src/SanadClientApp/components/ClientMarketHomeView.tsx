@@ -53,6 +53,15 @@ interface ClientMarketHomeViewProps {
   onOpenCreateModal: () => void;
   ownerToken?: string;
   onNavigateTab?: (tab: string) => void;
+  /**
+   * فتح السوق الحقيقي (إعلانات البندر) بقسم محدّد.
+   * كانت كل بلاطة قسم تنقل إلى كتالوج منتجات تاجر واحد، فيرى المستخدم
+   * «زيت وسكر» أيّاً كان القسم الذي ضغطه.
+   */
+  onBrowseCategory?: (categoryId: string) => void;
+  onBrowseShowrooms?: () => void;
+  onBrowseMerchantAds?: () => void;
+  onBrowseDirectory?: () => void;
 }
 
 /**
@@ -76,6 +85,10 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   ownerToken,
   onNavigateTab,
   onOpenCreateModal,
+  onBrowseCategory,
+  onBrowseShowrooms,
+  onBrowseMerchantAds,
+  onBrowseDirectory,
 }) => {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
   const [rotationTick, setRotationTick] = useState(0);
@@ -225,12 +238,12 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
     {
       label: 'متاجر المشاهير',
       icon: Crown,
-      onClick: () => onNavigateTab?.('catalog'),
+      onClick: () => (onBrowseMerchantAds ? onBrowseMerchantAds() : onNavigateTab?.('catalog')),
     },
     {
       label: 'الدليل التجاري',
       icon: Building2,
-      onClick: onOpenSections,
+      onClick: () => (onBrowseDirectory ? onBrowseDirectory() : onOpenSections?.()),
     },
     {
       label: 'المزادات',
@@ -240,19 +253,20 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
     {
       label: 'المعارض والمحلات',
       icon: Presentation,
-      onClick: onOpenCatalog,
+      onClick: () => (onBrowseShowrooms ? onBrowseShowrooms() : onOpenCatalog()),
     },
   ];
 
+  /* المفاتيح هي نفس تصنيفات السوق في قاعدة البيانات — لا مجرد أسماء للزينة */
   const categories = [
     { id: 'electronics', name: 'هواتف', icon: Smartphone },
     { id: 'real_estate', name: 'عقارات', icon: Home },
-    { id: 'vehicles', name: 'سيارات', icon: Car },
-    { id: 'clothes', name: 'ملابس', icon: Shirt },
-    { id: 'food', name: 'مواد غذائية', icon: Wheat },
+    { id: 'cars', name: 'سيارات', icon: Car },
+    { id: 'fashion', name: 'ملابس', icon: Shirt },
+    { id: 'groceries', name: 'مواد غذائية', icon: Wheat },
     { id: 'services', name: 'خدمات', icon: Wrench },
-    { id: 'home', name: 'أجهزة منزلية', icon: Package },
-    { id: 'health', name: 'صحة', icon: Stethoscope },
+    { id: 'furniture_home', name: 'أجهزة منزلية', icon: Package },
+    { id: 'livestock_crops', name: 'ثروة حيوانية', icon: Stethoscope },
   ];
 
   return (
@@ -658,7 +672,9 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
             return (
               <button
                 key={cat.id}
-                onClick={() => onNavigateTab?.('catalog')}
+                onClick={() =>
+                  onBrowseCategory ? onBrowseCategory(cat.id) : onNavigateTab?.('catalog')
+                }
                 className="bg-white rounded-2xl border border-slate-200 py-3.5 flex flex-col items-center gap-1.5 hover:border-emerald-400 hover:shadow-sm transition-all"
               >
                 <span className="w-10 h-10 rounded-xl border border-slate-200 flex items-center justify-center text-emerald-800">

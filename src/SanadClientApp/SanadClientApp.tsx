@@ -12,6 +12,7 @@ import { ClientBottomNav } from './components/ClientBottomNav.tsx';
 import { InAppAlertBanner } from '../components/Common/InAppAlertBanner.tsx';
 import { ClientCreateAdOrRequestModal } from './components/ClientCreateAdOrRequestModal.tsx';
 import { ClientMarketHomeView } from './components/ClientMarketHomeView.tsx';
+import { ClientMarketBrowseView, type BrowseMode } from './components/ClientMarketBrowseView.tsx';
 import { ClientAdDetailModal } from './components/ClientAdDetailModal.tsx';
 import { ClientAutocompleteSearch } from './components/ClientAutocompleteSearch.tsx';
 import { SanadAIAssistant } from '../components/Common/SanadAIAssistant.tsx';
@@ -67,6 +68,16 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   /** الإعلان الجاري تعديله (null = إنشاء جديد) */
   const [editAd, setEditAd] = useState<ClientMarketAd | null>(null);
+
+  /* شاشة استعراض السوق (أقسام/معارض/متاجر) */
+  const [browseMode, setBrowseMode] = useState<BrowseMode>('listings');
+  const [browseCategory, setBrowseCategory] = useState<string>('all');
+
+  const openBrowse = (mode: BrowseMode, category = 'all') => {
+    setBrowseMode(mode);
+    setBrowseCategory(category);
+    setActiveTab('market_browse');
+  };
   const [selectedAdForDetail, setSelectedAdForDetail] = useState<ClientMarketAd | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -530,6 +541,20 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
             onOpenCreateModal={() => setIsCreateModalOpen(true)}
             ownerToken={getOwnerToken()}
             onNavigateTab={(tab) => setActiveTab(tab as any)}
+            onBrowseCategory={(catId) => openBrowse('listings', catId)}
+            onBrowseShowrooms={() => openBrowse('showrooms')}
+            onBrowseMerchantAds={() => openBrowse('merchant-ads')}
+            onBrowseDirectory={() => openBrowse('directory')}
+          />
+        )}
+
+        {/* 2b. استعراض السوق: الأقسام والمعارض والإعلانات الحقيقية */}
+        {activeTab === 'market_browse' && (
+          <ClientMarketBrowseView
+            mode={browseMode}
+            initialCategory={browseCategory}
+            onBack={() => setActiveTab('market_home')}
+            onCreateAd={() => setIsCreateModalOpen(true)}
           />
         )}
 

@@ -16,7 +16,8 @@ export type ClientActiveTab =
   | 'wishlist'
   | 'loyalty'
   | 'track_order'
-  | 'branches_info';
+  | 'branches_info'
+  | 'market_browse';
 
 export interface WishlistItem {
   productId: string;
