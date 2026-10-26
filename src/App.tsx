@@ -773,49 +773,17 @@ export default function App() {
       {/* Main Content Viewport */}
       <SanadErrorBoundary appName="تطبيق التاجر">
       <main className="flex-1 overflow-auto">
-        {/* Sanad POS Promotional Welcome Banner for Admin */}
-        {(currentTab === 'welcome' || currentTab === 'pos') && (
-          <div className="px-6 pt-5">
+        {currentTab === 'welcome' && (
+          <div className="px-3 sm:px-6 py-4">
             <AdminWelcomeBanner
               tenantName={tenant?.tradeName || tenant?.name}
               branchName={currentBranch?.name}
               onNavigateTab={(t) => setCurrentTab(t)}
               onSwitchToClientApp={() => switchAppMode('client')}
               totalProductsCount={products.length}
-              activeShiftsCount={shifts.filter((s) => s.status === 'open').length || 1}
+              activeShiftsCount={shifts.filter((s) => s.status === 'open').length}
               pendingOrdersCount={3}
             />
-          </div>
-        )}
-
-        {currentTab === 'welcome' && (
-          <div className="px-6 pb-6 space-y-4">
-            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-2xs space-y-4">
-              <h2 className="text-xl font-black text-slate-900">نظرة عامة على النظام وروابط سريعة</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-                <button
-                  onClick={() => setCurrentTab('pos')}
-                  className="p-4 rounded-2xl bg-slate-50 border border-slate-200 hover:border-emerald-500 text-right space-y-1 transition-all"
-                >
-                  <strong className="text-sm font-bold text-slate-900 block">نقطة البيع (POS)</strong>
-                  <p className="text-slate-500">إصدار الفواتير الفورية، الدفع ببنكك، العملات المشفرة، والباركود</p>
-                </button>
-                <button
-                  onClick={() => setCurrentTab('inventory_audit')}
-                  className="p-4 rounded-2xl bg-slate-50 border border-slate-200 hover:border-emerald-500 text-right space-y-1 transition-all"
-                >
-                  <strong className="text-sm font-bold text-slate-900 block">تدقيق المخزون بالهاتف</strong>
-                  <p className="text-slate-500">جرد سريع عبر الكاميرا ومطابقة الأرصدة الفعلية مع النظام فورياً</p>
-                </button>
-                <button
-                  onClick={() => switchAppMode('client')}
-                  className="p-4 rounded-2xl bg-amber-50 border border-amber-200 hover:border-amber-400 text-right space-y-1 transition-all"
-                >
-                  <strong className="text-sm font-bold text-slate-950 block">تطبيق الجمهور (SanadClientApp)</strong>
-                  <p className="text-amber-900">تصفح الكتالوج، الطلبات المسبقة، والسلة وتتبع الشحنات</p>
-                </button>
-              </div>
-            </div>
           </div>
         )}
 

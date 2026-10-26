@@ -726,7 +726,7 @@ export const PosView: React.FC<PosViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-105px)] overflow-hidden bg-slate-100">
+    <div className="flex flex-col lg:flex-row min-h-0 lg:h-[calc(100dvh-9.5rem)] overflow-x-hidden overflow-y-auto lg:overflow-hidden bg-slate-100">
       {/* Shift status alert banner if no open shift */}
       {!activeShift && (
         <div className="absolute top-16 left-0 right-0 z-30 bg-amber-500 text-white px-6 py-2.5 flex items-center justify-between shadow-md">

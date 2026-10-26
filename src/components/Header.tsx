@@ -418,7 +418,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Secondary workspace navigation bar for all modules */}
-      <div className="flex items-center gap-2 px-6 py-2 bg-slate-50 border-t border-slate-100 overflow-x-auto text-xs">
+      <div className="flex items-center gap-2 px-3 sm:px-6 py-2 bg-slate-50 border-t border-slate-100 overflow-x-auto no-scrollbar text-xs">
         <button
           onClick={() => onTabChange('welcome')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
@@ -426,7 +426,7 @@ export const Header: React.FC<HeaderProps> = ({
           }`}
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-          <span>الرئيسية والبانر الترويجي</span>
+          <span>الرئيسية</span>
         </button>
         <button
           onClick={() => onTabChange('pos')}
