@@ -14,6 +14,7 @@ import { ClientCreateAdOrRequestModal } from './components/ClientCreateAdOrReque
 import { ClientMarketHomeView } from './components/ClientMarketHomeView.tsx';
 import { ClientMarketBrowseView, type BrowseMode } from './components/ClientMarketBrowseView.tsx';
 import { ClientAdDetailModal } from './components/ClientAdDetailModal.tsx';
+import { ClientMerchantStoreView } from './components/ClientMerchantStoreView.tsx';
 import { ClientAutocompleteSearch } from './components/ClientAutocompleteSearch.tsx';
 import { SanadAIAssistant } from '../components/Common/SanadAIAssistant.tsx';
 
@@ -79,6 +80,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
     setActiveTab('market_browse');
   };
   const [selectedAdForDetail, setSelectedAdForDetail] = useState<ClientMarketAd | null>(null);
+  const [openStore, setOpenStore] = useState<{ slug: string; name?: string } | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -403,6 +405,9 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         description: a.description,
         publisherName: a.storeName || a.publisherName,
         storeName: a.storeName,
+        storeSlug: a.storeSlug,
+        tenantId: a.tenantId,
+        storePhone: a.storePhone,
         createdAt: a.createdAt,
         // extra fields used by the owner panel
         ...(a.status
@@ -496,7 +501,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         onNavigate={(tab) => setActiveTab(tab as any)}
       />
       {/* 1. Header — hidden on the market home, which carries its own slim bar */}
-      {activeTab !== 'market_home' && (
+      {activeTab !== 'market_home' && !openStore && (
       <ClientHeader
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -518,8 +523,15 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
 
       {/* 2. Main Content Views */}
       <main className="flex-1">
+        {openStore && (
+          <ClientMerchantStoreView
+            slug={openStore.slug}
+            fallbackName={openStore.name}
+            onBack={() => setOpenStore(null)}
+          />
+        )}
         {/* Tab 1: Market Home (The Screenshot View) */}
-        {activeTab === 'market_home' && (
+        {!openStore && activeTab === 'market_home' && (
           <ClientMarketHomeView
             cartCount={cart.reduce((sum, item) => sum + item.quantity, 0)}
             onOpenCart={() => setIsCartOpen(true)}
@@ -960,6 +972,11 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
       <ClientAdDetailModal
         ad={selectedAdForDetail}
         onClose={() => setSelectedAdForDetail(null)}
+        onOpenStore={(ad) => {
+          if (!ad.storeSlug) return;
+          setSelectedAdForDetail(null);
+          setOpenStore({ slug: ad.storeSlug, name: ad.storeName || ad.publisherName });
+        }}
       />
 
       {/* 6. Intelligent Autocomplete Search Modal */}

@@ -1431,7 +1431,7 @@ apiRouter.get('/storefront/:slug', (req, res) => {
 
   const products = db
     .getSchema()
-    .products.filter((p) => p.tenantId === tenant.id && p.isActive)
+    .products.filter((p) => p.tenantId === tenant.id && p.isActive !== false)
     .map((p) => ({
       id: p.id,
       name: p.name,
@@ -1439,6 +1439,7 @@ apiRouter.get('/storefront/:slug', (req, res) => {
       unit: p.unit,
       sellingPriceSdg: p.sellingPriceSdg,
       imageUrl: p.imageUrl,
+      videoUrl: (p as any).videoUrl,
     }));
 
   const branches = db
@@ -3572,17 +3573,25 @@ function feeFor(planId: string | undefined, isVip: boolean): number {
   return plan.priceSdg + (isVip ? AD_PRICING.vipFeeSdg : 0);
 }
 
-/** اسم المحل من سجل التاجر المرتبط بإعلان `tenant:…` */
-function storeNameFromOwner(ownerToken?: string): string {
-  if (!ownerToken || !ownerToken.startsWith('tenant:')) return '';
-  const t = db.getTenant(ownerToken.slice('tenant:'.length));
-  return String(t?.tradeName || t?.name || '').trim();
+function tenantFromOwner(ownerToken?: string) {
+  if (!ownerToken || !ownerToken.startsWith('tenant:')) return undefined;
+  return db.getTenant(ownerToken.slice('tenant:'.length));
 }
 
 function decorateMarketAd<T extends { ownerToken?: string; publisherName?: string; storeName?: string }>(ad: T): T {
-  const storeName = (ad.storeName && String(ad.storeName).trim()) || storeNameFromOwner(ad.ownerToken);
-  if (!storeName) return ad;
-  return { ...ad, storeName, publisherName: storeName };
+  const t = tenantFromOwner(ad.ownerToken);
+  const storeName =
+    (ad.storeName && String(ad.storeName).trim()) ||
+    String(t?.tradeName || t?.name || '').trim();
+  if (!storeName && !t) return ad;
+  return {
+    ...ad,
+    storeName: storeName || ad.storeName,
+    publisherName: storeName || ad.publisherName,
+    storeSlug: t?.slug,
+    tenantId: t?.id,
+    storePhone: t?.phone,
+  } as T;
 }
 
 /** An approved ad only stays in the market while its plan is running. */

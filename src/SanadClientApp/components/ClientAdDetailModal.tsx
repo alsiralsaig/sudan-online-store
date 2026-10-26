@@ -17,9 +17,10 @@ import { telHref, waHref } from '../../lib/contact.ts';
 interface ClientAdDetailModalProps {
   ad: ClientMarketAd | null;
   onClose: () => void;
+  onOpenStore?: (ad: ClientMarketAd) => void;
 }
 
-export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, onClose }) => {
+export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, onClose, onOpenStore }) => {
   const [copied, setCopied] = React.useState(false);
   /** الفيديو فشل تحميله (شبكة ضعيفة أو صيغة غير مدعومة) — نعرض بديلاً بدل شاشة ميتة */
   const [videoFailed, setVideoFailed] = React.useState(false);
@@ -157,14 +158,26 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
           </div>
 
           {/* Publisher & Trust */}
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-100 border border-slate-200 text-xs">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span className="font-bold text-slate-800">
-                المحل: {ad.storeName || ad.publisherName || 'تاجر موثق في منصة سند'}
-              </span>
+          <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-100 border border-slate-200 text-xs gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              {ad.storeSlug && onOpenStore ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenStore(ad)}
+                  className="font-bold text-emerald-800 underline underline-offset-2 text-right truncate"
+                >
+                  المحل: {ad.storeName || ad.publisherName || 'تاجر موثق في منصة سند'}
+                </button>
+              ) : (
+                <span className="font-bold text-slate-800">
+                  المحل: {ad.storeName || ad.publisherName || 'تاجر موثق في منصة سند'}
+                </span>
+              )}
             </div>
-            <span className="text-[10px] text-slate-500 font-mono">معلن معتمد</span>
+            <span className="text-[10px] text-slate-500 font-mono shrink-0">
+              {ad.storeSlug ? 'افتح المتجر' : 'معلن معتمد'}
+            </span>
           </div>
         </div>
 

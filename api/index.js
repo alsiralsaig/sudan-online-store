@@ -6544,13 +6544,14 @@ apiRouter.get("/storefront/:slug", (req, res) => {
   if (!tenant || tenant.status !== "active") {
     return res.status(404).json({ error: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u062A\u0627\u062D \u0623\u0648 \u0642\u064A\u062F \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0629" });
   }
-  const products = db.getSchema().products.filter((p) => p.tenantId === tenant.id && p.isActive).map((p) => ({
+  const products = db.getSchema().products.filter((p) => p.tenantId === tenant.id && p.isActive !== false).map((p) => ({
     id: p.id,
     name: p.name,
     category: p.category,
     unit: p.unit,
     sellingPriceSdg: p.sellingPriceSdg,
-    imageUrl: p.imageUrl
+    imageUrl: p.imageUrl,
+    videoUrl: p.videoUrl
   }));
   const branches = db.getSchema().branches.filter((b) => b.tenantId === tenant.id && b.isActive).map((b) => ({ id: b.id, name: b.name, city: b.city, address: b.address, phone: b.phone }));
   res.json({
@@ -8209,15 +8210,22 @@ function feeFor(planId, isVip) {
   const plan = planFor(planId);
   return plan.priceSdg + (isVip ? AD_PRICING.vipFeeSdg : 0);
 }
-function storeNameFromOwner(ownerToken) {
-  if (!ownerToken || !ownerToken.startsWith("tenant:")) return "";
-  const t = db.getTenant(ownerToken.slice("tenant:".length));
-  return String(t?.tradeName || t?.name || "").trim();
+function tenantFromOwner(ownerToken) {
+  if (!ownerToken || !ownerToken.startsWith("tenant:")) return void 0;
+  return db.getTenant(ownerToken.slice("tenant:".length));
 }
 function decorateMarketAd(ad) {
-  const storeName = ad.storeName && String(ad.storeName).trim() || storeNameFromOwner(ad.ownerToken);
-  if (!storeName) return ad;
-  return { ...ad, storeName, publisherName: storeName };
+  const t = tenantFromOwner(ad.ownerToken);
+  const storeName = ad.storeName && String(ad.storeName).trim() || String(t?.tradeName || t?.name || "").trim();
+  if (!storeName && !t) return ad;
+  return {
+    ...ad,
+    storeName: storeName || ad.storeName,
+    publisherName: storeName || ad.publisherName,
+    storeSlug: t?.slug,
+    tenantId: t?.id,
+    storePhone: t?.phone
+  };
 }
 function isLiveAd(ad) {
   if (ad.status !== "approved") return false;

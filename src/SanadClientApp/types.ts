@@ -99,6 +99,9 @@ export interface ClientMarketAd {
   description?: string;
   publisherName?: string;
   storeName?: string;
+  storeSlug?: string;
+  tenantId?: string;
+  storePhone?: string;
   createdAt: string;
   /** Review state — present on ads fetched from the server. */
   status?: 'pending' | 'approved' | 'rejected';
