@@ -24,6 +24,7 @@ import { PushOptInCard } from './components/Common/PushOptInCard.tsx';
 import { SanadAIAssistant } from './components/Common/SanadAIAssistant.tsx';
 import { SanadAppModeBar, type PlatformAppMode } from './components/Common/SanadAppModeBar.tsx';
 import { AdminWelcomeBanner } from './components/Admin/AdminWelcomeBanner.tsx';
+import { MerchantCloudModal } from './components/Common/MerchantCloudModal.tsx';
 
 import type {
   Tenant,
@@ -116,6 +117,8 @@ export default function App() {
   const [isOffline, setIsOffline] = useState<boolean>(api.isOffline());
   const [isSimulatingOffline, setIsSimulatingOffline] = useState<boolean>(api.isSimulatingOffline());
   const [pendingOfflineCount, setPendingOfflineCount] = useState<number>(0);
+  const [isCloudOpen, setIsCloudOpen] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(() => localStorage.getItem('sanad_last_sync') || null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'warning' | 'info'; text: string } | null>(null);
 
@@ -295,6 +298,9 @@ export default function App() {
 
     try {
       const res = await api.syncPendingOfflineSales();
+      const now = new Date().toISOString();
+      setLastSyncAt(now);
+      try { localStorage.setItem('sanad_last_sync', now); } catch { /* ignore */ }
       if (res.syncedCount > 0) {
         setNotification({
           type: 'success',
@@ -491,7 +497,7 @@ export default function App() {
 
   // Merchant Mode (Store POS & Management)
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans select-none antialiased">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none antialiased merchant-shell">
       {/* Phone-style alert that drops from the top for any new notification */}
       <InAppAlertBanner
         app="merchant"
@@ -697,6 +703,20 @@ export default function App() {
         onOpenStorefront={() => setCurrentTab('store_orders')}
         onSwitchToClientApp={() => switchAppMode('client')}
         onOpenActivateStore={() => setIsActivateOpen(true)}
+        onOpenCloud={() => setIsCloudOpen(true)}
+      />
+
+      <MerchantCloudModal
+        isOpen={isCloudOpen}
+        onClose={() => setIsCloudOpen(false)}
+        tenantName={tenant?.tradeName || tenant?.name || 'متجرك'}
+        branchName={currentBranch?.name || 'الفرع الرئيسي'}
+        isOffline={isOffline}
+        isSyncing={isSyncing}
+        pendingOfflineCount={pendingOfflineCount}
+        lastSyncAt={lastSyncAt}
+        onUpload={() => { handleSyncOffline(); }}
+        onRefreshFromServer={() => { loadPrimaryData(); setIsCloudOpen(false); }}
       />
 
       {/* Quick Testing Context Bar (Tenant, Branch & Role Switcher for Review) */}

@@ -80,3 +80,33 @@
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* تطبيق التاجر — ثيم غامق زي حساباتي */
+.merchant-shell {
+  background: #020617;
+  color: #e2e8f0;
+}
+.merchant-shell main .bg-white {
+  background-color: #0f172a;
+  border-color: #1e293b;
+  color: #e2e8f0;
+}
+.merchant-shell main .text-slate-900,
+.merchant-shell main .text-slate-800 {
+  color: #f1f5f9;
+}
+.merchant-shell main .border-slate-200,
+.merchant-shell main .border-slate-100 {
+  border-color: #1e293b;
+}
+.merchant-shell main .bg-slate-50,
+.merchant-shell main .bg-slate-100 {
+  background-color: #0b1220;
+}
+.merchant-shell main input,
+.merchant-shell main select,
+.merchant-shell main textarea {
+  background-color: #020617;
+  color: #f8fafc;
+  border-color: #334155;
+}

@@ -26,6 +26,9 @@ import {
   LayoutDashboard,
   PlusCircle,
   KeyRound,
+  Cloud,
+  CloudOff,
+  CloudUpload,
 } from 'lucide-react';
 import type { InventoryAlert } from '../types/index.ts';
 import { SanadLogo } from './Common/SanadLogo.tsx';
@@ -51,6 +54,7 @@ interface HeaderProps {
   onRefreshAlerts?: () => void;
   /** فتح نافذة «تفعيل متجر بكود الدخول» */
   onOpenActivateStore?: () => void;
+  onOpenCloud?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -71,6 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
   onDismissAlert,
   onRefreshAlerts,
   onOpenActivateStore,
+  onOpenCloud,
 }) => {
   const [isAlertsOpen, setIsAlertsOpen] = React.useState(false);
   const [isTenantModalOpen, setIsTenantModalOpen] = React.useState(false);
@@ -94,19 +99,17 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="border-b border-slate-200 bg-white/95 backdrop-blur-md sticky top-0 z-40">
+    <header className="border-b border-slate-800 bg-slate-950 sticky top-0 z-40 text-slate-100">
       {/* Top Bar Contract: 3 Zones */}
       <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-6 px-4 sm:px-6 py-3.5 min-w-0">
         {/* Zone 1: Sanad Logo Brand Wordmark */}
         <div className="flex items-center gap-3 shrink-0">
-          <SanadLogo size="sm" variant="full" onClick={() => onTabChange('welcome')} />
-          {/* اسم المتجر ظاهر على الجوال أيضاً — كان مخفياً تحت sm فلا يرى
-              التاجر أي أثر لاسم متغيّره بعد التفعيل أو التبديل */}
-          <div className="flex flex-col border-r border-slate-200 pr-3 mr-1 min-w-0">
-            <span className="text-[11px] sm:text-xs font-bold text-slate-800 whitespace-nowrap truncate max-w-[38vw] sm:max-w-none">
+          <SanadLogo size="sm" variant="full" theme="dark" onClick={() => onTabChange('welcome')} />
+          <div className="flex flex-col border-r border-slate-700 pr-3 mr-1 min-w-0">
+            <span className="text-[11px] sm:text-xs font-black text-white whitespace-nowrap truncate max-w-[38vw] sm:max-w-none">
               {tenantName}
             </span>
-            <span className="text-[10px] sm:text-[11px] text-slate-500 whitespace-nowrap truncate">
+            <span className="text-[10px] sm:text-[11px] text-slate-400 whitespace-nowrap truncate">
               {branchName}
             </span>
           </div>
@@ -180,13 +183,42 @@ export const Header: React.FC<HeaderProps> = ({
         {/* كانت shrink-0 بلا wrap فكانت الأزرار الأخيرة (جرس الإشعارات) تخرج
             خارج الشاشة على الجوال ولا تُرى أصلاً */}
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 min-w-0">
-          {/* Platform notifications — أول عنصر في الشريط فيظل مرئياً على الجوال */}
-          <div className="relative flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 pl-1 pr-1 py-0.5">
+          {/* السحابة — أول زر ظاهر زي حساباتي */}
+          {onOpenCloud && (
+            <button
+              type="button"
+              onClick={onOpenCloud}
+              title={isOffline ? 'السحابة: دون اتصال — اضغط للتفاصيل' : 'السحابة والرفع'}
+              className={`relative flex items-center gap-1.5 rounded-xl border-2 px-2.5 py-1.5 font-black text-xs transition-all ${
+                isOffline
+                  ? 'border-amber-400 bg-amber-500/15 text-amber-200'
+                  : pendingOfflineCount > 0
+                    ? 'border-sky-400 bg-sky-500/15 text-sky-200'
+                    : 'border-emerald-400 bg-emerald-500/15 text-emerald-200'
+              }`}
+            >
+              {isOffline ? (
+                <CloudOff className="w-5 h-5" />
+              ) : pendingOfflineCount > 0 || isSyncing ? (
+                <CloudUpload className={`w-5 h-5 ${isSyncing ? 'animate-pulse' : ''}`} />
+              ) : (
+                <Cloud className="w-5 h-5" />
+              )}
+              <span className="hidden sm:inline">السحابة</span>
+              {pendingOfflineCount > 0 && (
+                <span className="absolute -top-1.5 -left-1.5 min-w-[1.1rem] h-5 px-1 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black flex items-center justify-center">
+                  {pendingOfflineCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          <div className="relative flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-950/40 pl-1 pr-1 py-0.5">
             <NotificationBell
               app="merchant"
               onNavigate={(tab) => onTabChange(tab as any)}
             />
-            <span className="hidden sm:inline pl-2 pr-1 text-[11px] font-bold text-rose-800">
+            <span className="hidden sm:inline pl-2 pr-1 text-[11px] font-bold text-rose-200">
               الإشعارات
             </span>
           </div>
@@ -418,11 +450,11 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Secondary workspace navigation bar for all modules */}
-      <div className="flex items-center gap-2 px-3 sm:px-6 py-2 bg-slate-50 border-t border-slate-100 overflow-x-auto no-scrollbar text-xs">
+      <div className="flex items-center gap-2 px-3 sm:px-6 py-2 bg-slate-900 border-t border-slate-800 overflow-x-auto no-scrollbar text-xs">
         <button
           onClick={() => onTabChange('welcome')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'welcome' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'welcome' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-500" />
@@ -431,7 +463,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('pos')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'pos' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'pos' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <ShoppingCart className="w-3.5 h-3.5" />
@@ -440,7 +472,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('kitchen')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'kitchen' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'kitchen' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <UtensilsCrossed className="w-3.5 h-3.5 text-amber-500" />
@@ -449,7 +481,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('inventory')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'inventory' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'inventory' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <Layers className="w-3.5 h-3.5" />
@@ -469,7 +501,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('transfers')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'transfers' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'transfers' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <ArrowLeftRight className="w-3.5 h-3.5" />
@@ -478,7 +510,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('shifts')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'shifts' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'shifts' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <Clock className="w-3.5 h-3.5" />
@@ -487,7 +519,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('sales')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'sales' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'sales' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <Store className="w-3.5 h-3.5" />
@@ -496,7 +528,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('purchases_expenses')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'purchases_expenses' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'purchases_expenses' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <Coins className="w-3.5 h-3.5" />
@@ -505,7 +537,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('reports')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'reports' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'reports' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <BarChart3 className="w-3.5 h-3.5" />
@@ -514,7 +546,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('branches_employees')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'branches_employees' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'branches_employees' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <UserCheck className="w-3.5 h-3.5" />
@@ -523,7 +555,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('currencies')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'currencies' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'currencies' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <Coins className="w-3.5 h-3.5" />
@@ -532,7 +564,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('store_orders')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'store_orders' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'store_orders' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <Globe className="w-3.5 h-3.5" />
@@ -541,7 +573,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('subscription')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'subscription' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'subscription' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <CreditCard className="w-3.5 h-3.5" />
@@ -551,8 +583,8 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={() => onTabChange('my_ads')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
             currentTab === 'my_ads'
-              ? 'bg-white text-emerald-700 shadow-sm font-semibold'
-              : 'text-slate-700 bg-emerald-50/70 border border-emerald-200/50 font-semibold hover:text-emerald-900'
+              ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold'
+              : 'text-slate-400 hover:text-white'
           }`}
         >
           <Megaphone className="w-3.5 h-3.5 text-emerald-600" />
@@ -561,7 +593,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onTabChange('admin')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'admin' ? 'bg-white text-emerald-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+            currentTab === 'admin' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
           }`}
         >
           <ShieldAlert className="w-3.5 h-3.5" />

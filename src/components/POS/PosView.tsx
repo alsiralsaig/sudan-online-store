@@ -726,7 +726,7 @@ export const PosView: React.FC<PosViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-0 lg:h-[calc(100dvh-9.5rem)] overflow-x-hidden overflow-y-auto lg:overflow-hidden bg-slate-100">
+    <div className="flex flex-col lg:flex-row min-h-0 lg:h-[calc(100dvh-9.5rem)] overflow-x-hidden overflow-y-auto lg:overflow-hidden bg-slate-950">
       {/* Shift status alert banner if no open shift */}
       {!activeShift && (
         <div className="absolute top-16 left-0 right-0 z-30 bg-amber-500 text-white px-6 py-2.5 flex items-center justify-between shadow-md">
@@ -1034,11 +1034,11 @@ export const PosView: React.FC<PosViewProps> = ({
       </div>
 
       {/* Right Column: Active Cart & Fast Checkout */}
-      <div className="w-full lg:w-96 bg-white border-r border-slate-200 flex flex-col h-full shadow-lg shrink-0">
+      <div className="w-full lg:w-96 bg-slate-900 border-r border-slate-800 flex flex-col h-full shadow-lg shrink-0 text-slate-100">
         {/* Cart Header */}
-        <div className="p-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+        <div className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-sm text-slate-900">سلة المبيعات الحالية</span>
+            <span className="font-bold text-sm text-white">سلة المبيعات الحالية</span>
             <span className="text-xs text-slate-500 font-mono">({cart.length} أصناف)</span>
           </div>
           {cart.length > 0 && (
