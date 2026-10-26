@@ -522,6 +522,8 @@ export interface AlbandarListing {
   createdAt: string;
   locationDetails?: string;
   bankakAccount?: string;
+  /** بذرة تجريبية بلا بائع حقيقي — ما ينفتح واتساب كأنه محل */
+  isDemo?: boolean;
 }
 
 export interface AlbandarShowroom {

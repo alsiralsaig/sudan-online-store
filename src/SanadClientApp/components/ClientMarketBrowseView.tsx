@@ -59,6 +59,10 @@ const CATEGORY_NAME = (id: string): string =>
 
 const money = (n: number): string => `${(n || 0).toLocaleString('en-US')} ج.س`;
 
+/** بذور البندر (alb_*) ما عندها سيد — للفت النظر فقط */
+const isDemoListing = (l: AlbandarListing): boolean =>
+  l.isDemo === true || String(l.id || '').startsWith('alb_');
+
 export const ClientMarketBrowseView: React.FC<Props> = ({
   mode,
   initialCategory,
@@ -332,24 +336,43 @@ export const ClientMarketBrowseView: React.FC<Props> = ({
                       ) : null}
                     </div>
                     <div className="p-2.5 flex-1 flex flex-col gap-1">
-                      <h3 className="text-[11.5px] font-bold text-slate-900 line-clamp-2 leading-snug">{l.title}</h3>
+                      <div className="flex items-start justify-between gap-1">
+                        <h3 className="text-[11.5px] font-bold text-slate-900 line-clamp-2 leading-snug">{l.title}</h3>
+                        {isDemoListing(l) && (
+                          <span className="shrink-0 rounded-full bg-amber-100 text-amber-900 text-[9px] font-black px-1.5 py-0.5">
+                            تجريبي
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[12px] font-black text-emerald-800">{money(l.priceSdg)}</p>
                       <p className="text-[9.5px] text-slate-500 flex items-center gap-1">
                         <MapPin className="w-3 h-3" /> {l.city}
                         <span className="mx-1">•</span>
-                        <span className="truncate">{l.sellerName}</span>
+                        <span className="truncate">
+                          {isDemoListing(l) ? 'مساحة إعلانية — بلا بائع' : l.sellerName}
+                        </span>
                       </p>
-                      <a
-                        href={waLink(
-                          l.sellerWhatsapp || l.sellerPhone,
-                          `السلام عليكم، استفسار بخصوص إعلانك في سند: «${l.title}» بسعر ${money(l.priceSdg)} في ${l.city}.`
-                        )}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-auto rounded-lg bg-emerald-600 py-1.5 text-center text-[10.5px] font-bold text-white flex items-center justify-center gap-1"
-                      >
-                        <MessageCircle className="w-3 h-3" /> واتساب
-                      </a>
+                      {isDemoListing(l) ? (
+                        <button
+                          type="button"
+                          onClick={onCreateAd}
+                          className="mt-auto rounded-lg bg-slate-900 py-1.5 text-center text-[10.5px] font-black text-white"
+                        >
+                          أعلن هنا
+                        </button>
+                      ) : (
+                        <a
+                          href={waLink(
+                            l.sellerWhatsapp || l.sellerPhone,
+                            `السلام عليكم، استفسار بخصوص إعلانك في سند: «${l.title}» بسعر ${money(l.priceSdg)} في ${l.city}.`
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-auto rounded-lg bg-emerald-600 py-1.5 text-center text-[10.5px] font-bold text-white flex items-center justify-center gap-1"
+                        >
+                          <MessageCircle className="w-3 h-3" /> واتساب
+                        </a>
+                      )}
                     </div>
                   </div>
                 ))}
