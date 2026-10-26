@@ -128,15 +128,22 @@ async function claimInDb(key: string): Promise<boolean | null> {
 export async function sendNtfy(
   title: string,
   body: string,
-  opts: { priority?: 1 | 2 | 3 | 4 | 5; tags?: string } = {}
+  opts: { priority?: 1 | 2 | 3 | 4 | 5; tags?: string; dedupe?: boolean } = {}
 ): Promise<NtfyVerdict> {
   const t = topic();
   if (!t) return { sent: 0, skipped: 'NOT_CONFIGURED' };
-  const key = `${title}|${body}`.replace(/\s+/g, ' ').trim();
-  /* الأولوية للحجز في قاعدة البيانات (يمنع التكرار بين النسخ)، ثم الكاش المحلي */
-  const dbClaim = await claimInDb(key);
-  if (dbClaim === false) return { sent: 0, skipped: 'DUPLICATE' };
-  if (dbClaim === null && recentlySent(key)) return { sent: 0, skipped: 'DUPLICATE' };
+  /*
+   * منع التكرار يُطبَّق افتراضياً، لكنه يُلغى لرسائل مثل «جرّب التنبيه»
+   * ورسائل المراقبة: من يضغط الزر مرتين يجب أن يرى نتيجتين، ولا معنى
+   * لإسكات تنبيه عطل لأن نصه تكرّر.
+   */
+  if (opts.dedupe !== false) {
+    const key = `${title}|${body}`.replace(/\s+/g, ' ').trim();
+    /* الأولوية للحجز في قاعدة البيانات (يمنع التكرار بين النسخ)، ثم الكاش المحلي */
+    const dbClaim = await claimInDb(key);
+    if (dbClaim === false) return { sent: 0, skipped: 'DUPLICATE' };
+    if (dbClaim === null && recentlySent(key)) return { sent: 0, skipped: 'DUPLICATE' };
+  }
   if (rateLimited()) return { sent: 0, skipped: 'RATE_LIMITED' };
 
   const controller = new AbortController();

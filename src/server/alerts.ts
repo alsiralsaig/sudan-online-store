@@ -56,7 +56,7 @@ export async function notifyAll(text: string): Promise<AlertVerdict> {
   if (channels.includes('ntfy')) {
     try {
       const firstLine = text.split('\n').find((l) => l.trim()) || 'تنبيه من سند';
-      const v = await sendNtfy(emailSubject(text), text);
+      const v = await sendNtfy(emailSubject(text), text, { dedupe: false });
       sent += v.sent;
       if (v.sent === 0 && !skipped) skipped = `ntfy:${v.skipped || firstLine.slice(0, 0)}`;
     } catch (err) {

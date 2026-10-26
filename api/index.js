@@ -176,10 +176,12 @@ async function claimInDb(key) {
 async function sendNtfy(title, body, opts = {}) {
   const t = topic();
   if (!t) return { sent: 0, skipped: "NOT_CONFIGURED" };
-  const key = `${title}|${body}`.replace(/\s+/g, " ").trim();
-  const dbClaim = await claimInDb(key);
-  if (dbClaim === false) return { sent: 0, skipped: "DUPLICATE" };
-  if (dbClaim === null && recentlySent(key)) return { sent: 0, skipped: "DUPLICATE" };
+  if (opts.dedupe !== false) {
+    const key = `${title}|${body}`.replace(/\s+/g, " ").trim();
+    const dbClaim = await claimInDb(key);
+    if (dbClaim === false) return { sent: 0, skipped: "DUPLICATE" };
+    if (dbClaim === null && recentlySent(key)) return { sent: 0, skipped: "DUPLICATE" };
+  }
   if (rateLimited()) return { sent: 0, skipped: "RATE_LIMITED" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6e3);
@@ -285,7 +287,7 @@ async function notifyAll(text) {
   if (channels.includes("ntfy")) {
     try {
       const firstLine = text.split("\n").find((l) => l.trim()) || "\u062A\u0646\u0628\u064A\u0647 \u0645\u0646 \u0633\u0646\u062F";
-      const v = await sendNtfy(emailSubject(text), text);
+      const v = await sendNtfy(emailSubject(text), text, { dedupe: false });
       sent += v.sent;
       if (v.sent === 0 && !skipped) skipped = `ntfy:${v.skipped || firstLine.slice(0, 0)}`;
     } catch (err) {
