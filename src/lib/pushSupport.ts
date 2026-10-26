@@ -30,7 +30,14 @@ export interface PushSupport {
 
 const UA = () => (typeof navigator === 'undefined' ? '' : navigator.userAgent);
 
-/** Facebook/Instagram/WhatsApp/Telegram/Line/Snapchat in-app browsers + Android WebView. */
+/**
+ * بصمات المتصفحات المدمجة داخل التطبيقات فقط.
+ *
+ * ملاحظة مهمة: كنا نطابق `GSA/` و`; wv)` وحدها، فظهرت رسالة «أنت تفتح من
+ * فيسبوك/واتساب» لأناس يفتحون Chrome عادي — لأن بعض إصدارات أندرويد تضيف
+ * `wv` لأسباب أخرى. الآن المطابقة تحتاج بصمة صريحة، والرسالة نفسها عامة
+ * ولا تتهم تطبيقاً بعينه.
+ */
 const IN_APP_PATTERNS = [
   /FBAN|FBAV|FB_IAB|FBIOS/i,
   /Instagram/i,
@@ -40,8 +47,7 @@ const IN_APP_PATTERNS = [
   /Snapchat/i,
   /MicroMessenger/i,
   /Twitter/i,
-  /; wv\)/i,
-  /GSA\//i,
+  /musical_ly|BytedanceWebview|TikTok/i,
 ];
 
 export const isInAppBrowser = (): boolean => IN_APP_PATTERNS.some((re) => re.test(UA()));
@@ -69,6 +75,22 @@ export function detectPushSupport(): PushSupport {
 
   const embedded = window.self !== window.top;
 
+  /*
+   * القدرة الحقيقية أولاً، والتفسير بعدها.
+   *
+   * ليه: الرسالة كانت تُبنى على تخمين نوع المتصفح قبل أن نتحقق هل الإشعارات
+   * تعمل فعلاً. النتيجة أن مستخدم Chrome سليم يرى تحذيراً عن «المتصفحات
+   * المدمجة». الآن: لو كل الواجهات موجودة والإذن غير مرفوض، فالحالة «ok»
+   * ولا تظهر أي رسالة مزعجة.
+   */
+  const hasApis =
+    'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const granted = hasApis && Notification.permission === 'granted';
+
+  if (secure && hasApis && granted) {
+    return { state: 'ok', title: '', steps: [], canRetry: true, needsOtherBrowser: false };
+  }
+
   if (!secure) {
     return {
       state: 'insecure',
@@ -79,10 +101,10 @@ export function detectPushSupport(): PushSupport {
     };
   }
 
-  if (isInAppBrowser()) {
+  if (isInAppBrowser() && !hasApis) {
     return {
       state: 'in_app_browser',
-      title: 'أنت تفتح المنصة من داخل تطبيق آخر (فيسبوك/واتساب/إنستقرام…) وهذه المتصفحات المدمجة تمنع إشعارات الهاتف.',
+      title: 'يبدو أنك تفتح المنصة من داخل تطبيق (واتساب/فيسبوك…) أو متصفح مدمج — وهذا النوع يمنع إشعارات الهاتف.',
       steps: [
         'اضغط زر ⋯ أو ⋮ أعلى الشاشة واختر «فتح في المتصفح» أو «Open in Chrome».',
         'أو انسخ الرابط وافتحه في Chrome (أندرويد) أو Safari (آيفون).',
@@ -106,7 +128,7 @@ export function detectPushSupport(): PushSupport {
     };
   }
 
-  if (isIos() && !isStandalone()) {
+  if (isIos() && !isStandalone() && !isInAppBrowser()) {
     return {
       state: 'ios_needs_install',
       title: 'على الآيفون لازم تضيف التطبيق لشاشة الجهاز أولاً (iOS 16.4+).',

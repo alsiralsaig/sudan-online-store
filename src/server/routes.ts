@@ -3446,6 +3446,59 @@ apiRouter.post('/market-ads', (req, res) => {
   });
 });
 
+/**
+ * Publisher edits their own ad — the owner token must match.
+ *
+ * ليه: لم يكن هناك أي سبيل لتعديل إعلان بعد نشره (صورة خاطئة أو عنوان في
+ * غير مكانه)، فكان الحل الوحيد حذفه وإعادة دفعه من جديد. الآن المالك
+ * يصحّح إعلانه بنفس الجهاز الذي نشره منه.
+ */
+apiRouter.put('/market-ads/:id', (req, res) => {
+  const ownerToken = String(req.headers['x-owner-token'] || '');
+  const {
+    title, category, priceSdg, location, phone, whatsapp, description, imageUrl, videoUrl,
+  } = req.body || {};
+
+  if (!title || String(title).trim().length < 4) {
+    return res.status(400).json({ error: 'TITLE_REQUIRED', message: 'عنوان الإعلان مطلوب (4 أحرف على الأقل).' });
+  }
+  if (!phone || String(phone).trim().length < 9) {
+    return res.status(400).json({ error: 'PHONE_REQUIRED', message: 'رقم الهاتف أو الواتساب مطلوب.' });
+  }
+  if (!imageUrl && !videoUrl) {
+    return res.status(400).json({ error: 'MEDIA_REQUIRED', message: 'أضف صورة أو فيديو للإعلان.' });
+  }
+
+  const result = db.updateMarketAd(req.params.id, { ownerToken }, {
+    title: String(title).trim(),
+    category: category || 'عام',
+    priceSdg: Number(priceSdg) || 0,
+    location: location || 'الخرطوم',
+    phone: String(phone).trim(),
+    whatsapp: whatsapp || phone,
+    description: description || '',
+    imageUrl: imageUrl || '',
+    videoUrl: videoUrl || undefined,
+  });
+
+  if (!result.ok) {
+    return res.status(result.reason === 'NOT_FOUND' ? 404 : 403).json({
+      error: result.reason,
+      message: result.reason === 'NOT_FOUND' ? 'الإعلان غير موجود.' : 'لا تملك صلاحية تعديل هذا الإعلان.',
+    });
+  }
+
+  notifyUser({
+    app: 'admin',
+    kind: 'new_ad',
+    title: 'إعلان عُدّل بعد النشر',
+    body: `${result.ad?.title || ''} — ${result.ad?.location || ''} • صاحبه صحّح بياناته`,
+    linkTab: 'market_ads',
+  }).catch(() => {});
+
+  res.json({ success: true, ad: result.ad, message: 'تم تحديث الإعلان.' });
+});
+
 /** Publisher deletes their own ad — the owner token must match. */
 apiRouter.delete('/market-ads/:id', (req, res) => {
   const ownerToken = String(req.headers['x-owner-token'] || '');
@@ -3650,6 +3703,112 @@ apiRouter.get('/tenant-applications/status', (req, res) => {
       reviewedAt: application.reviewedAt,
     },
   });
+});
+
+/**
+ * Public: activate the approved store with the code the admin sent.
+ *
+ * ليه: كود الدخول كان يُصدر عند الموافقة ولا يوجد أي مكان في المنصة لإدخاله،
+ * فكان المتجر يبقى «موافقاً» على الورق فقط. هنا يُنشأ المتجر فعلياً من الطلب
+ * (فروع، إعدادات افتراضية، اشتراك ٣٠ يوماً) ويصبح قابلاً للاختيار في تطبيق
+ * التاجر. العملية idempotent: إدخال الكود مرتين لا ينشئ متجرين.
+ */
+apiRouter.post('/tenant-applications/activate', (req, res) => {
+  const code = String(req.body?.code || '').trim().toUpperCase();
+  if (!code) {
+    return res.status(400).json({ error: 'CODE_REQUIRED', message: 'أدخل كود الدخول.' });
+  }
+
+  const application = db
+    .getTenantApplications()
+    .find((a) => (a.activationCode || '').toUpperCase() === code);
+
+  if (!application) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'لا يوجد طلب بهذا الكود. راجع الإدارة.' });
+  }
+  if (application.status !== 'approved') {
+    return res.status(400).json({
+      error: 'NOT_APPROVED',
+      message:
+        application.status === 'pending'
+          ? 'طلبك لسه قيد المراجعة — الكود يصبح صالحاً بعد الموافقة.'
+          : 'هذا الطلب مرفوض، تواصل مع الإدارة.',
+    });
+  }
+
+  /* أُنشئ من قبل؟ نرجع نفس المتجر بدل إنشاء نسخة ثانية */
+  const existing = application.tenantId
+    ? db.getTenant(application.tenantId)
+    : db.getSchema().tenants.find((t) => t.phone === application.phone && t.name === application.storeName);
+
+  if (existing) {
+    return res.json({ success: true, created: false, tenant: existing });
+  }
+
+  const now = new Date();
+  const tenantId = `tenant_${application.id.replace(/^tapp_?/, '').slice(0, 10) || Date.now()}`;
+  const tenant = {
+    id: tenantId,
+    slug: (application.storeName || 'store').trim().replace(/\s+/g, '-').slice(0, 40) + '-' + tenantId.slice(-4),
+    name: application.storeName,
+    tradeName: application.storeName,
+    phone: application.phone,
+    city: application.city || 'الخرطوم',
+    address: [application.wilaya, application.city].filter(Boolean).join(' - '),
+    currency: 'SDG',
+    status: 'active' as const,
+    subscriptionPlanId: 'plan_starter',
+    subscriptionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    settings: {
+      receiptHeader: `${application.storeName}${application.city ? ` — ${application.city}` : ''}\nهاتف: ${application.phone}`,
+      receiptFooter: 'شكراً لزيارتكم!',
+      allowNegativeStock: false,
+      defaultMaxDiscountPct: 10,
+      zatcaQrEnabled: false,
+      costingMethod: 'weighted_average' as const,
+      vatEnabled: false,
+      defaultVatPct: 0,
+      pricesIncludeVat: false,
+      showVatBreakdown: true,
+      showTaxPerItem: true,
+      loyaltyRateSdgPerPoint: 1000,
+    },
+    createdAt: now.toISOString(),
+  };
+
+  const schema = db.getSchema();
+  schema.tenants.push(tenant as any);
+
+  /* فرع رئيسي واحد حتى يعملت التطبيق من أول لحظة */
+  const branches = Math.max(1, Number(application.branchesCount) || 1);
+  for (let i = 1; i <= branches; i++) {
+    schema.branches.push({
+      id: `branch_${tenantId}_${i}`,
+      tenantId,
+      name: i === 1 ? 'الفرع الرئيسي' : `فرع ${i}`,
+      code: `B${i}`,
+      city: application.city || 'الخرطوم',
+      address: application.wilaya ? `${application.wilaya} - ${application.city || ''}` : '',
+      phone: application.phone,
+      isMain: i === 1,
+      isActive: true,
+    } as any);
+  }
+
+  (application as any).tenantId = tenantId;
+  (application as any).activatedAt = now.toISOString();
+  db.commit();
+
+  notifyUser({
+    app: 'admin',
+    kind: 'new_store_request',
+    title: 'متجر جديد فعّل حسابه',
+    body: `${tenant.name} — ${tenant.city} • ${branches} فرع • بدأ الاشتراك 30 يوماً`,
+    linkTab: 'merchants',
+    tenantId,
+  }).catch(() => {});
+
+  res.json({ success: true, created: true, tenant });
 });
 
 /** Admin: the review queue. */

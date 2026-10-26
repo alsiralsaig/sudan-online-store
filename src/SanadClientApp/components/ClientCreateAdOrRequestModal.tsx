@@ -38,6 +38,11 @@ interface ClientCreateAdOrRequestModalProps {
     }[];
   };
   onRequestCreated: (request: ClientPurchaseRequest) => void;
+  /**
+   * تعديل إعلان قائم بدل إنشاء جديد — يُمرَّر الإعلان فيُملأ النموذج به،
+   * ويُرسل الحفظ إلى PUT /market-ads/:id بدل POST.
+   */
+  editAd?: ClientMarketAd | null;
 }
 
 export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModalProps> = ({
@@ -45,8 +50,10 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
   onClose,
   onAdCreated,
   onRequestCreated,
+  editAd = null,
   pricing = { standardFeeSdg: 0, vipFeeSdg: 5000, currency: 'SDG' },
 }) => {
+  const isEditing = !!editAd;
   /** Fallback ladder, identical to what the server sends. */
   const plans =
     pricing.plans && pricing.plans.length > 0
@@ -106,6 +113,30 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
     };
   }, [isOpen, onClose]);
 
+  /* تعبئة النموذج عند التعديل — يظهر نفس الشكل، بلا تبويب «طلب شراء» */
+  useEffect(() => {
+    if (!isOpen || !editAd) return;
+    setActiveTab('ad');
+    setIsSuccess(false);
+    setSubmitError(null);
+    setAdForm((prev) => ({
+      ...prev,
+      title: editAd.title || '',
+      category: editAd.category || prev.category,
+      priceSdg: editAd.priceSdg ? String(editAd.priceSdg) : '',
+      location: editAd.location || prev.location,
+      phone: editAd.phone || '',
+      description: editAd.description || '',
+    }));
+    if (editAd.imageUrl || editAd.videoUrl) {
+      setAdMedia(
+        editAd.videoUrl
+          ? { kind: 'video', url: editAd.videoUrl, posterUrl: editAd.imageUrl }
+          : { kind: 'image', url: editAd.imageUrl }
+      );
+    }
+  }, [isOpen, editAd?.id]);
+
   const sampleImages = [
     { label: 'سيارة حديثة', url: '/assets/images/albander_hyundai_car_1792184093653.jpg' },
     { label: 'لابتوب وماك بوك', url: '/assets/images/albander_macbook_laptop_1792184108039.jpg' },
@@ -129,6 +160,31 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
 
     setIsSubmitting(true);
     try {
+      const payload = {
+        title: adForm.title,
+        category: adForm.category,
+        priceSdg: Number(adForm.priceSdg) || 0,
+        location: adForm.location,
+        phone: adForm.phone,
+        whatsapp: adForm.phone,
+        description: adForm.description,
+        // A video ad still carries a cover photo (grabbed from its first frame).
+        imageUrl: adMedia.kind === 'image' ? adMedia.url : adMedia.posterUrl || '',
+        videoUrl: adMedia.kind === 'video' ? adMedia.url : undefined,
+      };
+
+      if (isEditing && editAd) {
+        const upd = await api.updateMyMarketAd(editAd.id, getOwnerToken(), payload);
+        setIsSuccess(true);
+        setSuccessMessage('تم تحديث إعلانك. التصحيح ظاهر للسوق مباشرة.');
+        onAdCreated(upd.ad as ClientMarketAd);
+        setTimeout(() => {
+          setIsSuccess(false);
+          onClose();
+        }, 1500);
+        return;
+      }
+
       const res = await api.createMarketAd({
         title: adForm.title,
         category: adForm.category,
@@ -206,8 +262,12 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
               <Plus className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-base font-extrabold text-slate-900">إضافة جديدة في السوق</h3>
-              <p className="text-xs text-slate-500">اختر نوع الإضافة للمتابعة</p>
+              <h3 className="text-base font-extrabold text-slate-900">
+                {isEditing ? 'تعديل الإعلان' : 'إضافة جديدة في السوق'}
+              </h3>
+              <p className="text-xs text-slate-500">
+                {isEditing ? 'صحّح العنوان أو الصورة أو السعر — التعديل يُحفظ فوراً' : 'اختر نوع الإضافة للمتابعة'}
+              </p>
             </div>
           </div>
 

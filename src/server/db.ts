@@ -1692,6 +1692,37 @@ class Database {
    *  - the publisher must present the token issued to their device
    *  - an admin can delete anything
    */
+  /**
+   * تعديل إعلان يملكه صاحب الجهاز الذي نشره.
+   * لا يغيّر الحالة ولا الرسوم — التصحيح فقط (عنوان/صورة/سعر/وصف).
+   */
+  public updateMarketAd(
+    id: string,
+    auth: { ownerToken?: string },
+    patch: Partial<{
+      title: string;
+      category: string;
+      priceSdg: number;
+      location: string;
+      phone: string;
+      whatsapp: string;
+      description: string;
+      imageUrl: string;
+      videoUrl?: string;
+    }>
+  ): { ok: boolean; reason?: 'NOT_FOUND' | 'FORBIDDEN'; ad?: any } {
+    const ad = this.getMarketAd(id);
+    if (!ad) return { ok: false, reason: 'NOT_FOUND' };
+
+    const isOwner = !!auth.ownerToken && ad.ownerToken === auth.ownerToken;
+    if (!isOwner) return { ok: false, reason: 'FORBIDDEN' };
+
+    Object.assign(ad, patch);
+    ad.updatedAt = new Date().toISOString();
+    this.save();
+    return { ok: true, ad };
+  }
+
   public deleteMarketAd(
     id: string,
     auth: { ownerToken?: string; admin?: boolean }

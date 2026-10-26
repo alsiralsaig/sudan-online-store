@@ -121,6 +121,49 @@ export default function App() {
   // Available tenants for demo switching
   const [tenantsList, setTenantsList] = useState<any[]>([]);
 
+  /* تفعيل متجر بكود الدخول — لم يكن له أي مكان في الواجهة من قبل */
+  const [isActivateOpen, setIsActivateOpen] = useState(false);
+  const [activateCode, setActivateCode] = useState('');
+  const [activateState, setActivateState] = useState<'idle' | 'working' | 'ok' | 'fail'>('idle');
+  const [activateMsg, setActivateMsg] = useState('');
+
+  const handleActivateStore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = activateCode.trim().toUpperCase();
+    if (code.length < 6) {
+      setActivateState('fail');
+      setActivateMsg('اكتب كود الدخول كما وصلك من الإدارة (مثال: SND-XXXX-XXXX).');
+      return;
+    }
+    setActivateState('working');
+    setActivateMsg('');
+    try {
+      const res = await api.activateTenantStore(code);
+      setActivateState('ok');
+      setActivateMsg(
+        res.created
+          ? `تم تفعيل متجر «${res.tenant?.name}». صار بإمكانك العمل عليه الآن.`
+          : `المتجر «${res.tenant?.name}» مفعّل من قبل — فتحناه لك.`
+      );
+      /* نضيفه للقائمة وننتقل إليه فوراً */
+      setTenantsList((prev) =>
+        prev.some((t) => t.id === res.tenant?.id) ? prev : [...prev, res.tenant]
+      );
+      if (res.tenant?.id) {
+        api.setTenantId(res.tenant.id);
+        await loadPrimaryData();
+      }
+      setTimeout(() => {
+        setIsActivateOpen(false);
+        setActivateCode('');
+        setActivateState('idle');
+      }, 2200);
+    } catch (err) {
+      setActivateState('fail');
+      setActivateMsg((err as Error).message || 'تعذّر التفعيل — تحقق من الكود والاتصال.');
+    }
+  };
+
   // Shift Modal Open Trigger
   const [isShiftModalRequested, setIsShiftModalRequested] = useState(false);
 
@@ -408,6 +451,62 @@ export default function App() {
         </div>
       )}
 
+      {isActivateOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" dir="rtl">
+          <form
+            onSubmit={handleActivateStore}
+            className="w-full max-w-md space-y-4 rounded-3xl bg-white p-6 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-black text-slate-900">تفعيل متجر بكود الدخول</h3>
+              <button
+                type="button"
+                onClick={() => setIsActivateOpen(false)}
+                className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"
+              >
+                إغلاق
+              </button>
+            </div>
+
+            <p className="text-[11px] leading-relaxed text-slate-600">
+              اكتب الكود الذي أرسلته لك إدارة سند بعد الموافقة على طلب المتجر
+              (يبدأ بـ <span className="font-mono font-bold">SND-</span>). التفعيل ينشئ متجرك
+              وفروعه ويفتح لك تطبيق التاجر فوراً.
+            </p>
+
+            <input
+              value={activateCode}
+              onChange={(e) => setActivateCode(e.target.value)}
+              placeholder="SND-XXXX-XXXX"
+              dir="ltr"
+              className="w-full rounded-xl border border-slate-300 px-3 py-3 text-center font-mono text-base tracking-widest focus:border-emerald-500 focus:outline-none"
+            />
+
+            {activateMsg && (
+              <p
+                className={`rounded-xl px-3 py-2 text-[11px] font-bold ${
+                  activateState === 'ok'
+                    ? 'bg-emerald-50 text-emerald-800'
+                    : activateState === 'fail'
+                    ? 'bg-rose-50 text-rose-700'
+                    : 'bg-slate-50 text-slate-700'
+                }`}
+              >
+                {activateMsg}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={activateState === 'working'}
+              className="w-full rounded-xl bg-emerald-700 py-3 text-sm font-black text-white disabled:opacity-60"
+            >
+              {activateState === 'working' ? 'جارٍ التفعيل…' : 'فعّل المتجر'}
+            </button>
+          </form>
+        </div>
+      )}
+
       {/* Global Header */}
       <Header
         currentTab={currentTab}
@@ -443,6 +542,14 @@ export default function App() {
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={() => setIsActivateOpen(true)}
+              className="ml-1 rounded bg-amber-400 px-2 py-0.5 text-[10.5px] font-black text-slate-900 hover:bg-amber-300"
+              title="عندك كود من الإدارة؟ فعّل متجرك هنا"
+            >
+              + تفعيل متجر بالكود
+            </button>
           </div>
 
           {/* Branch Switcher */}

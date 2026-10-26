@@ -133,6 +133,24 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     };
   }, [open]);
 
+  /* زر «إخفاء» لهذا التنبيه — لا يصح أن يظل يزعج من قرأه وفهم */
+  const PUSH_HINT_HIDDEN_KEY = 'sanad.pushHint.hidden.v1';
+  const [hintHidden, setHintHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(PUSH_HINT_HIDDEN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const hideHint = () => {
+    setHintHidden(true);
+    try {
+      localStorage.setItem(PUSH_HINT_HIDDEN_KEY, '1');
+    } catch {
+      /* التخزين المحلي قد يكون ممنوعاً — الإخفاء يظل لهذه الجلسة */
+    }
+  };
+
   // Work out the current push state for this device
   useEffect(() => {
     const check = async () => {
@@ -322,7 +340,12 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
               <span className="text-[10px] text-amber-700 leading-relaxed block">
                 الإشعارات ممنوعة من إعدادات المتصفح. افتح إعدادات الموقع واسمح بالإشعارات ثم أعد المحاولة.
               </span>
-            ) : pushState === 'unsupported' ? (
+            ) : pushState === 'unsupported' ? hintHidden ? (
+              <span className="text-[10px] text-slate-500 leading-relaxed block">
+                إشعارات الهاتف غير متاحة على هذا المتصفح — التنبيهات ستظهر داخل التطبيق.
+                <button onClick={() => setHintHidden(false)} className="underline mr-1">إظهار السبب</button>
+              </span>
+            ) : (
               <div className="space-y-1.5">
                 <p className="text-[10px] text-amber-800 font-bold leading-relaxed flex items-start gap-1">
                   <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
@@ -350,6 +373,12 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                     className="px-2 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-bold"
                   >
                     إعادة المحاولة
+                  </button>
+                  <button
+                    onClick={hideHint}
+                    className="px-2 py-1 rounded-lg bg-transparent border border-slate-300 text-slate-500 text-[10px] font-bold"
+                  >
+                    إخفاء
                   </button>
                   {isInAppBrowser() && (
                     <button

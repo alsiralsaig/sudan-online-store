@@ -48,6 +48,7 @@ import {
   Send,
   MessageCircle,
   Trash2,
+  Pencil,
 } from 'lucide-react';
 
 interface SanadClientAppProps {
@@ -64,6 +65,8 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isSectionsModalOpen, setIsSectionsModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  /** الإعلان الجاري تعديله (null = إنشاء جديد) */
+  const [editAd, setEditAd] = useState<ClientMarketAd | null>(null);
   const [selectedAdForDetail, setSelectedAdForDetail] = useState<ClientMarketAd | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -854,7 +857,11 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
       {/* 4. Center (+) Button Action Modal (Post Ad or Request from Stores) */}
       <ClientCreateAdOrRequestModal
         isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
+        editAd={editAd}
+        onClose={() => {
+          setIsCreateModalOpen(false);
+          setEditAd(null);
+        }}
         onAdCreated={handleNewAdCreated}
         onRequestCreated={handleNewRequestCreated}
         pricing={adPricing}
@@ -897,6 +904,16 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                           }`}
                     </p>
                   </div>
+                  <button
+                    onClick={() => {
+                      setEditAd(ad);
+                      setIsCreateModalOpen(true);
+                    }}
+                    className="shrink-0 p-2 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                    title="تعديل الإعلان"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   <button
                     onClick={async () => {
                       if (confirm('حذف هذا الإعلان نهائياً؟')) await handleDeleteMyAd(ad.id);

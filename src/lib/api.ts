@@ -576,6 +576,27 @@ class ApiClient {
     });
   }
 
+  /** تعديل إعلان أملكه — نفس جهاز النشر (owner token) */
+  public async updateMyMarketAd(
+    id: string,
+    ownerToken: string,
+    payload: any
+  ): Promise<{ success: boolean; ad: any; message?: string }> {
+    return this.request(`/market-ads/${id}`, {
+      method: 'PUT',
+      headers: { 'x-owner-token': ownerToken },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** تفعيل متجر موافَق عليه بكود الدخول الذي أرسلته الإدارة */
+  public async activateTenantStore(code: string): Promise<{ success: boolean; created?: boolean; tenant: any; message?: string }> {
+    return this.request('/tenant-applications/activate', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  }
+
   public async deleteMyMarketAd(id: string, ownerToken: string): Promise<{ success: boolean }> {
     return this.request(`/market-ads/${id}`, {
       method: 'DELETE',

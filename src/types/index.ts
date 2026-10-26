@@ -715,6 +715,8 @@ export interface MarketAd {
   durationDays?: number;
   /** The ad drops out of the market automatically after this moment. */
   expiresAt?: string;
+  /** Last edit by the owner (title/image/price fixes). */
+  updatedAt?: string;
   /** Payment reference supplied by the publisher (bank transfer, etc.). */
   paymentRef?: string;
   status: MarketAdStatus;
@@ -773,6 +775,9 @@ export interface TenantApplication {
   registrationFeeSdg: number;
   /** Issued only after approval: the code used to log in and register the store. */
   activationCode?: string;
+  /** Set when the applicant actually activates the store with the code. */
+  tenantId?: string;
+  activatedAt?: string;
   codeSentVia?: 'whatsapp' | 'sms' | 'email';
   codeSentAt?: string;
   rejectionReason?: string;

@@ -2503,6 +2503,20 @@ var Database = class {
    *  - the publisher must present the token issued to their device
    *  - an admin can delete anything
    */
+  /**
+   * تعديل إعلان يملكه صاحب الجهاز الذي نشره.
+   * لا يغيّر الحالة ولا الرسوم — التصحيح فقط (عنوان/صورة/سعر/وصف).
+   */
+  updateMarketAd(id, auth, patch) {
+    const ad = this.getMarketAd(id);
+    if (!ad) return { ok: false, reason: "NOT_FOUND" };
+    const isOwner = !!auth.ownerToken && ad.ownerToken === auth.ownerToken;
+    if (!isOwner) return { ok: false, reason: "FORBIDDEN" };
+    Object.assign(ad, patch);
+    ad.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.save();
+    return { ok: true, ad };
+  }
   deleteMarketAd(id, auth) {
     const ad = this.getMarketAd(id);
     if (!ad) return { ok: false, reason: "NOT_FOUND" };
@@ -7686,6 +7700,55 @@ apiRouter.post("/market-ads", (req, res) => {
     message: "\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0625\u0639\u0644\u0627\u0646\u0643 \u0644\u0644\u0645\u0631\u0627\u062C\u0639\u0629. \u0633\u064A\u0638\u0647\u0631 \u0641\u064A \u0627\u0644\u0633\u0648\u0642 \u0628\u0639\u062F \u0645\u0648\u0627\u0641\u0642\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629."
   });
 });
+apiRouter.put("/market-ads/:id", (req, res) => {
+  const ownerToken = String(req.headers["x-owner-token"] || "");
+  const {
+    title,
+    category,
+    priceSdg,
+    location,
+    phone,
+    whatsapp,
+    description,
+    imageUrl,
+    videoUrl
+  } = req.body || {};
+  if (!title || String(title).trim().length < 4) {
+    return res.status(400).json({ error: "TITLE_REQUIRED", message: "\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u0645\u0637\u0644\u0648\u0628 (4 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644)." });
+  }
+  if (!phone || String(phone).trim().length < 9) {
+    return res.status(400).json({ error: "PHONE_REQUIRED", message: "\u0631\u0642\u0645 \u0627\u0644\u0647\u0627\u062A\u0641 \u0623\u0648 \u0627\u0644\u0648\u0627\u062A\u0633\u0627\u0628 \u0645\u0637\u0644\u0648\u0628." });
+  }
+  if (!imageUrl && !videoUrl) {
+    return res.status(400).json({ error: "MEDIA_REQUIRED", message: "\u0623\u0636\u0641 \u0635\u0648\u0631\u0629 \u0623\u0648 \u0641\u064A\u062F\u064A\u0648 \u0644\u0644\u0625\u0639\u0644\u0627\u0646." });
+  }
+  const result = db.updateMarketAd(req.params.id, { ownerToken }, {
+    title: String(title).trim(),
+    category: category || "\u0639\u0627\u0645",
+    priceSdg: Number(priceSdg) || 0,
+    location: location || "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+    phone: String(phone).trim(),
+    whatsapp: whatsapp || phone,
+    description: description || "",
+    imageUrl: imageUrl || "",
+    videoUrl: videoUrl || void 0
+  });
+  if (!result.ok) {
+    return res.status(result.reason === "NOT_FOUND" ? 404 : 403).json({
+      error: result.reason,
+      message: result.reason === "NOT_FOUND" ? "\u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." : "\u0644\u0627 \u062A\u0645\u0644\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u062A\u0639\u062F\u064A\u0644 \u0647\u0630\u0627 \u0627\u0644\u0625\u0639\u0644\u0627\u0646."
+    });
+  }
+  notify({
+    app: "admin",
+    kind: "new_ad",
+    title: "\u0625\u0639\u0644\u0627\u0646 \u0639\u064F\u062F\u0651\u0644 \u0628\u0639\u062F \u0627\u0644\u0646\u0634\u0631",
+    body: `${result.ad?.title || ""} \u2014 ${result.ad?.location || ""} \u2022 \u0635\u0627\u062D\u0628\u0647 \u0635\u062D\u0651\u062D \u0628\u064A\u0627\u0646\u0627\u062A\u0647`,
+    linkTab: "market_ads"
+  }).catch(() => {
+  });
+  res.json({ success: true, ad: result.ad, message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0625\u0639\u0644\u0627\u0646." });
+});
 apiRouter.delete("/market-ads/:id", (req, res) => {
   const ownerToken = String(req.headers["x-owner-token"] || "");
   const result = db.deleteMarketAd(req.params.id, { ownerToken });
@@ -7880,6 +7943,86 @@ apiRouter.get("/tenant-applications/status", (req, res) => {
       reviewedAt: application.reviewedAt
     }
   });
+});
+apiRouter.post("/tenant-applications/activate", (req, res) => {
+  const code = String(req.body?.code || "").trim().toUpperCase();
+  if (!code) {
+    return res.status(400).json({ error: "CODE_REQUIRED", message: "\u0623\u062F\u062E\u0644 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644." });
+  }
+  const application = db.getTenantApplications().find((a) => (a.activationCode || "").toUpperCase() === code);
+  if (!application) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "\u0644\u0627 \u064A\u0648\u062C\u062F \u0637\u0644\u0628 \u0628\u0647\u0630\u0627 \u0627\u0644\u0643\u0648\u062F. \u0631\u0627\u062C\u0639 \u0627\u0644\u0625\u062F\u0627\u0631\u0629." });
+  }
+  if (application.status !== "approved") {
+    return res.status(400).json({
+      error: "NOT_APPROVED",
+      message: application.status === "pending" ? "\u0637\u0644\u0628\u0643 \u0644\u0633\u0647 \u0642\u064A\u062F \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0629 \u2014 \u0627\u0644\u0643\u0648\u062F \u064A\u0635\u0628\u062D \u0635\u0627\u0644\u062D\u0627\u064B \u0628\u0639\u062F \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629." : "\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0645\u0631\u0641\u0648\u0636\u060C \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0627\u0644\u0625\u062F\u0627\u0631\u0629."
+    });
+  }
+  const existing = application.tenantId ? db.getTenant(application.tenantId) : db.getSchema().tenants.find((t) => t.phone === application.phone && t.name === application.storeName);
+  if (existing) {
+    return res.json({ success: true, created: false, tenant: existing });
+  }
+  const now = /* @__PURE__ */ new Date();
+  const tenantId = `tenant_${application.id.replace(/^tapp_?/, "").slice(0, 10) || Date.now()}`;
+  const tenant = {
+    id: tenantId,
+    slug: (application.storeName || "store").trim().replace(/\s+/g, "-").slice(0, 40) + "-" + tenantId.slice(-4),
+    name: application.storeName,
+    tradeName: application.storeName,
+    phone: application.phone,
+    city: application.city || "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+    address: [application.wilaya, application.city].filter(Boolean).join(" - "),
+    currency: "SDG",
+    status: "active",
+    subscriptionPlanId: "plan_starter",
+    subscriptionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1e3).toISOString(),
+    settings: {
+      receiptHeader: `${application.storeName}${application.city ? ` \u2014 ${application.city}` : ""}
+\u0647\u0627\u062A\u0641: ${application.phone}`,
+      receiptFooter: "\u0634\u0643\u0631\u0627\u064B \u0644\u0632\u064A\u0627\u0631\u062A\u0643\u0645!",
+      allowNegativeStock: false,
+      defaultMaxDiscountPct: 10,
+      zatcaQrEnabled: false,
+      costingMethod: "weighted_average",
+      vatEnabled: false,
+      defaultVatPct: 0,
+      pricesIncludeVat: false,
+      showVatBreakdown: true,
+      showTaxPerItem: true,
+      loyaltyRateSdgPerPoint: 1e3
+    },
+    createdAt: now.toISOString()
+  };
+  const schema = db.getSchema();
+  schema.tenants.push(tenant);
+  const branches = Math.max(1, Number(application.branchesCount) || 1);
+  for (let i = 1; i <= branches; i++) {
+    schema.branches.push({
+      id: `branch_${tenantId}_${i}`,
+      tenantId,
+      name: i === 1 ? "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A" : `\u0641\u0631\u0639 ${i}`,
+      code: `B${i}`,
+      city: application.city || "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+      address: application.wilaya ? `${application.wilaya} - ${application.city || ""}` : "",
+      phone: application.phone,
+      isMain: i === 1,
+      isActive: true
+    });
+  }
+  application.tenantId = tenantId;
+  application.activatedAt = now.toISOString();
+  db.commit();
+  notify({
+    app: "admin",
+    kind: "new_store_request",
+    title: "\u0645\u062A\u062C\u0631 \u062C\u062F\u064A\u062F \u0641\u0639\u0651\u0644 \u062D\u0633\u0627\u0628\u0647",
+    body: `${tenant.name} \u2014 ${tenant.city} \u2022 ${branches} \u0641\u0631\u0639 \u2022 \u0628\u062F\u0623 \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643 30 \u064A\u0648\u0645\u0627\u064B`,
+    linkTab: "merchants",
+    tenantId
+  }).catch(() => {
+  });
+  res.json({ success: true, created: true, tenant });
 });
 apiRouter.get("/admin/tenant-applications", (req, res) => {
   const status = String(req.query.status || "all");
