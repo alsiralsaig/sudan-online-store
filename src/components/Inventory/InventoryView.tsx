@@ -1009,8 +1009,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     )}
                     <input
                       type="file"
-                      accept="image/*"
-                      capture="environment"
+                      accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp"
                       className="hidden"
                       onChange={(e) => {
                         pickProductImage(e.target.files?.[0] || null);

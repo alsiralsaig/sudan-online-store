@@ -362,7 +362,7 @@ export const MediaUploader: React.FC<MediaUploaderProps> = ({
       <input
         ref={photoInput}
         type="file"
-        accept="image/*"
+        accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
