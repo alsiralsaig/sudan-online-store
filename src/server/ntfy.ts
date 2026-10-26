@@ -51,14 +51,21 @@ export async function sendNtfy(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
   try {
-    const res = await fetch(`${server()}/${encodeURIComponent(t)}`, {
+    /*
+     * النشر عبر JSON لا عبر الترويسات: fetch في Node يرفض أي حرف عربي
+     * داخل قيمة ترويسة، وتشفيره بـencodeURIComponent يجعل العنوان يظهر
+     * للمستخدم رموزاً (%D8%AA…). الـJSON يقبل UTF-8 كما هو.
+     */
+    const res = await fetch(`${server()}/`, {
       method: 'POST',
-      headers: {
-        Title: encodeURIComponent(title.slice(0, 120)),
-        Priority: String(opts.priority ?? 3),
-        ...(opts.tags ? { Tags: opts.tags } : {}),
-      },
-      body: body.slice(0, 1500),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        topic: t,
+        title: title.slice(0, 120),
+        message: body.slice(0, 1500),
+        priority: opts.priority ?? 3,
+        ...(opts.tags ? { tags: opts.tags.split(',').map((s) => s.trim()).filter(Boolean) } : {}),
+      }),
       signal: controller.signal,
     });
     if (res.ok) return { sent: 1, skipped: '' };
