@@ -9,11 +9,12 @@ import {
   Loader2,
   AlertCircle,
   Power,
-  Link2,
+  Plus,
   Info,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { MarketBannerReportModal } from '../Admin/MarketBannerReportModal.tsx';
+import { MerchantCreateAdModal, merchantAdOwnerToken } from './MerchantCreateAdModal.tsx';
 
 interface MyBanner {
   id: string;
@@ -41,16 +42,26 @@ const ctrOf = (b: { clicks?: number; impressions?: number }): string => {
 /** Merchant view: my market banners and how they actually performed. */
 export const MerchantAdsView: React.FC = () => {
   const [banners, setBanners] = useState<MyBanner[]>([]);
+  const [myAds, setMyAds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reportFor, setReportFor] = useState<MyBanner | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [storeName, setStoreName] = useState('متجر سند');
 
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await api.getMyMarketBanners();
-      setBanners(res.banners || []);
+      const [ban, ads, ten] = await Promise.all([
+        api.getMyMarketBanners().catch(() => ({ banners: [] as MyBanner[] })),
+        api.getMarketAds(merchantAdOwnerToken()).catch(() => ({ mine: [] as any[] })),
+        api.getCurrentTenant().catch(() => null),
+      ]);
+      setBanners(ban.banners || []);
+      setMyAds((ads as any).mine || []);
+      const t = (ten as any)?.tenant;
+      if (t?.name || t?.tradeName) setStoreName(t.tradeName || t.name);
     } catch (err) {
       setError((err as Error).message || 'تعذر تحميل إعلاناتك.');
     } finally {
@@ -87,12 +98,20 @@ export const MerchantAdsView: React.FC = () => {
               بانراتك المعروضة على صفحة سوق سند، وكم واحد شافها وضغط عليها.
             </p>
           </div>
-          <button
-            onClick={load}
-            className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1.5"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> تحديث
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="px-3 py-2 rounded-xl text-xs font-black bg-emerald-600 text-white hover:bg-emerald-500 flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" /> إضافة إعلان
+            </button>
+            <button
+              onClick={load}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1.5"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> تحديث
+            </button>
+          </div>
         </div>
 
         {/* totals */}
@@ -128,6 +147,37 @@ export const MerchantAdsView: React.FC = () => {
         </div>
       </div>
 
+      {/* إعلانات السوق اللي التاجر نشرها */}
+      {!loading && myAds.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+          <h3 className="text-sm font-black text-slate-900">إعلانات متجرك في السوق</h3>
+          {myAds.map((ad) => (
+            <div key={ad.id} className="flex gap-3 items-center border border-slate-100 rounded-xl p-2">
+              <div className="w-16 h-14 rounded-lg overflow-hidden bg-slate-100 shrink-0">
+                {ad.imageUrl ? <img src={ad.imageUrl} alt="" className="w-full h-full object-cover" /> : null}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-slate-900 truncate">{ad.title}</p>
+                <p className="text-[10px] text-slate-500">
+                  {ad.category} • {ad.location}
+                </p>
+              </div>
+              <span
+                className={`shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full ${
+                  ad.status === 'approved'
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : ad.status === 'rejected'
+                    ? 'bg-red-50 text-red-700'
+                    : 'bg-amber-50 text-amber-800'
+                }`}
+              >
+                {ad.status === 'approved' ? 'ظاهر' : ad.status === 'rejected' ? 'مرفوض' : 'قيد المراجعة'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* list */}
       {loading ? (
         <div className="bg-white border border-slate-200 rounded-2xl py-16 flex items-center justify-center gap-2 text-slate-500 text-xs">
@@ -146,11 +196,19 @@ export const MerchantAdsView: React.FC = () => {
           <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
             <Megaphone className="w-6 h-6" />
           </div>
-          <h3 className="text-sm font-black text-slate-900">ما عندك بانرات مرتبطة بحسابك</h3>
+          <h3 className="text-sm font-black text-slate-900">
+            {myAds.length ? 'ما عندك بانرات في أعلى الصفحة' : 'ما عندك إعلانات بعد'}
+          </h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-            إدارة منصة سند بتربط البانر بمتجرك لما تنشره. كلّم الإدارة لو عندك إعلان جاهز أو عايز تعلن
-            في أعلى صفحة السوق.
+            أضف إعلان لمتجرك يظهر في سوق سند بعد موافقة الإدارة. البانر العلوي بتربطه الإدارة لو حابب مكان أكبر.
           </p>
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-black"
+          >
+            <Plus className="w-4 h-4" /> إضافة إعلان
+          </button>
         </div>
       ) : (
         <div className="space-y-2.5">
@@ -226,6 +284,13 @@ export const MerchantAdsView: React.FC = () => {
           fetcher={api.getMyMarketBannerReport}
         />
       )}
+
+      <MerchantCreateAdModal
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={load}
+        publisherName={storeName}
+      />
     </div>
   );
 };

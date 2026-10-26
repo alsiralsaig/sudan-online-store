@@ -8250,7 +8250,9 @@ apiRouter.post("/market-ads", (req, res) => {
   if (!imageUrl && !videoUrl) {
     return res.status(400).json({ error: "MEDIA_REQUIRED", message: "\u0623\u0636\u0641 \u0635\u0648\u0631\u0629 \u0623\u0648 \u0641\u064A\u062F\u064A\u0648 \u0644\u0644\u0625\u0639\u0644\u0627\u0646." });
   }
-  if (!ownerToken || String(ownerToken).length < 8) {
+  const tenantId = String(req.headers["x-tenant-id"] || "");
+  const resolvedOwner = ownerToken && String(ownerToken).length >= 8 ? String(ownerToken) : tenantId.length >= 4 ? `tenant:${tenantId}` : "";
+  if (!resolvedOwner || resolvedOwner.length < 8) {
     return res.status(400).json({ error: "OWNER_TOKEN_REQUIRED", message: "\u062A\u0639\u0630\u0631 \u0627\u0644\u062A\u0639\u0631\u0641 \u0639\u0644\u0649 \u062C\u0647\u0627\u0632\u0643\u060C \u0623\u0639\u062F \u0641\u062A\u062D \u0627\u0644\u062A\u0637\u0628\u064A\u0642." });
   }
   const ad = db.createMarketAd({
@@ -8265,7 +8267,7 @@ apiRouter.post("/market-ads", (req, res) => {
     videoUrl: videoUrl || void 0,
     isVip: !!isVip,
     publisherName: publisherName || "\u0632\u0628\u0648\u0646 \u0645\u0646\u0635\u0629 \u0633\u0646\u062F",
-    ownerToken: String(ownerToken),
+    ownerToken: resolvedOwner,
     feeSdg: feeFor(planId, !!isVip),
     planId: planFor(planId).id,
     planLabel: planFor(planId).label,

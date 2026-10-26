@@ -3618,7 +3618,15 @@ apiRouter.post('/market-ads', (req, res) => {
   if (!imageUrl && !videoUrl) {
     return res.status(400).json({ error: 'MEDIA_REQUIRED', message: 'أضف صورة أو فيديو للإعلان.' });
   }
-  if (!ownerToken || String(ownerToken).length < 8) {
+  const tenantId = String(req.headers['x-tenant-id'] || '');
+  const resolvedOwner =
+    ownerToken && String(ownerToken).length >= 8
+      ? String(ownerToken)
+      : tenantId.length >= 4
+        ? `tenant:${tenantId}`
+        : '';
+
+  if (!resolvedOwner || resolvedOwner.length < 8) {
     return res.status(400).json({ error: 'OWNER_TOKEN_REQUIRED', message: 'تعذر التعرف على جهازك، أعد فتح التطبيق.' });
   }
 
@@ -3634,7 +3642,7 @@ apiRouter.post('/market-ads', (req, res) => {
     videoUrl: videoUrl || undefined,
     isVip: !!isVip,
     publisherName: publisherName || 'زبون منصة سند',
-    ownerToken: String(ownerToken),
+    ownerToken: resolvedOwner,
     feeSdg: feeFor(planId, !!isVip),
     planId: planFor(planId).id,
     planLabel: planFor(planId).label,
