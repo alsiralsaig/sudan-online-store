@@ -121,6 +121,8 @@ export interface Product {
   minStockAlert: number;
   minimumStock?: number; // alias for minStockAlert
   imageUrl?: string;
+  /** فيديو قصير جداً للصنف (اختياري) */
+  videoUrl?: string;
   isActive: boolean;
   isTaxExempt?: boolean; // Whether product is exempt from VAT
   customTaxRate?: number; // Custom VAT % override (if undefined, uses tenant default)

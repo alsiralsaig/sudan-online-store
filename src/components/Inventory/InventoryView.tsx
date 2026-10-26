@@ -21,10 +21,14 @@ import {
   ArrowRight,
   Sparkles,
   Smartphone,
+  Image as ImageIcon,
+  Video,
+  Loader2,
 } from 'lucide-react';
 import type { Product, Branch, BranchInventory, StockMovement } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
 import { InventoryAuditModal } from './InventoryAuditModal.tsx';
+import { uploadProductImage, uploadProductVideo, PRODUCT_VIDEO_MAX_SECONDS } from '../../lib/uploadProductMedia.ts';
 
 interface InventoryViewProps {
   products: Product[];
@@ -93,6 +97,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newInitialStock, setNewInitialStock] = useState('20');
   const [newIsTaxExempt, setNewIsTaxExempt] = useState(false);
   const [newCustomTaxRate, setNewCustomTaxRate] = useState('');
+  const [newImageUrl, setNewImageUrl] = useState('');
+  const [newVideoUrl, setNewVideoUrl] = useState('');
+  const [mediaBusy, setMediaBusy] = useState<null | 'image' | 'video'>(null);
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   // Adjust Stock Modal
   const [adjustingProduct, setAdjustingProduct] = useState<{
@@ -194,6 +202,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         branchId: selectedBranchId || branches[0]?.id,
         isTaxExempt: newIsTaxExempt,
         customTaxRate: newCustomTaxRate ? Number(newCustomTaxRate) : undefined,
+        imageUrl: newImageUrl || undefined,
+        videoUrl: newVideoUrl || undefined,
       });
 
       if (res.success) {
@@ -201,6 +211,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         setNewProductName('');
         setNewIsTaxExempt(false);
         setNewCustomTaxRate('');
+        setNewImageUrl('');
+        setNewVideoUrl('');
+        setMediaError(null);
         onRefresh();
         loadData();
       }
@@ -208,6 +221,34 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       setMsg({ type: 'error', text: err.message || 'فشل إضافة المنتج' });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const pickProductImage = async (file?: File | null) => {
+    if (!file) return;
+    setMediaError(null);
+    setMediaBusy('image');
+    try {
+      const url = await uploadProductImage(file);
+      setNewImageUrl(url);
+    } catch (err: any) {
+      setMediaError(err.message || 'تعذر رفع الصورة');
+    } finally {
+      setMediaBusy(null);
+    }
+  };
+
+  const pickProductVideo = async (file?: File | null) => {
+    if (!file) return;
+    setMediaError(null);
+    setMediaBusy('video');
+    try {
+      const url = await uploadProductVideo(file);
+      setNewVideoUrl(url);
+    } catch (err: any) {
+      setMediaError(err.message || 'تعذر رفع الفيديو');
+    } finally {
+      setMediaBusy(null);
     }
   };
 
@@ -837,7 +878,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <form
             onSubmit={handleAddProduct}
-            className="bg-white rounded-xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-200"
+            className="bg-white rounded-xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-200 max-h-[90vh] flex flex-col"
           >
             <div className="px-6 py-4 bg-emerald-700 text-white flex items-center justify-between">
               <h3 className="font-bold text-sm">إضافة صنف جديد لدليل المنتجات</h3>
@@ -850,7 +891,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </button>
             </div>
 
-            <div className="p-6 space-y-4 text-xs">
+            <div className="p-6 space-y-4 text-xs overflow-y-auto">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">اسم المنتج التجاري الكامل:</label>
                 <input
@@ -952,6 +993,75 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 />
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">صورة الصنف:</label>
+                  <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-400 bg-slate-50 px-2 py-3 cursor-pointer min-h-[7.5rem]">
+                    {newImageUrl ? (
+                      <img src={newImageUrl} alt="" className="max-h-24 w-full object-contain rounded-lg" />
+                    ) : mediaBusy === 'image' ? (
+                      <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                    ) : (
+                      <>
+                        <ImageIcon className="w-6 h-6 text-emerald-600" />
+                        <span className="font-bold text-slate-700">اختر صورة</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(e) => {
+                        pickProductImage(e.target.files?.[0] || null);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                  {newImageUrl && (
+                    <button type="button" onClick={() => setNewImageUrl('')} className="mt-1 text-[10px] text-rose-600 font-bold">
+                      حذف الصورة
+                    </button>
+                  )}
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    فيديو قصير (حتى {PRODUCT_VIDEO_MAX_SECONDS} ثوانٍ):
+                  </label>
+                  <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-400 bg-slate-50 px-2 py-3 cursor-pointer min-h-[7.5rem]">
+                    {newVideoUrl ? (
+                      <video src={newVideoUrl} className="max-h-24 w-full rounded-lg" muted playsInline />
+                    ) : mediaBusy === 'video' ? (
+                      <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                    ) : (
+                      <>
+                        <Video className="w-6 h-6 text-emerald-600" />
+                        <span className="font-bold text-slate-700 text-center leading-tight">اختر فيديو قصير جداً</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        pickProductVideo(e.target.files?.[0] || null);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                  {newVideoUrl && (
+                    <button type="button" onClick={() => setNewVideoUrl('')} className="mt-1 text-[10px] text-rose-600 font-bold">
+                      حذف الفيديو
+                    </button>
+                  )}
+                </div>
+              </div>
+              {mediaError && (
+                <p className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-[11px] font-bold text-rose-800">
+                  {mediaError}
+                </p>
+              )}
+
               {/* VAT (ضريبة القيمة المضافة) Settings per Product */}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
                 <div className="flex items-center justify-between">
@@ -996,8 +1106,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-sm"
+                disabled={isSubmitting || !!mediaBusy}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-sm disabled:opacity-50"
               >
                 حفظ المنتج
               </button>

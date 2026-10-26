@@ -327,7 +327,10 @@ apiRouter.get('/products', requireTenant, (req, res) => {
 
 apiRouter.post('/products', requireTenant, (req, res) => {
   const authReq = req as AuthenticatedRequest;
-  const { name, sku, barcode, category, unit, purchaseCost, costCurrency, sellingPriceSdg, minStockAlert, initialStock, branchId } = req.body;
+  const {
+    name, sku, barcode, category, unit, purchaseCost, costCurrency, sellingPriceSdg,
+    minStockAlert, initialStock, branchId, imageUrl, videoUrl, isTaxExempt, customTaxRate,
+  } = req.body;
 
   if (!name || !sellingPriceSdg) {
     return res.status(400).json({ error: 'اسم المنتج وسعر البيع بالجنيه السوداني مطلوبان' });
@@ -346,6 +349,10 @@ apiRouter.post('/products', requireTenant, (req, res) => {
     sellingPriceSdg: Number(sellingPriceSdg),
     minStockAlert: Number(minStockAlert) || 5,
     minimumStock: Number(minStockAlert) || 5,
+    imageUrl: imageUrl ? String(imageUrl) : undefined,
+    videoUrl: videoUrl ? String(videoUrl) : undefined,
+    isTaxExempt: Boolean(isTaxExempt),
+    customTaxRate: customTaxRate !== undefined && customTaxRate !== '' ? Number(customTaxRate) : undefined,
     isActive: true,
     createdAt: new Date().toISOString(),
   };

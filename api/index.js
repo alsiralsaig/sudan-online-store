@@ -5660,7 +5660,23 @@ apiRouter.get("/products", requireTenant, (req, res) => {
 });
 apiRouter.post("/products", requireTenant, (req, res) => {
   const authReq = req;
-  const { name, sku, barcode, category, unit, purchaseCost, costCurrency, sellingPriceSdg, minStockAlert, initialStock, branchId } = req.body;
+  const {
+    name,
+    sku,
+    barcode,
+    category,
+    unit,
+    purchaseCost,
+    costCurrency,
+    sellingPriceSdg,
+    minStockAlert,
+    initialStock,
+    branchId,
+    imageUrl,
+    videoUrl,
+    isTaxExempt,
+    customTaxRate
+  } = req.body;
   if (!name || !sellingPriceSdg) {
     return res.status(400).json({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u062A\u062C \u0648\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u0628\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
   }
@@ -5677,6 +5693,10 @@ apiRouter.post("/products", requireTenant, (req, res) => {
     sellingPriceSdg: Number(sellingPriceSdg),
     minStockAlert: Number(minStockAlert) || 5,
     minimumStock: Number(minStockAlert) || 5,
+    imageUrl: imageUrl ? String(imageUrl) : void 0,
+    videoUrl: videoUrl ? String(videoUrl) : void 0,
+    isTaxExempt: Boolean(isTaxExempt),
+    customTaxRate: customTaxRate !== void 0 && customTaxRate !== "" ? Number(customTaxRate) : void 0,
     isActive: true,
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
