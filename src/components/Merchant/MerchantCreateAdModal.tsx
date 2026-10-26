@@ -24,6 +24,7 @@ interface Props {
   onClose: () => void;
   onCreated: () => void;
   publisherName?: string;
+  storePhone?: string;
 }
 
 const FALLBACK_PLANS: Plan[] = [
@@ -38,6 +39,7 @@ export const MerchantCreateAdModal: React.FC<Props> = ({
   onClose,
   onCreated,
   publisherName = 'متجر سند',
+  storePhone = '',
 }) => {
   const [plans, setPlans] = useState<Plan[]>(FALLBACK_PLANS);
   const [vipFee, setVipFee] = useState(5000);
@@ -60,6 +62,10 @@ export const MerchantCreateAdModal: React.FC<Props> = ({
     if (!isOpen) return;
     setDone('');
     setError('');
+    setForm((prev) => ({
+      ...prev,
+      phone: prev.phone || storePhone || '',
+    }));
     api
       .getMarketAds(merchantAdOwnerToken())
       .then((res) => {
@@ -169,6 +175,10 @@ export const MerchantCreateAdModal: React.FC<Props> = ({
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 إعلان متجرك يظهر في صفحة سوق سند بعد موافقة الإدارة. ما بننشر واتساب لبائع وهمي.
               </p>
+              <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-xs">
+                <span className="text-slate-500">ينشر باسم المحل: </span>
+                <span className="font-black text-emerald-800">{publisherName}</span>
+              </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">

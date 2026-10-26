@@ -401,7 +401,8 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         phone: a.phone,
         whatsapp: a.whatsapp,
         description: a.description,
-        publisherName: a.publisherName,
+        publisherName: a.storeName || a.publisherName,
+        storeName: a.storeName,
         createdAt: a.createdAt,
         // extra fields used by the owner panel
         ...(a.status

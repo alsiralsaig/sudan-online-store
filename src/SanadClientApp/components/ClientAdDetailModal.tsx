@@ -160,7 +160,7 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
               <span className="font-bold text-slate-800">
-                المعلن: {ad.publisherName || 'تاجر موثق في منصة سند'}
+                المحل: {ad.storeName || ad.publisherName || 'تاجر موثق في منصة سند'}
               </span>
             </div>
             <span className="text-[10px] text-slate-500 font-mono">معلن معتمد</span>

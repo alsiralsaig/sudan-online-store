@@ -3572,6 +3572,19 @@ function feeFor(planId: string | undefined, isVip: boolean): number {
   return plan.priceSdg + (isVip ? AD_PRICING.vipFeeSdg : 0);
 }
 
+/** اسم المحل من سجل التاجر المرتبط بإعلان `tenant:…` */
+function storeNameFromOwner(ownerToken?: string): string {
+  if (!ownerToken || !ownerToken.startsWith('tenant:')) return '';
+  const t = db.getTenant(ownerToken.slice('tenant:'.length));
+  return String(t?.tradeName || t?.name || '').trim();
+}
+
+function decorateMarketAd<T extends { ownerToken?: string; publisherName?: string; storeName?: string }>(ad: T): T {
+  const storeName = (ad.storeName && String(ad.storeName).trim()) || storeNameFromOwner(ad.ownerToken);
+  if (!storeName) return ad;
+  return { ...ad, storeName, publisherName: storeName };
+}
+
 /** An approved ad only stays in the market while its plan is running. */
 function isLiveAd(ad: { status: string; expiresAt?: string }): boolean {
   if (ad.status !== 'approved') return false;
@@ -3593,11 +3606,12 @@ apiRouter.get('/market-ads', (req, res) => {
   const approved = all
     .filter(isLiveAd)
     .slice()
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .map(decorateMarketAd);
   // Publishers also see their own ads whatever the status (pending, rejected,
   // live or expired), so they can track progress, the plan left, and remove it.
   const mine = ownerToken
-    ? all.filter((a) => a.ownerToken === ownerToken)
+    ? all.filter((a) => a.ownerToken === ownerToken).map(decorateMarketAd)
     : [];
 
   res.json({ ads: approved, mine, pricing: AD_PRICING });
@@ -3630,6 +3644,12 @@ apiRouter.post('/market-ads', (req, res) => {
     return res.status(400).json({ error: 'OWNER_TOKEN_REQUIRED', message: 'تعذر التعرف على جهازك، أعد فتح التطبيق.' });
   }
 
+  const merchantTenantId = resolvedOwner.startsWith('tenant:')
+    ? resolvedOwner.slice('tenant:'.length)
+    : tenantId;
+  const merchantTenant = merchantTenantId ? db.getTenant(merchantTenantId) : undefined;
+  const storeName = String(merchantTenant?.tradeName || merchantTenant?.name || '').trim();
+
   const ad = db.createMarketAd({
     title: String(title).trim(),
     category: category || 'عام',
@@ -3641,7 +3661,8 @@ apiRouter.post('/market-ads', (req, res) => {
     imageUrl: imageUrl || '',
     videoUrl: videoUrl || undefined,
     isVip: !!isVip,
-    publisherName: publisherName || 'زبون منصة سند',
+    publisherName: storeName || publisherName || 'زبون منصة سند',
+    storeName: storeName || undefined,
     ownerToken: resolvedOwner,
     feeSdg: feeFor(planId, !!isVip),
     planId: planFor(planId).id,

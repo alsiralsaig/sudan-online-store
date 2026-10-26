@@ -39,15 +39,20 @@ const ctrOf = (b: { clicks?: number; impressions?: number }): string => {
   return `${(((b.clicks || 0) / views) * 100).toFixed(1)}%`;
 };
 
+interface Props {
+  storeName?: string;
+  storePhone?: string;
+}
+
 /** Merchant view: my market banners and how they actually performed. */
-export const MerchantAdsView: React.FC = () => {
+export const MerchantAdsView: React.FC<Props> = ({ storeName: storeNameProp, storePhone }) => {
   const [banners, setBanners] = useState<MyBanner[]>([]);
   const [myAds, setMyAds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reportFor, setReportFor] = useState<MyBanner | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [storeName, setStoreName] = useState('متجر سند');
+  const [storeName, setStoreName] = useState(storeNameProp || 'متجر سند');
 
   const load = async () => {
     setLoading(true);
@@ -61,7 +66,8 @@ export const MerchantAdsView: React.FC = () => {
       setBanners(ban.banners || []);
       setMyAds((ads as any).mine || []);
       const t = (ten as any)?.tenant;
-      if (t?.name || t?.tradeName) setStoreName(t.tradeName || t.name);
+      const fromTenant = (t?.tradeName || t?.name || '').trim();
+      setStoreName(storeNameProp || fromTenant || 'متجر سند');
     } catch (err) {
       setError((err as Error).message || 'تعذر تحميل إعلاناتك.');
     } finally {
@@ -290,6 +296,7 @@ export const MerchantAdsView: React.FC = () => {
         onClose={() => setCreateOpen(false)}
         onCreated={load}
         publisherName={storeName}
+        storePhone={storePhone}
       />
     </div>
   );

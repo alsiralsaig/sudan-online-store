@@ -98,6 +98,7 @@ export interface ClientMarketAd {
   whatsapp?: string;
   description?: string;
   publisherName?: string;
+  storeName?: string;
   createdAt: string;
   /** Review state — present on ads fetched from the server. */
   status?: 'pending' | 'approved' | 'rejected';

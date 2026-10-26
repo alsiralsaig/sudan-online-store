@@ -710,6 +710,8 @@ export interface MarketAd {
   videoUrl?: string;
   isVip: boolean;
   publisherName?: string;
+  /** اسم المحل من سجل التاجر — يظهر في بطاقة الإعلان تلقائي */
+  storeName?: string;
   /** Secret held by the publisher's device — required to delete the ad. */
   ownerToken: string;
   /** Publishing fee charged for this ad, in SDG. */

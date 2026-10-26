@@ -8209,6 +8209,16 @@ function feeFor(planId, isVip) {
   const plan = planFor(planId);
   return plan.priceSdg + (isVip ? AD_PRICING.vipFeeSdg : 0);
 }
+function storeNameFromOwner(ownerToken) {
+  if (!ownerToken || !ownerToken.startsWith("tenant:")) return "";
+  const t = db.getTenant(ownerToken.slice("tenant:".length));
+  return String(t?.tradeName || t?.name || "").trim();
+}
+function decorateMarketAd(ad) {
+  const storeName = ad.storeName && String(ad.storeName).trim() || storeNameFromOwner(ad.ownerToken);
+  if (!storeName) return ad;
+  return { ...ad, storeName, publisherName: storeName };
+}
 function isLiveAd(ad) {
   if (ad.status !== "approved") return false;
   if (!ad.expiresAt) return true;
@@ -8220,8 +8230,8 @@ apiRouter.get("/market-ads/pricing", (_req, res) => {
 apiRouter.get("/market-ads", (req, res) => {
   const ownerToken = String(req.headers["x-owner-token"] || "");
   const all = db.getMarketAds();
-  const approved = all.filter(isLiveAd).slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const mine = ownerToken ? all.filter((a) => a.ownerToken === ownerToken) : [];
+  const approved = all.filter(isLiveAd).slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(decorateMarketAd);
+  const mine = ownerToken ? all.filter((a) => a.ownerToken === ownerToken).map(decorateMarketAd) : [];
   res.json({ ads: approved, mine, pricing: AD_PRICING });
 });
 apiRouter.post("/market-ads", (req, res) => {
@@ -8255,6 +8265,9 @@ apiRouter.post("/market-ads", (req, res) => {
   if (!resolvedOwner || resolvedOwner.length < 8) {
     return res.status(400).json({ error: "OWNER_TOKEN_REQUIRED", message: "\u062A\u0639\u0630\u0631 \u0627\u0644\u062A\u0639\u0631\u0641 \u0639\u0644\u0649 \u062C\u0647\u0627\u0632\u0643\u060C \u0623\u0639\u062F \u0641\u062A\u062D \u0627\u0644\u062A\u0637\u0628\u064A\u0642." });
   }
+  const merchantTenantId = resolvedOwner.startsWith("tenant:") ? resolvedOwner.slice("tenant:".length) : tenantId;
+  const merchantTenant = merchantTenantId ? db.getTenant(merchantTenantId) : void 0;
+  const storeName = String(merchantTenant?.tradeName || merchantTenant?.name || "").trim();
   const ad = db.createMarketAd({
     title: String(title).trim(),
     category: category || "\u0639\u0627\u0645",
@@ -8266,7 +8279,8 @@ apiRouter.post("/market-ads", (req, res) => {
     imageUrl: imageUrl || "",
     videoUrl: videoUrl || void 0,
     isVip: !!isVip,
-    publisherName: publisherName || "\u0632\u0628\u0648\u0646 \u0645\u0646\u0635\u0629 \u0633\u0646\u062F",
+    publisherName: storeName || publisherName || "\u0632\u0628\u0648\u0646 \u0645\u0646\u0635\u0629 \u0633\u0646\u062F",
+    storeName: storeName || void 0,
     ownerToken: resolvedOwner,
     feeSdg: feeFor(planId, !!isVip),
     planId: planFor(planId).id,

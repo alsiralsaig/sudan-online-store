@@ -934,7 +934,10 @@ export default function App() {
 
         {currentTab === 'my_ads' && (
           <div className="p-4 sm:p-6">
-            <MerchantAdsView />
+            <MerchantAdsView
+              storeName={tenant?.tradeName || tenant?.name || ''}
+              storePhone={tenant?.phone || ''}
+            />
           </div>
         )}
         {currentTab === 'admin' && <CentralAdminView />}
