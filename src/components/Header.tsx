@@ -25,6 +25,7 @@ import {
   Sparkles,
   LayoutDashboard,
   PlusCircle,
+  KeyRound,
 } from 'lucide-react';
 import type { InventoryAlert } from '../types/index.ts';
 import { SanadLogo } from './Common/SanadLogo.tsx';
@@ -48,6 +49,8 @@ interface HeaderProps {
   inventoryAlerts?: InventoryAlert[];
   onDismissAlert?: (id: string) => void;
   onRefreshAlerts?: () => void;
+  /** فتح نافذة «تفعيل متجر بكود الدخول» */
+  onOpenActivateStore?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -67,6 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
   inventoryAlerts = [],
   onDismissAlert,
   onRefreshAlerts,
+  onOpenActivateStore,
 }) => {
   const [isAlertsOpen, setIsAlertsOpen] = React.useState(false);
   const [isTenantModalOpen, setIsTenantModalOpen] = React.useState(false);
@@ -96,11 +100,13 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Zone 1: Sanad Logo Brand Wordmark */}
         <div className="flex items-center gap-3 shrink-0">
           <SanadLogo size="sm" variant="full" onClick={() => onTabChange('welcome')} />
-          <div className="hidden sm:flex flex-col border-r border-slate-200 pr-3 mr-1">
-            <span className="text-xs font-bold text-slate-800 whitespace-nowrap">
+          {/* اسم المتجر ظاهر على الجوال أيضاً — كان مخفياً تحت sm فلا يرى
+              التاجر أي أثر لاسم متغيّره بعد التفعيل أو التبديل */}
+          <div className="flex flex-col border-r border-slate-200 pr-3 mr-1 min-w-0">
+            <span className="text-[11px] sm:text-xs font-bold text-slate-800 whitespace-nowrap truncate max-w-[38vw] sm:max-w-none">
               {tenantName}
             </span>
-            <span className="text-[11px] text-slate-500 whitespace-nowrap">
+            <span className="text-[10px] sm:text-[11px] text-slate-500 whitespace-nowrap truncate">
               {branchName}
             </span>
           </div>
@@ -201,6 +207,18 @@ export const Header: React.FC<HeaderProps> = ({
             <PlusCircle className="w-3.5 h-3.5 text-emerald-700" />
             <span>طلب متجر</span>
           </button>
+
+          {/* تفعيل متجر موافَق عليه بكود الدخول — زر ظاهر في الشريط الأبيض */}
+          {onOpenActivateStore && (
+            <button
+              onClick={onOpenActivateStore}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-200 transition-all whitespace-nowrap"
+              title="عندك كود دخول من الإدارة؟ فعّل متجرك هنا"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>تفعيل بالكود</span>
+            </button>
+          )}
           {/* Offline indicator & simulation button */}
           <button
             onClick={onToggleSimulateOffline}

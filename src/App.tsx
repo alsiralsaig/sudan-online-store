@@ -335,6 +335,12 @@ export default function App() {
   };
 
   // Tenant Switcher
+  /* عنوان التبويب يحمل اسم المتجر الحالي — كان «سند» فقط في كل الحالات */
+  useEffect(() => {
+    const name = tenant?.tradeName || tenant?.name;
+    document.title = name ? `${name} — سند` : 'سند — منظومة التجارة ونقاط البيع';
+  }, [tenant?.tradeName, tenant?.name]);
+
   const handleTenantSwitch = (tenantId: string) => {
     api.setTenantId(tenantId);
     loadPrimaryData();
@@ -522,6 +528,7 @@ export default function App() {
         isSyncing={isSyncing}
         onOpenStorefront={() => setCurrentTab('store_orders')}
         onSwitchToClientApp={() => switchAppMode('client')}
+        onOpenActivateStore={() => setIsActivateOpen(true)}
       />
 
       {/* Quick Testing Context Bar (Tenant, Branch & Role Switcher for Review) */}
@@ -542,14 +549,6 @@ export default function App() {
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              onClick={() => setIsActivateOpen(true)}
-              className="ml-1 rounded bg-amber-400 px-2 py-0.5 text-[10.5px] font-black text-slate-900 hover:bg-amber-300"
-              title="عندك كود من الإدارة؟ فعّل متجرك هنا"
-            >
-              + تفعيل متجر بالكود
-            </button>
           </div>
 
           {/* Branch Switcher */}

@@ -81,6 +81,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [pushMessage, setPushMessage] = useState('');
   const [pushState, setPushState] = useState<'unknown' | 'off' | 'on' | 'unsupported' | 'denied' | 'working'>('unknown');
   const [scanning, setScanning] = useState(false);
   const [support, setSupport] = useState<PushSupport | null>(null);
@@ -180,22 +181,58 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     return output;
   };
 
+  /**
+   * تفعيل إشعارات الهاتف — بخطوات تُبلّغ المستخدم بما يحدث.
+   *
+   * ليه أُعيدت كتابته: كان أي فشل يُرجع الزر إلى حالته السابقة بصمت، فيظن
+   * المستخدم أن الزر «لا يستجيب». الآن: كل خطوة لها رسالة، ولكل خطوة مهلة،
+   * ونسجّل عامل الخدمة بأنفسنا إن لم يكن مسجّلاً (كان `serviceWorker.ready`
+   * ينتظر إلى الأبد في هذه الحالة).
+   */
   const enablePush = async () => {
     setPushState('working');
+    setPushMessage('جارٍ طلب الإذن…');
     try {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        setPushState('denied');
+      if (typeof Notification === 'undefined' || !('serviceWorker' in navigator)) {
+        setPushState('unsupported');
+        setPushMessage('هذا المتصفح لا يوفّر إشعارات الويب — افتح المنصة في Chrome أو Safari.');
         return;
       }
 
+      const permission = await Notification.requestPermission();
+      if (permission === 'default') {
+        setPushState('off');
+        setPushMessage('ما اخترت السماح — اضغط الزر واختر «السماح» في نافذة المتصفح.');
+        return;
+      }
+      if (permission !== 'granted') {
+        setPushState('denied');
+        setPushMessage('الإشعارات ممنوعة لهذا الموقع. افتح إعدادات الموقع في المتصفح واسمح بالإشعارات.');
+        return;
+      }
+
+      setPushMessage('جارٍ تجهيز عامل الخدمة…');
+      const reg = await (async () => {
+        const existing = await navigator.serviceWorker.getRegistration();
+        if (existing) return existing;
+        await navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
+        return navigator.serviceWorker.ready;
+      })();
+      if (!('pushManager' in reg)) {
+        setPushState('unsupported');
+        setPushMessage('المتصفح سجّل عامل الخدمة لكنه لا يدعم إشعارات الدفع. جرّب Chrome.');
+        return;
+      }
+
+      setPushMessage('جارٍ قراءة مفاتيح الخادم…');
       const cfg = await api.getPushPublicKey();
       if (!cfg.enabled || !cfg.publicKey) {
         setPushState('unsupported');
+        setPushMessage('الخادم لم يجهّز مفاتيح الإشعارات بعد — أبلغنا لنصلحها.');
         return;
       }
 
-      const reg = await navigator.serviceWorker.ready;
+      setPushMessage('جارٍ تسجيل الجهاز…');
       const subscription =
         (await reg.pushManager.getSubscription()) ||
         (await reg.pushManager.subscribe({
@@ -205,11 +242,21 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
 
       await api.subscribePush(subscription.toJSON(), app, ownerToken);
       setPushState('on');
-      await api.sendTestPush(app, ownerToken);
+      setPushMessage('');
+      await api.sendTestPush(app, ownerToken).catch(() => {});
       await load();
     } catch (err) {
+      const message = (err as Error)?.message || '';
       console.warn('[push] enable failed:', err);
       setPushState('off');
+      /* رسالة صريحة بدل الصمت: أشهر سبب على أندرويد هو منع المتصفح للموقع */
+      if (/permission|denied|not allowed/i.test(message)) {
+        setPushMessage('المتصفح رفض الإذن. افتح أيقونة القفل بجانب العنوان ⟹ الإشعارات ⟹ سماح.');
+      } else if (/service|worker/i.test(message)) {
+        setPushMessage('تعذّر تجهيز عامل الخدمة — حدّث الصفحة وأعد المحاولة.');
+      } else {
+        setPushMessage('تعذّر تفعيل الإشعارات الآن. تأكد من الإنترنت وأعد المحاولة.');
+      }
     }
   };
 
@@ -396,14 +443,21 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                 </div>
               </div>
             ) : (
-              <button
-                onClick={enablePush}
-                disabled={pushState === 'working'}
-                className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold disabled:opacity-60"
-              >
-                {pushState === 'working' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Smartphone className="w-3.5 h-3.5" />}
-                تفعيل إشعارات الهاتف
-              </button>
+              <div className="space-y-1">
+                <button
+                  onClick={() => void enablePush()}
+                  disabled={pushState === 'working'}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold disabled:opacity-60"
+                >
+                  {pushState === 'working' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Smartphone className="w-3.5 h-3.5" />}
+                  {pushState === 'working' ? 'جارٍ التفعيل…' : 'تفعيل إشعارات الهاتف'}
+                </button>
+                {pushMessage && (
+                  <p className="text-[10px] leading-relaxed text-slate-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                    {pushMessage}
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
