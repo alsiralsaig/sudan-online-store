@@ -123,6 +123,14 @@ export default function App() {
 
   /* تفعيل متجر بكود الدخول — لم يكن له أي مكان في الواجهة من قبل */
   const [isActivateOpen, setIsActivateOpen] = useState(false);
+  /**
+   * موظفو المتجر الجديد: يُدخلون مع كود التفعيل ثم يُنشأون بعد نجاح التفعيل.
+   * ليه: صاحب المتجر كان لازم يفعّل، ثم يروح لتبويب الموظفين ويضيف واحداً
+   * واحداً. الآن يضيفهم في نفس شاشة الإنشاء.
+   */
+  const [newStoreEmployees, setNewStoreEmployees] = useState<
+    { name: string; phone: string; role: string; pin: string }[]
+  >([]);
   const [activateCode, setActivateCode] = useState('');
   const [activateState, setActivateState] = useState<'idle' | 'working' | 'ok' | 'fail'>('idle');
   const [activateMsg, setActivateMsg] = useState('');
@@ -151,16 +159,51 @@ export default function App() {
       );
       if (res.tenant?.id) {
         api.setTenantId(res.tenant.id);
+
+        /* إنشاء الموظفين الذين أدخلهم المالك في نفس الشاشة */
+        const rows = newStoreEmployees.filter((r) => r.name.trim());
+        let added = 0;
+        const failures: string[] = [];
+        for (const row of rows) {
+          try {
+            await api.createEmployee({
+              name: row.name.trim(),
+              phone: row.phone.trim(),
+              role: row.role as any,
+              pin: row.pin.trim() || '0000',
+              permissions: [],
+              maxDiscountPct: row.role === 'cashier' ? 10 : 20,
+              isActive: true,
+            } as any);
+            added += 1;
+          } catch (err) {
+            failures.push(`${row.name.trim()}: ${(err as Error).message || 'فشل'}`);
+          }
+        }
+        if (rows.length) {
+          setActivateMsg(
+            (prev) =>
+              `${prev} ${added ? `وأُضيف ${added} موظف.` : ''} ${
+                failures.length ? `تعذّر: ${failures.join(' · ')}` : ''
+              }`
+          );
+        }
         await loadPrimaryData();
       }
-      setTimeout(() => {
-        setIsActivateOpen(false);
-        setActivateCode('');
-        setActivateState('idle');
-      }, 2200);
+      setTimeout(
+        () => {
+          setIsActivateOpen(false);
+          setActivateCode('');
+          setActivateState('idle');
+          setNewStoreEmployees([]);
+          setActivateMsg('');
+        },
+        newStoreEmployees.filter((r) => r.name.trim()).length ? 4500 : 2200
+      );
     } catch (err) {
       setActivateState('fail');
       setActivateMsg((err as Error).message || 'تعذّر التفعيل — تحقق من الكود والاتصال.');
+      /* لا نمسح الموظفين المدخلين — يعيد المحاولة بلا إعادة كتابة */
     }
   };
 
@@ -523,12 +566,110 @@ export default function App() {
               </p>
             )}
 
+            {/* موظفو المتجر — تُضاف أثناء الإنشاء بدل الرجوع لتبويب الموظفين */}
+            <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black text-slate-800">
+                  موظفون يفتحون المتجر معك (اختياري)
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setNewStoreEmployees((prev) => [
+                      ...prev,
+                      { name: '', phone: '', role: 'cashier', pin: '' },
+                    ])
+                  }
+                  className="rounded-lg bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white"
+                >
+                  + موظف
+                </button>
+              </div>
+
+              {newStoreEmployees.length === 0 && (
+                <p className="text-[10.5px] leading-relaxed text-slate-500">
+                  كاشير، مدير فرع، محاسب… أضفهم الآن وسيُفتح لهم المتجر بعد التفعيل.
+                  تقدر تضيفهم لاحقاً من تبويب الموظفين.
+                </p>
+              )}
+
+              {newStoreEmployees.map((row, idx) => (
+                <div key={idx} className="rounded-xl border border-slate-200 bg-white p-2 space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      value={row.name}
+                      onChange={(e) =>
+                        setNewStoreEmployees((prev) =>
+                          prev.map((r, i) => (i === idx ? { ...r, name: e.target.value } : r))
+                        )
+                      }
+                      placeholder="اسم الموظف"
+                      className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setNewStoreEmployees((prev) => prev.filter((_, i) => i !== idx))}
+                      className="rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700"
+                      title="حذف السطر"
+                    >
+                      حذف
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      value={row.phone}
+                      onChange={(e) =>
+                        setNewStoreEmployees((prev) =>
+                          prev.map((r, i) => (i === idx ? { ...r, phone: e.target.value } : r))
+                        )
+                      }
+                      placeholder="الهاتف"
+                      inputMode="tel"
+                      dir="ltr"
+                      className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-[11px] focus:border-emerald-500 focus:outline-none"
+                    />
+                    <select
+                      value={row.role}
+                      onChange={(e) =>
+                        setNewStoreEmployees((prev) =>
+                          prev.map((r, i) => (i === idx ? { ...r, role: e.target.value } : r))
+                        )
+                      }
+                      className="rounded-lg border border-slate-300 bg-white px-1.5 py-1.5 text-[11px] focus:outline-none"
+                    >
+                      <option value="cashier">كاشير</option>
+                      <option value="branch_manager">مدير فرع</option>
+                      <option value="accountant">محاسب</option>
+                      <option value="inventory_officer">أمين مخزن</option>
+                    </select>
+                    <input
+                      value={row.pin}
+                      onChange={(e) =>
+                        setNewStoreEmployees((prev) =>
+                          prev.map((r, i) => (i === idx ? { ...r, pin: e.target.value } : r))
+                        )
+                      }
+                      placeholder="PIN"
+                      inputMode="numeric"
+                      maxLength={4}
+                      dir="ltr"
+                      className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-[11px] font-mono focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <button
               type="submit"
               disabled={activateState === 'working'}
               className="w-full rounded-xl bg-emerald-700 py-3 text-sm font-black text-white disabled:opacity-60"
             >
-              {activateState === 'working' ? 'جارٍ التفعيل…' : 'فعّل المتجر'}
+              {activateState === 'working'
+                ? 'جارٍ التفعيل…'
+                : newStoreEmployees.filter((r) => r.name.trim()).length
+                ? 'فعّل المتجر وأنشئ الموظفين'
+                : 'فعّل المتجر'}
             </button>
           </form>
         </div>

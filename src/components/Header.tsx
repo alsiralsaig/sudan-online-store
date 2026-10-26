@@ -177,7 +177,20 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         {/* Zone 3: Primary Action & Quick Tools */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+        {/* كانت shrink-0 بلا wrap فكانت الأزرار الأخيرة (جرس الإشعارات) تخرج
+            خارج الشاشة على الجوال ولا تُرى أصلاً */}
+        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 min-w-0">
+          {/* Platform notifications — أول عنصر في الشريط فيظل مرئياً على الجوال */}
+          <div className="relative flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 pl-1 pr-1 py-0.5">
+            <NotificationBell
+              app="merchant"
+              onNavigate={(tab) => onTabChange(tab as any)}
+            />
+            <span className="hidden sm:inline pl-2 pr-1 text-[11px] font-bold text-rose-800">
+              الإشعارات
+            </span>
+          </div>
+
           {/* Dual-App Switcher Pill */}
           <div className="hidden sm:flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
             <button
@@ -276,12 +289,6 @@ export const Header: React.FC<HeaderProps> = ({
             <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
             <span>جرد بالهاتف</span>
           </button>
-
-          {/* Platform notifications (orders, reviews, system) */}
-          <NotificationBell
-            app="merchant"
-            onNavigate={(tab) => onTabChange(tab as any)}
-          />
 
           {/* Inventory Reorder Point Alerts Notification Bell */}
           <div className="relative">
