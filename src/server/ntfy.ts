@@ -14,6 +14,8 @@
  * على كلمات مرور ولا بيانات دفع. مُعرّف القناة لا يُعاد للعميل إلا مقنّعاً.
  */
 
+import { isDbEnabled, query } from './pg.ts';
+
 /** قناة سند — منفصلة عن قناة منصة الطالب السوداني حتى لا تختلط التنبيهات */
 const DEFAULT_TOPIC = 'sanad-alerts-x7k2m9';
 
@@ -86,6 +88,42 @@ const rateLimited = (): boolean => {
   return false;
 };
 
+/*
+ * منع التكرار بين النسخ (cross-instance).
+ *
+ * ليه: Vercel يشغّل عدة نسخ من نفس الخادم، وكل نسخة لها ذاكرتها، فالكاش
+ * المحلي لا يمنع نسختين من إرسال نفس التنبيه (وهذا سبب التكرار الذي ظهر).
+ * الحل: مفتاح في Postgres نفسه — أول نسخة تُدخله «تكسب» والبقية تُسكت.
+ * لو لم تكن قاعدة البيانات مفعّلة (أو تعطّلت) نرجع للكاش المحلي بهدوء.
+ */
+const CLAIM_TABLE = 'sanad_ntfy_claims';
+let claimTableReady = false;
+
+async function claimInDb(key: string): Promise<boolean | null> {
+  if (!isDbEnabled()) return null;
+  try {
+    if (!claimTableReady) {
+      await query(
+        `CREATE TABLE IF NOT EXISTS ${CLAIM_TABLE} (
+           key text PRIMARY KEY,
+           sent_at timestamptz NOT NULL DEFAULT now()
+         )`
+      );
+      claimTableReady = true;
+    }
+    /* تنظيف قديم خفيف حتى لا تكبر الطاولة */
+    await query(`DELETE FROM ${CLAIM_TABLE} WHERE sent_at < now() - interval '7 days'`);
+    const res = await query(
+      `INSERT INTO ${CLAIM_TABLE} (key) VALUES ($1) ON CONFLICT (key) DO NOTHING RETURNING key`,
+      [key]
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch {
+    /* أي عطل هنا لا يجوز أن يمنع التنبيه */
+    return null;
+  }
+}
+
 /** إرسال تنبيه واحد. لا يرمي استثناءً أبداً. */
 export async function sendNtfy(
   title: string,
@@ -95,7 +133,10 @@ export async function sendNtfy(
   const t = topic();
   if (!t) return { sent: 0, skipped: 'NOT_CONFIGURED' };
   const key = `${title}|${body}`.replace(/\s+/g, ' ').trim();
-  if (recentlySent(key)) return { sent: 0, skipped: 'DUPLICATE' };
+  /* الأولوية للحجز في قاعدة البيانات (يمنع التكرار بين النسخ)، ثم الكاش المحلي */
+  const dbClaim = await claimInDb(key);
+  if (dbClaim === false) return { sent: 0, skipped: 'DUPLICATE' };
+  if (dbClaim === null && recentlySent(key)) return { sent: 0, skipped: 'DUPLICATE' };
   if (rateLimited()) return { sent: 0, skipped: 'RATE_LIMITED' };
 
   const controller = new AbortController();

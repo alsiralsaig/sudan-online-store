@@ -151,11 +151,35 @@ var init_email = __esm({
 });
 
 // src/server/ntfy.ts
+async function claimInDb(key) {
+  if (!isDbEnabled()) return null;
+  try {
+    if (!claimTableReady) {
+      await query(
+        `CREATE TABLE IF NOT EXISTS ${CLAIM_TABLE} (
+           key text PRIMARY KEY,
+           sent_at timestamptz NOT NULL DEFAULT now()
+         )`
+      );
+      claimTableReady = true;
+    }
+    await query(`DELETE FROM ${CLAIM_TABLE} WHERE sent_at < now() - interval '7 days'`);
+    const res = await query(
+      `INSERT INTO ${CLAIM_TABLE} (key) VALUES ($1) ON CONFLICT (key) DO NOTHING RETURNING key`,
+      [key]
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch {
+    return null;
+  }
+}
 async function sendNtfy(title, body, opts = {}) {
   const t = topic();
   if (!t) return { sent: 0, skipped: "NOT_CONFIGURED" };
   const key = `${title}|${body}`.replace(/\s+/g, " ").trim();
-  if (recentlySent(key)) return { sent: 0, skipped: "DUPLICATE" };
+  const dbClaim = await claimInDb(key);
+  if (dbClaim === false) return { sent: 0, skipped: "DUPLICATE" };
+  if (dbClaim === null && recentlySent(key)) return { sent: 0, skipped: "DUPLICATE" };
   if (rateLimited()) return { sent: 0, skipped: "RATE_LIMITED" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6e3);
@@ -180,9 +204,10 @@ async function sendNtfy(title, body, opts = {}) {
     clearTimeout(timer);
   }
 }
-var DEFAULT_TOPIC, topic, server, kindList2, ntfyConfigured, ntfyEnabledFor, DEDUPE_TTL_MS, MAX_CACHE, recent, recentlySent, RATE_WINDOW_MS, RATE_MAX, windowStart, windowCount, rateLimited, ntfyStatus;
+var DEFAULT_TOPIC, topic, server, kindList2, ntfyConfigured, ntfyEnabledFor, DEDUPE_TTL_MS, MAX_CACHE, recent, recentlySent, RATE_WINDOW_MS, RATE_MAX, windowStart, windowCount, rateLimited, CLAIM_TABLE, claimTableReady, ntfyStatus;
 var init_ntfy = __esm({
   "src/server/ntfy.ts"() {
+    init_pg();
     DEFAULT_TOPIC = "sanad-alerts-x7k2m9";
     topic = () => String(process.env.NTFY_TOPIC || DEFAULT_TOPIC).trim();
     server = () => String(process.env.NTFY_SERVER || "https://ntfy.sh").replace(/\/+$/, "");
@@ -223,6 +248,8 @@ var init_ntfy = __esm({
       windowCount += 1;
       return false;
     };
+    CLAIM_TABLE = "sanad_ntfy_claims";
+    claimTableReady = false;
     ntfyStatus = () => {
       const t = topic();
       const masked = t ? `${t.slice(0, 4)}\u2026${t.slice(-3)}` : "";
