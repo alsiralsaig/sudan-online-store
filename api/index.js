@@ -150,6 +150,53 @@ var init_email = __esm({
   }
 });
 
+// src/server/ntfy.ts
+async function sendNtfy(title, body, opts = {}) {
+  const t = topic();
+  if (!t) return { sent: 0, skipped: "NOT_CONFIGURED" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6e3);
+  try {
+    const res = await fetch(`${server()}/${encodeURIComponent(t)}`, {
+      method: "POST",
+      headers: {
+        Title: encodeURIComponent(title.slice(0, 120)),
+        Priority: String(opts.priority ?? 3),
+        ...opts.tags ? { Tags: opts.tags } : {}
+      },
+      body: body.slice(0, 1500),
+      signal: controller.signal
+    });
+    if (res.ok) return { sent: 1, skipped: "" };
+    return { sent: 0, skipped: `API_${res.status}` };
+  } catch (err) {
+    return { sent: 0, skipped: err.name === "AbortError" ? "TIMEOUT" : "NETWORK" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+var DEFAULT_TOPIC, topic, server, kindList2, ntfyConfigured, ntfyEnabledFor, ntfyStatus;
+var init_ntfy = __esm({
+  "src/server/ntfy.ts"() {
+    DEFAULT_TOPIC = "sanad-alerts-x7k2m9";
+    topic = () => String(process.env.NTFY_TOPIC || DEFAULT_TOPIC).trim();
+    server = () => String(process.env.NTFY_SERVER || "https://ntfy.sh").replace(/\/+$/, "");
+    kindList2 = () => String(process.env.NTFY_KINDS || "all").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    ntfyConfigured = () => !!topic();
+    ntfyEnabledFor = (kind) => {
+      if (!ntfyConfigured()) return false;
+      const kinds = kindList2();
+      if (kinds.includes("all")) return true;
+      return !!kind && kinds.includes(String(kind).toLowerCase());
+    };
+    ntfyStatus = () => {
+      const t = topic();
+      const masked = t ? `${t.slice(0, 4)}\u2026${t.slice(-3)}` : "";
+      return { configured: ntfyConfigured(), topic: masked, kinds: kindList2() };
+    };
+  }
+});
+
 // src/server/alerts.ts
 async function notifyAll(text) {
   const channels = channelsConfigured();
@@ -174,6 +221,16 @@ async function notifyAll(text) {
       if (!skipped) skipped = `email:THREW:${err.message.slice(0, 30)}`;
     }
   }
+  if (channels.includes("ntfy")) {
+    try {
+      const firstLine = text.split("\n").find((l) => l.trim()) || "\u062A\u0646\u0628\u064A\u0647 \u0645\u0646 \u0633\u0646\u062F";
+      const v = await sendNtfy(emailSubject(text), text);
+      sent += v.sent;
+      if (v.sent === 0 && !skipped) skipped = `ntfy:${v.skipped || firstLine.slice(0, 0)}`;
+    } catch (err) {
+      if (!skipped) skipped = `ntfy:THREW:${err.message.slice(0, 30)}`;
+    }
+  }
   return { sent, skipped, channels };
 }
 var channelsConfigured, anyChannelConfigured;
@@ -181,10 +238,12 @@ var init_alerts = __esm({
   "src/server/alerts.ts"() {
     init_telegram();
     init_email();
+    init_ntfy();
     channelsConfigured = () => {
       const list2 = [];
       if (telegramConfigured()) list2.push("telegram");
       if (emailConfigured()) list2.push("email");
+      if (ntfyConfigured()) list2.push("ntfy");
       return list2;
     };
     anyChannelConfigured = () => channelsConfigured().length > 0;
@@ -4078,6 +4137,7 @@ ${comparisons.join("\n")}
 // src/server/notifications.ts
 import webpush from "web-push";
 init_telegram();
+init_ntfy();
 var CONTACT = process.env.VAPID_CONTACT || "mailto:admin@sanad.sd";
 var configured = false;
 function initPush() {
@@ -4128,6 +4188,11 @@ async function notify(input) {
 
 ${input.body}`).catch((err) => {
       console.warn("[telegram] send failed:", err?.message || err);
+    });
+  }
+  if (input.telegram !== false && ntfyEnabledFor(input.kind)) {
+    await sendNtfy(input.title, input.body).catch((err) => {
+      console.warn("[ntfy] send failed:", err?.message || err);
     });
   }
   return notification;
@@ -4371,6 +4436,7 @@ var whatsappProviderHost = () => {
 
 // src/server/routes.ts
 init_telegram();
+init_ntfy();
 
 // src/server/media.ts
 init_pg();
@@ -6208,6 +6274,7 @@ apiRouter.get("/currency/alerts/status", (_req, res) => {
     whatsappConfigured: whatsappConfigured(),
     whatsappProvider: whatsappProviderHost(),
     telegram: telegramStatus(),
+    ntfy: ntfyStatus(),
     whatsappRecipient: process.env.WHATSAPP_ALERT_PHONE ? "\u2022\u2022\u2022" + String(process.env.WHATSAPP_ALERT_PHONE).slice(-4) : null,
     todayAlerts: db.getRateAlertLog().filter((a) => a.day === today),
     recentAlerts: db.getRateAlertLog().slice(0, 20)
@@ -7892,11 +7959,13 @@ apiRouter.get("/cron/test-alert", async (_req, res) => {
     return res.status(400).json({
       ok: false,
       error: "ALERTS_NOT_CONFIGURED",
-      hint: "\u0636\u064A\u0641 RESEND_API_KEY \u0648 ALERT_EMAIL_TO (\u0623\u0648 \u062A\u0644\u064A\u062C\u0631\u0627\u0645) \u0641\u064A Vercel \u062B\u0645 \u0623\u0639\u062F \u0627\u0644\u0646\u0634\u0631.",
+      hint: "\u0636\u064A\u0641 NTFY_TOPIC (\u0623\u0648 RESEND_API_KEY \u0648 ALERT_EMAIL_TO\u060C \u0623\u0648 \u062A\u0648\u0643\u0646 \u062A\u0644\u064A\u062C\u0631\u0627\u0645) \u0641\u064A Vercel \u062B\u0645 \u0623\u0639\u062F \u0627\u0644\u0646\u0634\u0631.",
       channels: []
     });
   }
-  const verdict = await notifyAll("\u{1F514} *\u062A\u062C\u0631\u0628\u0629 \u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0633\u0646\u062F*\n\u0648\u0635\u0644\u0643 \u0627\u0644\u062A\u0646\u0628\u064A\u0647 \u062F\u0647 \u064A\u0639\u0646\u064A \u0627\u0644\u0642\u0646\u0627\u0629 \u0634\u063A\u0627\u0644\u0629.");
+  const verdict = await notifyAll(
+    "\u{1F514} \u062A\u062C\u0631\u0628\u0629 \u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0633\u0646\u062F\n\u0648\u0635\u0644\u0643 \u0627\u0644\u062A\u0646\u0628\u064A\u0647 \u062F\u0647 \u064A\u0639\u0646\u064A \u0627\u0644\u0642\u0646\u0627\u0629 \u0634\u063A\u0627\u0644\u0629."
+  );
   res.status(verdict.sent > 0 ? 200 : 502).json({ ok: verdict.sent > 0, ...verdict });
 });
 apiRouter.get("/cron/backup", async (_req, res) => {

@@ -8,6 +8,7 @@
 import webpush from 'web-push';
 import { db } from './db.ts';
 import { sendTelegram, telegramEnabledFor } from './telegram.ts';
+import { sendNtfy, ntfyEnabledFor } from './ntfy.ts';
 import type { AppNotification, NotificationApp, NotificationKind } from '../types/index.ts';
 
 const CONTACT = process.env.VAPID_CONTACT || 'mailto:admin@sanad.sd';
@@ -90,6 +91,17 @@ export async function notify(input: NotifyInput): Promise<AppNotification> {
   if (input.telegram !== false && telegramEnabledFor(input.kind)) {
     await sendTelegram(`*${input.title}*\n\n${input.body}`).catch((err) => {
       console.warn('[telegram] send failed:', err?.message || err);
+    });
+  }
+
+  /*
+   * Fourth channel: ntfy — تنبيه على الجوال بلا تسجيل ولا دفع.
+   * يعمل حتى لو تليجرام مقفول في الدولة (رسوم تسجيل الدخول)، ولهذا هو
+   * القناة الافتراضية في سند. يُرسل نفس نص الإشعار بلا علامات تنسيق.
+   */
+  if (input.telegram !== false && ntfyEnabledFor(input.kind)) {
+    await sendNtfy(input.title, input.body).catch((err) => {
+      console.warn('[ntfy] send failed:', err?.message || err);
     });
   }
 

@@ -6,6 +6,7 @@
  */
 import { sendTelegram, telegramConfigured } from './telegram.ts';
 import { sendEmail, emailSubject, emailConfigured } from './email.ts';
+import { sendNtfy, ntfyConfigured } from './ntfy.ts';
 
 export interface AlertVerdict {
   sent: number;
@@ -17,6 +18,7 @@ export const channelsConfigured = (): string[] => {
   const list: string[] = [];
   if (telegramConfigured()) list.push('telegram');
   if (emailConfigured()) list.push('email');
+  if (ntfyConfigured()) list.push('ntfy');
   return list;
 };
 
@@ -47,6 +49,18 @@ export async function notifyAll(text: string): Promise<AlertVerdict> {
       if (v.sent === 0 && !skipped) skipped = `email:${v.skipped}`;
     } catch (err) {
       if (!skipped) skipped = `email:THREW:${(err as Error).message.slice(0, 30)}`;
+    }
+  }
+
+  /* ntfy: تنبيه الجوال — أوثق القنوات في السودان لأنه لا يحتاج تسجيل ولا دفع */
+  if (channels.includes('ntfy')) {
+    try {
+      const firstLine = text.split('\n').find((l) => l.trim()) || 'تنبيه من سند';
+      const v = await sendNtfy(emailSubject(text), text);
+      sent += v.sent;
+      if (v.sent === 0 && !skipped) skipped = `ntfy:${v.skipped || firstLine.slice(0, 0)}`;
+    } catch (err) {
+      if (!skipped) skipped = `ntfy:THREW:${(err as Error).message.slice(0, 30)}`;
     }
   }
 

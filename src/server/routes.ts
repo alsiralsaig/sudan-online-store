@@ -20,6 +20,7 @@ import {
 } from './rateAnswer.ts';
 import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
+import { ntfyStatus } from './ntfy.ts';
 import { newId, newCode } from './ids.ts';
 import {
   saveMedia, getMedia, deleteMedia, buildMediaResponse, prepareForStreaming, HttpError, MAX_RAW_BYTES,
@@ -1705,6 +1706,7 @@ apiRouter.get('/currency/alerts/status', (_req, res) => {
     whatsappConfigured: whatsappConfigured(),
     whatsappProvider: whatsappProviderHost(),
     telegram: telegramStatus(),
+    ntfy: ntfyStatus(),
     whatsappRecipient: process.env.WHATSAPP_ALERT_PHONE ? '•••' + String(process.env.WHATSAPP_ALERT_PHONE).slice(-4) : null,
     todayAlerts: db.getRateAlertLog().filter((a) => a.day === today),
     recentAlerts: db.getRateAlertLog().slice(0, 20),
@@ -3879,11 +3881,13 @@ apiRouter.get('/cron/test-alert', async (_req, res) => {
     return res.status(400).json({
       ok: false,
       error: 'ALERTS_NOT_CONFIGURED',
-      hint: 'ضيف RESEND_API_KEY و ALERT_EMAIL_TO (أو تليجرام) في Vercel ثم أعد النشر.',
+      hint: 'ضيف NTFY_TOPIC (أو RESEND_API_KEY و ALERT_EMAIL_TO، أو توكن تليجرام) في Vercel ثم أعد النشر.',
       channels: [],
     });
   }
-  const verdict = await notifyAll('🔔 *تجربة تنبيهات سند*\nوصلك التنبيه ده يعني القناة شغالة.');
+  const verdict = await notifyAll(
+    '🔔 تجربة تنبيهات سند\nوصلك التنبيه ده يعني القناة شغالة.'
+  );
   res.status(verdict.sent > 0 ? 200 : 502).json({ ok: verdict.sent > 0, ...verdict });
 });
 
