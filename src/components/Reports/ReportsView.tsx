@@ -39,9 +39,16 @@ import { api } from '../../lib/api.ts';
 interface ReportsViewProps {
   branches: Branch[];
   currentBranch: Branch | null;
+  canViewProfits?: boolean;
+  canViewCogs?: boolean;
 }
 
-export const ReportsView: React.FC<ReportsViewProps> = ({ branches, currentBranch }) => {
+export const ReportsView: React.FC<ReportsViewProps> = ({
+  branches,
+  currentBranch,
+  canViewProfits = true,
+  canViewCogs = true,
+}) => {
   // Default to the current branch as requested
   const [selectedBranchId, setSelectedBranchId] = useState<string>(
     currentBranch?.id || branches[0]?.id || ''
@@ -66,6 +73,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ branches, currentBranc
   useEffect(() => {
     loadSummary();
   }, [selectedBranchId]);
+
+  if (!canViewProfits) {
+    return (
+      <div className="p-10 m-4 rounded-3xl bg-slate-950 text-center text-slate-200 border border-slate-800">
+        <p className="text-lg font-black text-white">التقارير المالية محجوبة</p>
+        <p className="text-sm text-slate-400 mt-2">
+          المالك ما فعّل لك صلاحية الاطلاع على الأرباح. اطلبها من شاشة الموظفين.
+        </p>
+      </div>
+    );
+  }
 
   if (!summary) {
     return (

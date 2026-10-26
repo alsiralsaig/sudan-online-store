@@ -31,6 +31,8 @@ interface InventoryViewProps {
   branches: Branch[];
   currentBranch: Branch | null;
   onRefresh: () => void;
+  canViewCogs?: boolean;
+  canEditPrices?: boolean;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
@@ -38,6 +40,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   branches,
   currentBranch,
   onRefresh,
+  canViewCogs = true,
+  canEditPrices = true,
 }) => {
   const [activeTab, setActiveTab] = useState<'catalog' | 'movements'>('catalog');
   const [selectedBranchId, setSelectedBranchId] = useState<string>(currentBranch?.id || '');
@@ -385,6 +389,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </span>
           </button>
 
+          {canEditPrices && (
           <button
             onClick={() => setIsAddModalOpen(true)}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
@@ -392,6 +397,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             <Plus className="w-4 h-4" />
             <span>إضافة صنف جديد</span>
           </button>
+          )}
 
           {/* Smart Inventory Audit (Mobile Stocktaking) Button */}
           <button
@@ -570,7 +576,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   <th className="py-3 px-4">الصورة / الصنف</th>
                   <th className="py-3 px-4">التصنيف والوحدة</th>
                   <th className="py-3 px-4">الباركود / SKU</th>
-                  <th className="py-3 px-4">سعر التكلفة</th>
+                  {canViewCogs && <th className="py-3 px-4">سعر التكلفة</th>}
                   <th className="py-3 px-4">سعر البيع (ج.س)</th>
                   <th className="py-3 px-4">الرصيد المتاح</th>
                   <th className="py-3 px-4">الحد الأدنى للأمان</th>
@@ -644,9 +650,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         <div className="text-[10px] text-slate-400">{product.sku}</div>
                       </td>
 
+                      {canViewCogs && (
                       <td className="py-3 px-4 font-mono text-slate-700">
                         {product.purchaseCost.toLocaleString()} {product.costCurrency}
                       </td>
+                      )}
 
                       <td className="py-3 px-4 font-mono">
                         <div className="font-bold text-slate-900">{product.sellingPriceSdg.toLocaleString()} ج.س</div>
@@ -901,6 +909,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </div>
 
               <div className="grid grid-cols-3 gap-3">
+                {canViewCogs && (
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">سعر التكلفة:</label>
                   <input
@@ -911,6 +920,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
                   />
                 </div>
+                )}
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">سعر البيع (ج.س):</label>
                   <input

@@ -39,6 +39,35 @@ export function hasPerm(employee: Pick<Employee, 'permissions' | 'role'>, key: s
   return perms.includes(key);
 }
 
+export interface ActorPerms {
+  viewCogs: boolean;
+  viewProfits: boolean;
+  editPrices: boolean;
+  processReturns: boolean;
+  overrideStock: boolean;
+  manageStaff: boolean;
+  viewAudit: boolean;
+}
+
+/** صلاحيات الدور الحالي: من بطاقة الموظف إن وُجدت، وإلا من قالب الدور */
+export function resolveActorPerms(role: string, employee?: Employee | null): ActorPerms {
+  const source: Pick<Employee, 'permissions' | 'role'> = employee
+    ? employee
+    : {
+        role: (role as EmployeeRole) || 'cashier',
+        permissions: defaultPermissions(((role as EmployeeRole) || 'cashier') as EmployeeRole),
+      };
+  return {
+    viewCogs: hasPerm(source, 'view_cogs'),
+    viewProfits: hasPerm(source, 'view_profits'),
+    editPrices: hasPerm(source, 'edit_prices'),
+    processReturns: hasPerm(source, 'process_returns'),
+    overrideStock: hasPerm(source, 'override_stock'),
+    manageStaff: hasPerm(source, 'manage_staff'),
+    viewAudit: hasPerm(source, 'view_audit'),
+  };
+}
+
 export function roleLabel(role: string): string {
   switch (role) {
     case 'owner':

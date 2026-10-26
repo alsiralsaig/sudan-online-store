@@ -37,6 +37,7 @@ import type {
   InventoryAlert,
 } from './types/index.ts';
 import { api } from './lib/api.ts';
+import { resolveActorPerms } from './lib/staffPermissions.ts';
 import {
   Users,
   Globe,
@@ -368,19 +369,24 @@ export default function App() {
 
   // Role Switcher for easy testing
   const handleActorSwitch = (newRole: string) => {
-    let newActor = { id: 'emp_owner_rowad', name: 'أحمد الطيب الرواد', role: 'owner' };
-    if (newRole === 'cashier') {
-      newActor = { id: 'emp_cashier_kht', name: 'محمد عبد الله (كاشير)', role: 'cashier' };
-    } else if (newRole === 'branch_manager') {
-      newActor = { id: 'emp_mgr_kht', name: 'عثمان عبد الرحيم (مدير الفرع)', role: 'branch_manager' };
-    } else if (newRole === 'accountant') {
-      newActor = { id: 'emp_accountant_rowad', name: 'سارة مصطفى (المحاسب)', role: 'accountant' };
-    } else if (newRole === 'super_admin') {
-      newActor = { id: 'saas_admin', name: 'مدير المنصة المركزي', role: 'super_admin' };
+    const found = employees.find((e) => e.role === newRole);
+    let newActor = found
+      ? { id: found.id, name: found.name, role: found.role }
+      : { id: 'emp_owner_rowad', name: ownerDisplayName, role: 'owner' };
+    if (!found) {
+      if (newRole === 'cashier') newActor = { id: 'emp_cashier_kht', name: 'كاشير', role: 'cashier' };
+      else if (newRole === 'branch_manager') newActor = { id: 'emp_mgr_kht', name: 'مدير فرع', role: 'branch_manager' };
+      else if (newRole === 'accountant') newActor = { id: 'emp_accountant_rowad', name: 'محاسب', role: 'accountant' };
+      else if (newRole === 'super_admin') newActor = { id: 'saas_admin', name: 'مدير المنصة المركزي', role: 'super_admin' };
+      else if (newRole === 'owner') newActor = { id: 'emp_owner_rowad', name: ownerDisplayName, role: 'owner' };
     }
     setActor(newActor);
     api.setActor(newActor);
   };
+
+  const matchingEmployee =
+    employees.find((e) => e.id === actor.id) || employees.find((e) => e.role === actor.role) || null;
+  const actorPerms = resolveActorPerms(actor.role, matchingEmployee);
 
   // Branch Switcher
   const handleBranchSwitch = (branchId: string) => {
@@ -824,6 +830,8 @@ export default function App() {
             branches={branches}
             currentBranch={currentBranch}
             onRefresh={loadPrimaryData}
+            canViewCogs={actorPerms.viewCogs}
+            canEditPrices={actorPerms.editPrices}
           />
         )}
 
@@ -834,6 +842,8 @@ export default function App() {
               branches={branches}
               currentBranch={currentBranch}
               onRefresh={loadPrimaryData}
+              canViewCogs={actorPerms.viewCogs}
+              canEditPrices={actorPerms.editPrices}
             />
             <InventoryAuditModal
               isOpen={true}
@@ -874,7 +884,7 @@ export default function App() {
         )}
 
         {currentTab === 'reports' && (
-          <ReportsView branches={branches} currentBranch={currentBranch} />
+          <ReportsView branches={branches} currentBranch={currentBranch} canViewProfits={actorPerms.viewProfits} canViewCogs={actorPerms.viewCogs} />
         )}
 
         {currentTab === 'branches_employees' && (
