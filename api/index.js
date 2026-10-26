@@ -154,7 +154,9 @@ var init_email = __esm({
 async function sendNtfy(title, body, opts = {}) {
   const t = topic();
   if (!t) return { sent: 0, skipped: "NOT_CONFIGURED" };
-  if (recentlySent(`${title}|${body}`)) return { sent: 0, skipped: "DUPLICATE" };
+  const key = `${title}|${body}`.replace(/\s+/g, " ").trim();
+  if (recentlySent(key)) return { sent: 0, skipped: "DUPLICATE" };
+  if (rateLimited()) return { sent: 0, skipped: "RATE_LIMITED" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6e3);
   try {
@@ -178,7 +180,7 @@ async function sendNtfy(title, body, opts = {}) {
     clearTimeout(timer);
   }
 }
-var DEFAULT_TOPIC, topic, server, kindList2, ntfyConfigured, ntfyEnabledFor, DEDUPE_TTL_MS, MAX_CACHE, recent, recentlySent, ntfyStatus;
+var DEFAULT_TOPIC, topic, server, kindList2, ntfyConfigured, ntfyEnabledFor, DEDUPE_TTL_MS, MAX_CACHE, recent, recentlySent, RATE_WINDOW_MS, RATE_MAX, windowStart, windowCount, rateLimited, ntfyStatus;
 var init_ntfy = __esm({
   "src/server/ntfy.ts"() {
     DEFAULT_TOPIC = "sanad-alerts-x7k2m9";
@@ -192,7 +194,7 @@ var init_ntfy = __esm({
       if (kinds.includes("all")) return true;
       return !!kind && kinds.includes(String(kind).toLowerCase());
     };
-    DEDUPE_TTL_MS = 12 * 60 * 60 * 1e3;
+    DEDUPE_TTL_MS = 24 * 60 * 60 * 1e3;
     MAX_CACHE = 500;
     recent = /* @__PURE__ */ new Map();
     recentlySent = (key) => {
@@ -205,6 +207,20 @@ var init_ntfy = __esm({
         if (oldest) recent.delete(oldest[0]);
       }
       recent.set(key, now);
+      return false;
+    };
+    RATE_WINDOW_MS = 60 * 1e3;
+    RATE_MAX = 6;
+    windowStart = 0;
+    windowCount = 0;
+    rateLimited = () => {
+      const now = Date.now();
+      if (now - windowStart > RATE_WINDOW_MS) {
+        windowStart = now;
+        windowCount = 0;
+      }
+      if (windowCount >= RATE_MAX) return true;
+      windowCount += 1;
       return false;
     };
     ntfyStatus = () => {
@@ -4208,7 +4224,7 @@ ${input.body}`).catch((err) => {
       console.warn("[telegram] send failed:", err?.message || err);
     });
   }
-  if (input.telegram !== false && ntfyEnabledFor(input.kind)) {
+  if (input.ntfy !== false && ntfyEnabledFor(input.kind)) {
     await sendNtfy(input.title, input.body).catch((err) => {
       console.warn("[ntfy] send failed:", err?.message || err);
     });
@@ -4259,19 +4275,35 @@ async function notifyLowStock(tenantId, opts = {}) {
   const relevant = opts.branchId ? alerts.filter((a) => a.branchId === opts.branchId) : alerts;
   const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   let sent = 0;
+  const fresh = [];
   for (const alert of relevant) {
     const key = `low_stock:${alert.productId}:${alert.branchId}:${day}`;
     if (db.hasNotificationKey(key)) continue;
+    const title = alert.currentQuantity === 0 ? "\u0646\u0641\u0627\u062F \u0635\u0646\u0641 \u0645\u0646 \u0627\u0644\u0645\u062E\u0632\u0648\u0646" : "\u0646\u0642\u0635 \u0641\u064A \u0627\u0644\u0645\u062E\u0632\u0648\u0646";
+    const body = `${alert.productName} \u2014 \u0627\u0644\u0645\u062A\u0628\u0642\u064A ${alert.currentQuantity} \u0641\u0642\u0637 \u0641\u064A ${alert.branchName} (\u062D\u062F \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0637\u0644\u0628 ${alert.reorderPoint}).`;
     await notify({
       app: "merchant",
       kind: "low_stock",
-      title: alert.currentQuantity === 0 ? "\u0646\u0641\u0627\u062F \u0635\u0646\u0641 \u0645\u0646 \u0627\u0644\u0645\u062E\u0632\u0648\u0646" : "\u0646\u0642\u0635 \u0641\u064A \u0627\u0644\u0645\u062E\u0632\u0648\u0646",
-      body: `${alert.productName} \u2014 \u0627\u0644\u0645\u062A\u0628\u0642\u064A ${alert.currentQuantity} \u0641\u0642\u0637 \u0641\u064A ${alert.branchName} (\u062D\u062F \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0637\u0644\u0628 ${alert.reorderPoint}).`,
+      title,
+      body,
       linkTab: "inventory",
       tenantId,
-      dedupeKey: key
+      dedupeKey: key,
+      ntfy: false
     });
+    fresh.push(body);
     sent++;
+  }
+  if (fresh.length > 0 && ntfyEnabledFor("low_stock")) {
+    const head = fresh.slice(0, 4).join("\n\u2022 ");
+    const rest = fresh.length > 4 ? `
+\u2022 \u0648${fresh.length - 4} \u0635\u0646\u0641\u0627\u064B \u0622\u062E\u0631 \u0641\u064A \u062A\u0628\u0648\u064A\u0628 \u0627\u0644\u0645\u062E\u0632\u0648\u0646` : "";
+    await sendNtfy(
+      fresh.some((l) => l.includes("\u0627\u0644\u0645\u062A\u0628\u0642\u064A 0 ")) ? "\u0646\u0641\u0627\u062F \u0623\u0635\u0646\u0627\u0641 \u0645\u0646 \u0627\u0644\u0645\u062E\u0632\u0648\u0646" : "\u0646\u0642\u0635 \u0641\u064A \u0627\u0644\u0645\u062E\u0632\u0648\u0646",
+      `\u2022 ${head}${rest}`,
+      { priority: 4, tags: "warning" }
+    ).catch(() => {
+    });
   }
   return sent;
 }

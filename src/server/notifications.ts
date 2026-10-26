@@ -68,6 +68,11 @@ interface NotifyInput {
   dedupeKey?: string;
   /** Set false when the caller delivers to Telegram itself (avoids doubles). */
   telegram?: boolean;
+  /**
+   * Set false when the caller wants its own ntfy message (e.g. one summary
+   * instead of fifteen separate pushes for a low-stock scan).
+   */
+  ntfy?: boolean;
 }
 
 /** Create the in-app notification and fire the push to matching devices. */
@@ -99,7 +104,7 @@ export async function notify(input: NotifyInput): Promise<AppNotification> {
    * يعمل حتى لو تليجرام مقفول في الدولة (رسوم تسجيل الدخول)، ولهذا هو
    * القناة الافتراضية في سند. يُرسل نفس نص الإشعار بلا علامات تنسيق.
    */
-  if (input.telegram !== false && ntfyEnabledFor(input.kind)) {
+  if (input.ntfy !== false && ntfyEnabledFor(input.kind)) {
     await sendNtfy(input.title, input.body).catch((err) => {
       console.warn('[ntfy] send failed:', err?.message || err);
     });
@@ -173,20 +178,44 @@ export async function notifyLowStock(tenantId: string, opts: { branchId?: string
   const day = new Date().toISOString().slice(0, 10);
   let sent = 0;
 
+  /** الأصناف الجديدة فقط — ما أدخلناه في هذه الدورة */
+  const fresh: string[] = [];
+
   for (const alert of relevant) {
     const key = `low_stock:${alert.productId}:${alert.branchId}:${day}`;
     if (db.hasNotificationKey(key)) continue;
 
+    const title = alert.currentQuantity === 0 ? 'نفاد صنف من المخزون' : 'نقص في المخزون';
+    const body = `${alert.productName} — المتبقي ${alert.currentQuantity} فقط في ${alert.branchName} (حد إعادة الطلب ${alert.reorderPoint}).`;
+
+    /*
+     * إشعار داخلي لكل صنف (يظهر في جرس التطبيق) — بلا تنبيه ntfy لكل واحد.
+     * السبب: فحص المخزون قد يجد ١٥ صنفاً في نفس اللحظة، فيصل الجوال ١٥
+     * تنبيهاً متتالياً في ثانية واحدة. التنبيه الخارجي يُرسل مرة واحدة
+     * كملخّص بعد الحلقة.
+     */
     await notify({
       app: 'merchant',
       kind: 'low_stock',
-      title: alert.currentQuantity === 0 ? 'نفاد صنف من المخزون' : 'نقص في المخزون',
-      body: `${alert.productName} — المتبقي ${alert.currentQuantity} فقط في ${alert.branchName} (حد إعادة الطلب ${alert.reorderPoint}).`,
+      title,
+      body,
       linkTab: 'inventory',
       tenantId,
       dedupeKey: key,
+      ntfy: false,
     });
+    fresh.push(body);
     sent++;
+  }
+
+  if (fresh.length > 0 && ntfyEnabledFor('low_stock')) {
+    const head = fresh.slice(0, 4).join('\n• ');
+    const rest = fresh.length > 4 ? `\n• و${fresh.length - 4} صنفاً آخر في تبويب المخزون` : '';
+    await sendNtfy(
+      fresh.some((l) => l.includes('المتبقي 0 ')) ? 'نفاد أصناف من المخزون' : 'نقص في المخزون',
+      `• ${head}${rest}`,
+      { priority: 4, tags: 'warning' }
+    ).catch(() => {});
   }
 
   return sent;

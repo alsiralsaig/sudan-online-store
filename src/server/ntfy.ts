@@ -48,7 +48,7 @@ export const ntfyEnabledFor = (kind?: string): boolean => {
  * الحد الفعلي: النسخ المختلفة قد ترسل كل واحدة مرة — لذلك لا نعتمد عليه
  * لحفظ السجل، بل لمنع الإزعاج فقط.
  */
-const DEDUPE_TTL_MS = 12 * 60 * 60 * 1000;
+const DEDUPE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CACHE = 500;
 const recent = new Map<string, number>();
 
@@ -65,6 +65,27 @@ const recentlySent = (key: string): boolean => {
   return false;
 };
 
+/**
+ * حدّ إرسال بسيط: ٦ رسائل في الدقيقة لكل نسخة خادم.
+ * ليه: لو انطلق فحص كبير (أو تكرّر نداء من نسختين)، الأسوأ أن يصل تنبيه
+ * ناقص بدل أن يمتلئ جوال صاحب المتجر بالرسائل.
+ */
+const RATE_WINDOW_MS = 60 * 1000;
+const RATE_MAX = 6;
+let windowStart = 0;
+let windowCount = 0;
+
+const rateLimited = (): boolean => {
+  const now = Date.now();
+  if (now - windowStart > RATE_WINDOW_MS) {
+    windowStart = now;
+    windowCount = 0;
+  }
+  if (windowCount >= RATE_MAX) return true;
+  windowCount += 1;
+  return false;
+};
+
 /** إرسال تنبيه واحد. لا يرمي استثناءً أبداً. */
 export async function sendNtfy(
   title: string,
@@ -73,7 +94,9 @@ export async function sendNtfy(
 ): Promise<NtfyVerdict> {
   const t = topic();
   if (!t) return { sent: 0, skipped: 'NOT_CONFIGURED' };
-  if (recentlySent(`${title}|${body}`)) return { sent: 0, skipped: 'DUPLICATE' };
+  const key = `${title}|${body}`.replace(/\s+/g, ' ').trim();
+  if (recentlySent(key)) return { sent: 0, skipped: 'DUPLICATE' };
+  if (rateLimited()) return { sent: 0, skipped: 'RATE_LIMITED' };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
