@@ -154,6 +154,7 @@ var init_email = __esm({
 async function sendNtfy(title, body, opts = {}) {
   const t = topic();
   if (!t) return { sent: 0, skipped: "NOT_CONFIGURED" };
+  if (recentlySent(`${title}|${body}`)) return { sent: 0, skipped: "DUPLICATE" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6e3);
   try {
@@ -177,7 +178,7 @@ async function sendNtfy(title, body, opts = {}) {
     clearTimeout(timer);
   }
 }
-var DEFAULT_TOPIC, topic, server, kindList2, ntfyConfigured, ntfyEnabledFor, ntfyStatus;
+var DEFAULT_TOPIC, topic, server, kindList2, ntfyConfigured, ntfyEnabledFor, DEDUPE_TTL_MS, MAX_CACHE, recent, recentlySent, ntfyStatus;
 var init_ntfy = __esm({
   "src/server/ntfy.ts"() {
     DEFAULT_TOPIC = "sanad-alerts-x7k2m9";
@@ -190,6 +191,21 @@ var init_ntfy = __esm({
       const kinds = kindList2();
       if (kinds.includes("all")) return true;
       return !!kind && kinds.includes(String(kind).toLowerCase());
+    };
+    DEDUPE_TTL_MS = 12 * 60 * 60 * 1e3;
+    MAX_CACHE = 500;
+    recent = /* @__PURE__ */ new Map();
+    recentlySent = (key) => {
+      const now = Date.now();
+      const at = recent.get(key);
+      if (at && now - at < DEDUPE_TTL_MS) return true;
+      if (at) recent.delete(key);
+      if (recent.size > MAX_CACHE) {
+        const oldest = [...recent.entries()].sort((a, b) => a[1] - b[1])[0];
+        if (oldest) recent.delete(oldest[0]);
+      }
+      recent.set(key, now);
+      return false;
     };
     ntfyStatus = () => {
       const t = topic();

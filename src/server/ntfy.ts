@@ -39,6 +39,32 @@ export const ntfyEnabledFor = (kind?: string): boolean => {
   return !!kind && kinds.includes(String(kind).toLowerCase());
 };
 
+/**
+ * كاش منع التكرار داخل نفس النسخة من الخادم.
+ *
+ * ليه: فحص المخزون يُنادى مع كل تحميل للتطبيق، وقاعدة البيانات في هذه النسخة
+ * قد تُعاد قراءتها لكل نسخة خادم جديدة، فتتكرر نفس التنبيهات (وصلت ١٤ رسالة
+ * متطابقة في ثانيتين). الكاش يقلّصها إلى رسالة واحدة لكل حدث في نفس النسخة.
+ * الحد الفعلي: النسخ المختلفة قد ترسل كل واحدة مرة — لذلك لا نعتمد عليه
+ * لحفظ السجل، بل لمنع الإزعاج فقط.
+ */
+const DEDUPE_TTL_MS = 12 * 60 * 60 * 1000;
+const MAX_CACHE = 500;
+const recent = new Map<string, number>();
+
+const recentlySent = (key: string): boolean => {
+  const now = Date.now();
+  const at = recent.get(key);
+  if (at && now - at < DEDUPE_TTL_MS) return true;
+  if (at) recent.delete(key);
+  if (recent.size > MAX_CACHE) {
+    const oldest = [...recent.entries()].sort((a, b) => a[1] - b[1])[0];
+    if (oldest) recent.delete(oldest[0]);
+  }
+  recent.set(key, now);
+  return false;
+};
+
 /** إرسال تنبيه واحد. لا يرمي استثناءً أبداً. */
 export async function sendNtfy(
   title: string,
@@ -47,6 +73,7 @@ export async function sendNtfy(
 ): Promise<NtfyVerdict> {
   const t = topic();
   if (!t) return { sent: 0, skipped: 'NOT_CONFIGURED' };
+  if (recentlySent(`${title}|${body}`)) return { sent: 0, skipped: 'DUPLICATE' };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
