@@ -796,8 +796,8 @@ export const PosView: React.FC<PosViewProps> = ({
       {/* Left/Main Column: Product Catalog & Search */}
       <div className="flex-1 flex flex-col p-4 overflow-hidden">
         {/* Hardware & Camera Barcode Scanner Status Banner */}
-        <div className="bg-slate-900 text-white px-3 py-2 rounded-xl mb-3 flex flex-wrap items-center justify-between gap-2 shadow-sm border border-slate-800">
-          <div className="flex items-center gap-2 text-xs">
+        <div className="bg-slate-900 text-white px-3 py-2 rounded-xl mb-3 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2 shadow-sm border border-slate-800 overflow-visible">
+          <div className="flex items-center gap-2 text-xs min-w-0">
             <div className="relative flex items-center justify-center">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping absolute opacity-75" />
               <span className="w-2 h-2 rounded-full bg-emerald-400 relative" />
@@ -811,12 +811,12 @@ export const PosView: React.FC<PosViewProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             {/* Camera Barcode Scanner Trigger Button */}
             <button
               type="button"
               onClick={() => setIsCameraScannerOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow-sm transition-all"
+              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow-sm transition-all shrink-0"
               title="فتح كاميرا الجهاز لمسح باركود المنتجات تلقائياً"
             >
               <Camera className="w-3.5 h-3.5" />
@@ -827,7 +827,7 @@ export const PosView: React.FC<PosViewProps> = ({
             <button
               type="button"
               onClick={() => setIsVoiceOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-l from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-lg text-xs font-black shadow-sm transition-all"
+              className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-l from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-lg text-xs font-black shadow-sm transition-all shrink-0"
               title="اتكلم باللهجة السودانية والسلة تتملى وحدها"
             >
               <Mic className="w-3.5 h-3.5" />
@@ -867,10 +867,10 @@ export const PosView: React.FC<PosViewProps> = ({
               type="button"
               onClick={() => setIsCustomerModalOpen(true)}
               title="دليل العملاء وبرنامج نقاط الولاء (CRM)"
-              className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-xs font-bold border border-amber-500/40 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-xs font-bold border border-amber-500/40 transition-all shrink-0"
             >
-              <Users className="w-3.5 h-3.5 text-amber-400" />
-              <span>العملاء والولاء</span>
+              <Users className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="whitespace-nowrap">العملاء والولاء</span>
               {selectedCustomer && (
                 <span className="bg-amber-500 text-slate-900 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-black">
                   ⭐ {selectedCustomer.loyaltyPoints || 0}
