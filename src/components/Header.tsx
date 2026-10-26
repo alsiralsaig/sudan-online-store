@@ -94,7 +94,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="border-b border-slate-200 bg-white sticky top-0 z-40">
+    <header className="border-b border-slate-200 bg-white/95 backdrop-blur-md sticky top-0 z-40">
       {/* Top Bar Contract: 3 Zones */}
       <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-6 px-4 sm:px-6 py-3.5 min-w-0">
         {/* Zone 1: Sanad Logo Brand Wordmark */}

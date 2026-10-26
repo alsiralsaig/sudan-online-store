@@ -1,5 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
+import { parseSudaneseSale } from '../lib/sudaneseSpeech.ts';
+import { findUnitInText, priceForUnit, resolveProductBaseUnit } from '../lib/sudaneseUnits.ts';
 import {
   fetchLiveRates,
   fetchAllSources,
@@ -212,11 +214,12 @@ apiRouter.post('/employees', requireTenant, (req, res) => {
     });
   }
 
-  const { name, email, phone, role, pin, branchId, maxDiscountPct } = req.body;
+  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions } = req.body;
   if (!name || !role) {
     return res.status(400).json({ error: 'الاسم والمسمى الوظيفي مطلوبان' });
   }
 
+  const pinClean = String(pin || '').replace(/\D/g, '').slice(0, 6);
   const newEmployee = {
     id: newId('emp'),
     tenantId: authReq.tenantId,
@@ -225,8 +228,12 @@ apiRouter.post('/employees', requireTenant, (req, res) => {
     email: email || '',
     phone: phone || '',
     role,
-    pin: pin || '0000',
-    permissions: role === 'owner' ? ['all'] : ['pos:sell', 'inventory:view'],
+    pin: pinClean.length >= 4 ? pinClean : '0000',
+    permissions: Array.isArray(permissions) && permissions.length
+      ? permissions.map(String)
+      : role === 'owner'
+        ? ['all']
+        : ['pos:sell', 'inventory:view'],
     maxDiscountPct: Number(maxDiscountPct) || 10,
     isActive: true,
     createdAt: new Date().toISOString(),
@@ -246,6 +253,67 @@ apiRouter.post('/employees', requireTenant, (req, res) => {
   });
 
   res.json({ success: true, employee: newEmployee });
+});
+
+apiRouter.put('/employees/:id', requireTenant, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const emp = db.getSchema().employees.find(
+    (e) => e.id === req.params.id && e.tenantId === authReq.tenantId
+  );
+  if (!emp) return res.status(404).json({ error: 'الموظف غير موجود' });
+
+  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, isActive } = req.body || {};
+  if (typeof name === 'string' && name.trim()) emp.name = name.trim();
+  if (typeof email === 'string') emp.email = email;
+  if (typeof phone === 'string') emp.phone = phone;
+  if (typeof role === 'string' && role) emp.role = role as typeof emp.role;
+  if (typeof branchId === 'string') emp.branchId = branchId || undefined;
+  if (maxDiscountPct !== undefined) emp.maxDiscountPct = Number(maxDiscountPct) || 0;
+  if (typeof isActive === 'boolean') emp.isActive = isActive;
+  if (Array.isArray(permissions)) emp.permissions = permissions.map(String);
+  if (typeof pin === 'string') {
+    const pinClean = pin.replace(/\D/g, '').slice(0, 6);
+    if (pinClean.length >= 4) emp.pin = pinClean;
+  }
+  db.commit();
+  db.logAudit({
+    tenantId: authReq.tenantId,
+    actorId: authReq.actorId,
+    actorName: authReq.actorName,
+    action: 'UPDATE_EMPLOYEE',
+    entity: 'Employee',
+    entityId: emp.id,
+    details: `تعديل بيانات الموظف: ${emp.name}`,
+  });
+  res.json({ success: true, employee: emp });
+});
+
+apiRouter.delete('/employees/:id', requireTenant, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const list = db.getSchema().employees;
+  const idx = list.findIndex((e) => e.id === req.params.id && e.tenantId === authReq.tenantId);
+  if (idx < 0) return res.status(404).json({ error: 'الموظف غير موجود' });
+  const emp = list[idx];
+  if (emp.role === 'owner') {
+    const otherOwners = list.filter(
+      (e) => e.tenantId === authReq.tenantId && e.role === 'owner' && e.id !== emp.id
+    );
+    if (otherOwners.length === 0) {
+      return res.status(400).json({ error: 'ما ينفع تحذف المالك الوحيد للمتجر' });
+    }
+  }
+  list.splice(idx, 1);
+  db.commit();
+  db.logAudit({
+    tenantId: authReq.tenantId,
+    actorId: authReq.actorId,
+    actorName: authReq.actorName,
+    action: 'DELETE_EMPLOYEE',
+    entity: 'Employee',
+    entityId: emp.id,
+    details: `حذف الموظف: ${emp.name}`,
+  });
+  res.json({ success: true });
 });
 
 /* =========================================================================
@@ -2821,6 +2889,20 @@ apiRouter.delete('/promotions/:id', requireTenant, (req, res) => {
 
 const GEMINI_KEY = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 
+/** حد بسيط: 20 طلب تحليل بيع لكل متجر في الدقيقة — حماية رصيد Gemini */
+const parseSaleHits = new Map<string, { n: number; t: number }>();
+function allowParseSale(tenantId: string, max = 20, windowMs = 60_000): boolean {
+  const now = Date.now();
+  const rec = parseSaleHits.get(tenantId);
+  if (!rec || now - rec.t > windowMs) {
+    parseSaleHits.set(tenantId, { n: 1, t: now });
+    return true;
+  }
+  if (rec.n >= max) return false;
+  rec.n += 1;
+  return true;
+}
+
 /** Models tried in order; override with GEMINI_MODEL. */
 const ASSISTANT_MODELS = [
   process.env.GEMINI_MODEL,
@@ -2982,6 +3064,130 @@ async function geminiGenerate(opts: {
 
 const SOURCE_ALIASES_PRIMARY = /alsoug|سوق\s*السودان|البديل/i;
 const SOURCE_ALIASES_BACKUP = /أخبار\s*السودان|اخبار\s*السودان|سودان\s*أخبار|sudanakhbar/i;
+
+apiRouter.post('/ai/parse-sale', requireTenant, async (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  if (!allowParseSale(authReq.tenantId)) {
+    return res.status(429).json({ error: 'تجاوزت حد طلبات التحليل — انتظر دقيقة وجرّب تاني.' });
+  }
+  const speechText = String((req.body || {}).speechText || '').trim();
+  if (!speechText) return res.status(400).json({ error: 'نص البيع مطلوب' });
+  if (speechText.length > 800) return res.status(400).json({ error: 'النص طويل زيادة' });
+
+  const products = db.getProducts(authReq.tenantId).filter((p) => p.isActive !== false);
+  const local = parseSudaneseSale(speechText, products);
+  const pack = (source: string, parsed: typeof local) => ({
+    source,
+    lines: parsed.lines.map((l) => ({
+      productId: l.product?.id || null,
+      productName: l.product?.name || l.spokenName,
+      quantity: l.quantity,
+      unit: l.unitName,
+      unitId: l.unitId,
+      unitPrice: l.unitPrice,
+      confidence: l.confidence,
+      notes: l.note,
+    })),
+    clarifications: parsed.clarifications.map((c) => ({
+      phrase: c.phrase,
+      reason: c.reason,
+      suggestions: (c.suggestions || []).map((p) => p.name),
+    })),
+    paymentMethod: parsed.paymentMethod,
+    discountAmount: parsed.discountAmount,
+    discountPercent: parsed.discountPercent,
+    customerName: parsed.customerName,
+    summary: parsed.summary,
+  });
+
+  const needsAi = local.lines.length === 0 || local.clarifications.length > 0;
+  if (!needsAi || !GEMINI_KEY()) {
+    return res.json(pack(local.lines.length ? 'rule_engine' : 'rule_engine_empty', local));
+  }
+
+  try {
+    const inventorySummary = products.slice(0, 80).map((p) => ({
+      id: p.id,
+      name: p.name,
+      unit: p.unit,
+      price: p.sellingPriceSdg,
+      sku: p.sku,
+      barcode: p.barcode,
+      category: p.category,
+    }));
+    const prompt = `أنت خبير محاسبي يفهم اللهجة السودانية في الدكاكين.
+حلّل طلب البيع وطابقه مع المخزون فقط. لا تخترع أسعاراً ولا أصنافاً غير موجودة.
+الرطل = 450 جم. الجوال = 50 كجم. الدستة = 12 حبة. الجركانة = 4 لتر. الأوقية = 37.5 جم.
+
+نص التاجر: "${speechText.replace(/"/g, '«')}"
+
+المخزون:
+${JSON.stringify(inventorySummary)}
+
+أرجع JSON حصراً بالشكل:
+{"recognizedItems":[{"productId":"id أو null","productName":"...","quantity":1,"unit":"كيلو","confidence":0.9,"notes":"..."}],"clarificationNeeded":[{"originalPhrase":"...","reason":"...","possibleMatches":["..."]}],"discountAmount":0,"discountPercent":0,"customerName":null,"paymentMethod":"cash"}`;
+
+    const ai = await geminiGenerate({
+      models: ASSISTANT_MODELS,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      temperature: 0.1,
+      maxTokens: 1200,
+      timeoutMs: 12000,
+    });
+    if (!ai.text) return res.json(pack('rule_engine_after_error', local));
+
+    let parsedJson: any = {};
+    try {
+      parsedJson = JSON.parse(ai.text);
+    } catch {
+      const fenced = ai.text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      parsedJson = JSON.parse(fenced);
+    }
+
+    const items = Array.isArray(parsedJson.recognizedItems) ? parsedJson.recognizedItems : [];
+    const merged = { ...local, lines: [...local.lines], clarifications: [...local.clarifications] };
+    const seen = new Set(merged.lines.map((l) => l.product?.id).filter(Boolean));
+
+    for (const it of items) {
+      const product = products.find((p) => p.id === it.productId) || products.find((p) => p.name === it.productName);
+      if (!product || seen.has(product.id)) continue;
+      const qty = Number(it.quantity) || 1;
+      const spokenUnit = findUnitInText(String(it.unit || '')) || resolveProductBaseUnit(product.unit);
+      const priced = priceForUnit(product.sellingPriceSdg, product.unit, spokenUnit.id, qty);
+      if (!priced.ok) continue;
+      seen.add(product.id);
+      merged.lines.push({
+        product,
+        spokenName: String(it.productName || product.name),
+        quantity: qty,
+        unitId: spokenUnit.id,
+        unitName: spokenUnit.symbolAr,
+        unitPrice: priced.unitPrice,
+        confidence: Number(it.confidence) || 0.8,
+        note: priced.explanation,
+      });
+    }
+
+    if (Array.isArray(parsedJson.clarificationNeeded)) {
+      for (const c of parsedJson.clarificationNeeded) {
+        merged.clarifications.push({
+          phrase: String(c.originalPhrase || ''),
+          reason: String(c.reason || 'غير واضح'),
+          suggestions: products.filter((p) => (c.possibleMatches || []).includes(p.name)).slice(0, 4),
+        });
+      }
+    }
+    if (parsedJson.paymentMethod) merged.paymentMethod = parsedJson.paymentMethod;
+    if (Number(parsedJson.discountAmount)) merged.discountAmount = Number(parsedJson.discountAmount);
+    if (Number(parsedJson.discountPercent)) merged.discountPercent = Number(parsedJson.discountPercent);
+    if (parsedJson.customerName) merged.customerName = String(parsedJson.customerName);
+
+    return res.json(pack('gemini_ai', merged));
+  } catch (err) {
+    console.error('parse-sale gemini', err);
+    return res.json(pack('rule_engine_after_error', local));
+  }
+});
 
 apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   const { message, mode, context, history } = req.body || {};

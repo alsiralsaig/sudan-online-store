@@ -3643,6 +3643,389 @@ var Database = class {
 };
 var db = new Database();
 
+// src/lib/sudaneseUnits.ts
+var SUDANESE_UNITS = [
+  {
+    id: "kg",
+    nameAr: "\u0643\u064A\u0644\u0648\u062C\u0631\u0627\u0645",
+    aliases: ["\u0643\u064A\u0644\u0648", "\u0643\u064A\u0644\u0648\u062C\u0631\u0627\u0645", "\u0643\u064A\u0644\u0648\u062C\u0631\u0627\u0645\u0627\u062A", "\u0643\u062C\u0645", "\u0643\u062C", "\u0643\u064A\u0644\u0648 \u062C\u0631\u0627\u0645", "kilo", "kg"],
+    symbolAr: "\u0643\u062C\u0645",
+    type: "weight",
+    toBase: 1,
+    baseUnitId: "kg",
+    equivalentStandard: "1000 \u062C\u0631\u0627\u0645"
+  },
+  {
+    id: "ratl",
+    nameAr: "\u0631\u0637\u0644",
+    aliases: ["\u0631\u0637\u0644", "\u0631\u0637\u0644\u0647", "\u0631\u0637\u0644\u064A\u0646", "\u0623\u0631\u0637\u0627\u0644", "\u0627\u0631\u0637\u0627\u0644", "\u0631\u0637\u0644 \u0648\u0646\u0635"],
+    symbolAr: "\u0631\u0637\u0644",
+    type: "weight",
+    // العرف السوداني: الرطل = 450 جرام
+    toBase: 0.45,
+    baseUnitId: "kg",
+    equivalentStandard: "450 \u062C\u0631\u0627\u0645 \u062A\u0642\u0631\u064A\u0628\u0627\u064B"
+  },
+  {
+    id: "ouqya",
+    nameAr: "\u0623\u0648\u0642\u064A\u0629",
+    aliases: ["\u0623\u0648\u0642\u064A\u0629", "\u0648\u0642\u064A\u0629", "\u0623\u0648\u0627\u0642\u064A", "\u0627\u0648\u0642\u064A\u0647", "\u0648\u0642\u064A\u0647", "\u0623\u0648\u0642\u064A\u0627\u062A"],
+    symbolAr: "\u0648\u0642\u064A\u0629",
+    type: "weight",
+    toBase: 0.0375,
+    baseUnitId: "kg",
+    equivalentStandard: "37.5 \u062C\u0631\u0627\u0645"
+  },
+  {
+    id: "ton",
+    nameAr: "\u0637\u0646",
+    aliases: ["\u0637\u0646", "\u0637\u0646\u064A\u0646", "\u0623\u0637\u0646\u0627\u0646", "\u0627\u0637\u0646\u0627\u0646"],
+    symbolAr: "\u0637\u0646",
+    type: "weight",
+    toBase: 1e3,
+    baseUnitId: "kg",
+    equivalentStandard: "1000 \u0643\u062C\u0645"
+  },
+  {
+    id: "liter",
+    nameAr: "\u0644\u062A\u0631",
+    aliases: ["\u0644\u062A\u0631", "\u0644\u062A\u0631\u0627\u062A", "\u0644\u062A\u0631\u064A\u0646", "liter", "l"],
+    symbolAr: "\u0644\u062A\u0631",
+    type: "volume",
+    toBase: 1,
+    baseUnitId: "liter",
+    equivalentStandard: "1000 \u0645\u0644"
+  },
+  {
+    id: "jirkana",
+    nameAr: "\u062C\u0631\u0643\u0627\u0646\u0629",
+    aliases: ["\u062C\u0631\u0643\u0627\u0646\u0629", "\u062C\u0631\u0643\u0627\u0646\u0647", "\u0628\u0627\u063A\u0629", "\u0628\u0627\u0642\u0647", "\u0628\u0627\u063A\u0647", "\u062C\u0631\u0627\u0643\u0646"],
+    symbolAr: "\u062C\u0631\u0643\u0627\u0646\u0629",
+    type: "volume",
+    // الغالب في السوق: جركانة زيت 4 لتر
+    toBase: 4,
+    baseUnitId: "liter",
+    equivalentStandard: "4 \u0644\u062A\u0631 (\u0628\u0627\u063A\u0629 \u0632\u064A\u062A)"
+  },
+  {
+    id: "piece",
+    nameAr: "\u062D\u0628\u0629",
+    aliases: ["\u062D\u0628\u0629", "\u062D\u0628\u0647", "\u0642\u0637\u0639\u0629", "\u0642\u0637\u0639\u0647", "\u062D\u0628\u0627\u062A", "\u0642\u0637\u0639", "\u0648\u0627\u062D\u062F\u0629", "\u0648\u062D\u062F\u0629"],
+    symbolAr: "\u062D\u0628\u0629",
+    type: "count",
+    toBase: 1,
+    baseUnitId: "piece",
+    equivalentStandard: "\u0642\u0637\u0639\u0629 \u0648\u0627\u062D\u062F\u0629"
+  },
+  {
+    id: "dasta",
+    nameAr: "\u062F\u0633\u062A\u0629",
+    aliases: ["\u062F\u0633\u062A\u0629", "\u062F\u0633\u062A\u0647", "\u062F\u0633\u062A\u062A\u064A\u0646", "\u062F\u0633\u062A\u0627\u062A", "\u062F\u0632\u064A\u0646\u0629", "\u062F\u0631\u0632\u0646"],
+    symbolAr: "\u062F\u0633\u062A\u0629",
+    type: "count",
+    toBase: 12,
+    baseUnitId: "piece",
+    equivalentStandard: "12 \u062D\u0628\u0629"
+  },
+  {
+    id: "kartona",
+    nameAr: "\u0643\u0631\u062A\u0648\u0646\u0629",
+    aliases: ["\u0643\u0631\u062A\u0648\u0646\u0629", "\u0643\u0631\u062A\u0648\u0646\u0647", "\u0643\u0631\u0627\u062A\u064A\u0646", "\u0628\u0627\u0643\u062A", "\u0628\u0627\u0643\u062A\u064A\u0646", "\u0628\u0627\u0643\u062A\u0627\u062A", "\u0628\u0627\u0631\u0633\u0644"],
+    symbolAr: "\u0643\u0631\u062A\u0648\u0646\u0629",
+    type: "count",
+    // افتراضي متحفظ: 12 حبة — التاجر يقدر يحدد سعراً مخصصاً للكرتونة
+    toBase: 12,
+    baseUnitId: "piece",
+    equivalentStandard: "12 \u062D\u0628\u0629 (\u0627\u0641\u062A\u0631\u0627\u0636\u064A)"
+  },
+  {
+    id: "gawal",
+    nameAr: "\u062C\u0648\u0627\u0644",
+    aliases: ["\u062C\u0648\u0627\u0644", "\u062C\u0648\u0627\u0644\u064A\u0646", "\u0634\u0643\u0627\u0631\u0629", "\u0634\u0643\u0627\u0631\u0647", "\u0634\u0648\u0627\u0644", "\u0634\u0648\u0627\u0644\u0627\u062A", "\u062C\u0648\u0627\u0644\u064A"],
+    symbolAr: "\u062C\u0648\u0627\u0644",
+    type: "weight",
+    toBase: 50,
+    baseUnitId: "kg",
+    equivalentStandard: "50 \u0643\u062C\u0645 (\u0633\u0643\u0631/\u062F\u0642\u064A\u0642)"
+  },
+  {
+    id: "rabta",
+    nameAr: "\u0631\u0628\u0637\u0629",
+    aliases: ["\u0631\u0628\u0637\u0629", "\u0631\u0628\u0637\u0647", "\u0631\u0628\u0637\u0627\u062A", "\u062D\u0632\u0645\u0629", "\u062D\u0632\u0645\u0647"],
+    symbolAr: "\u0631\u0628\u0637\u0629",
+    type: "count",
+    toBase: 1,
+    baseUnitId: "piece",
+    equivalentStandard: "\u062D\u0632\u0645\u0629 \u0645\u062C\u0645\u0639\u0629"
+  },
+  {
+    id: "kouz",
+    nameAr: "\u0643\u0648\u0632",
+    aliases: ["\u0643\u0648\u0632", "\u0643\u0648\u0632\u064A\u0646", "\u0645\u0643\u064A\u0627\u0644", "\u0645\u0643\u064A\u0627\u0644\u064A\u0646", "\u0642\u062F\u062D"],
+    symbolAr: "\u0643\u0648\u0632",
+    type: "volume",
+    toBase: 1,
+    baseUnitId: "liter",
+    equivalentStandard: "\u0645\u0643\u064A\u0627\u0644 \u062A\u0642\u0644\u064A\u062F\u064A \u0644\u0644\u062D\u0628\u0648\u0628"
+  }
+];
+function normalizeArabic(input) {
+  return (input || "").replace(/[\u064B-\u065F\u0670\u0640]/g, "").replace(/[أإآٱ]/g, "\u0627").replace(/ى/g, "\u064A").replace(/ؤ/g, "\u0648").replace(/ئ/g, "\u064A").replace(/ة/g, "\u0647").replace(/\s+/g, " ").trim().toLowerCase();
+}
+function normalizeDigits(input) {
+  const arabic = "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669";
+  return (input || "").replace(/[٠-٩]/g, (d) => String(arabic.indexOf(d)));
+}
+function findUnitInText(text) {
+  const norm = normalizeArabic(normalizeDigits(text));
+  const sorted = [...SUDANESE_UNITS].sort((a, b) => b.nameAr.length - a.nameAr.length);
+  for (const unit of sorted) {
+    for (const alias of [unit.nameAr, ...unit.aliases]) {
+      const needle = normalizeArabic(alias);
+      if (!needle) continue;
+      if (norm.includes(needle)) return unit;
+    }
+  }
+  return null;
+}
+function resolveProductBaseUnit(productUnit) {
+  const found = findUnitInText(productUnit);
+  if (found) return found;
+  return SUDANESE_UNITS.find((u) => u.id === "piece");
+}
+function priceForUnit(basePrice, productUnit, targetUnitId, quantity = 1) {
+  const base = resolveProductBaseUnit(productUnit);
+  const target = SUDANESE_UNITS.find((u) => u.id === targetUnitId) || base;
+  if (base.baseUnitId !== target.baseUnitId) {
+    return {
+      unitPrice: basePrice,
+      quantityInBaseUnits: quantity,
+      baseUnit: base,
+      ok: false,
+      explanation: `\u0627\u0644\u0648\u062D\u062F\u0629 \xAB${target.nameAr}\xBB \u0644\u0627 \u062A\u064F\u0642\u0627\u0633 \u0628\u0646\u0641\u0633 \u0648\u062D\u062F\u0629 \u0627\u0644\u0635\u0646\u0641 \xAB${base.nameAr}\xBB \u2014 \u064A\u062D\u062A\u0627\u062C \u0633\u0639\u0631\u0627\u064B \u0645\u062E\u0635\u0635\u0627\u064B.`
+    };
+  }
+  const pricePerBase = basePrice / base.toBase;
+  const raw = pricePerBase * target.toBase;
+  const unitPrice = raw >= 100 ? Math.round(raw) : Math.round(raw * 100) / 100;
+  return {
+    unitPrice,
+    quantityInBaseUnits: Math.round(target.toBase * quantity * 1e3) / 1e3,
+    baseUnit: base,
+    ok: true,
+    explanation: target.id === base.id ? `${quantity} ${target.symbolAr} \xD7 ${unitPrice.toLocaleString()} \u062C.\u0633` : `${quantity} ${target.symbolAr} = ${Math.round(target.toBase * quantity * 1e3) / 1e3} ${base.symbolAr} \xD7 \u0627\u0644\u0633\u0639\u0631 \u27F9 ${unitPrice.toLocaleString()} \u062C.\u0633 \u0644\u0644\u0640${target.symbolAr}`
+  };
+}
+
+// src/lib/sudaneseSpeech.ts
+var NUMBER_WORDS = {
+  \u0648\u0627\u062D\u062F: 1,
+  \u0648\u0627\u062D\u062F\u0647: 1,
+  \u0627\u062A\u0646\u064A\u0646: 2,
+  \u0627\u062B\u0646\u064A\u0646: 2,
+  \u062A\u0646\u064A\u0646: 2,
+  \u062A\u0644\u0627\u062A\u0647: 3,
+  \u062B\u0644\u0627\u062B\u0647: 3,
+  \u062A\u0644\u0627\u062A\u0629: 3,
+  \u0627\u0631\u0628\u0639\u0647: 4,
+  \u0627\u0631\u0628\u0639\u0629: 4,
+  \u062E\u0645\u0633\u0647: 5,
+  \u062E\u0645\u0633\u0629: 5,
+  \u0633\u062A\u0647: 6,
+  \u0633\u062A\u0629: 6,
+  \u0633\u0628\u0639\u0647: 7,
+  \u0633\u0628\u0639\u0629: 7,
+  \u062A\u0645\u0627\u0646\u064A\u0647: 8,
+  \u062B\u0645\u0627\u0646\u064A\u0647: 8,
+  \u062B\u0645\u0627\u0646\u064A\u0629: 8,
+  \u062A\u0633\u0639\u0647: 9,
+  \u062A\u0633\u0639\u0629: 9,
+  \u0639\u0634\u0631\u0647: 10,
+  \u0639\u0634\u0631\u0629: 10,
+  \u0627\u062A\u0646\u0627\u0634\u0631: 12,
+  \u0627\u062A\u0646\u0639\u0634\u0631: 12,
+  \u0639\u0634\u0631\u064A\u0646: 20,
+  "\u062E\u0645\u0633\u0647 \u0648\u0639\u0634\u0631\u064A\u0646": 25,
+  \u0646\u0635: 0.5,
+  \u0646\u0635\u0641: 0.5,
+  \u0631\u0628\u0639: 0.25,
+  \u062A\u0645\u0646: 0.125,
+  "\u062A\u0644\u0627\u062A\u0647 \u062A\u0631\u0628\u0627\u0639": 0.75
+};
+var FILLER_WORDS = [
+  "\u0628\u0639\u062A",
+  "\u0628\u0639\u0646\u0627",
+  "\u0633\u062C\u0644",
+  "\u0627\u0636\u0641",
+  "\u0627\u0639\u0645\u0644 \u0641\u0627\u062A\u0648\u0631\u0647",
+  "\u0641\u0627\u062A\u0648\u0631\u0647",
+  "\u0646\u0632\u0644 \u0644\u064A",
+  "\u062C\u064A\u0628 \u0644\u064A",
+  "\u0647\u0627\u062A",
+  "\u0639\u0627\u064A\u0632",
+  "\u0639\u0627\u0648\u0632",
+  "\u0645\u0646 \u0641\u0636\u0644\u0643",
+  "\u0644\u0648 \u0633\u0645\u062D\u062A",
+  "\u0643\u0645\u0627\u0646",
+  "\u0628\u0633",
+  "\u0645\u0639\u0627\u064A",
+  "\u0644\u0644\u0639\u0645\u064A\u0644",
+  "\u0644\u0644\u0632\u0648\u0644"
+];
+var NON_PRODUCT_WORDS = [
+  "\u0643\u0627\u0634",
+  "\u0646\u0642\u062F\u0627",
+  "\u0628\u0646\u0643\u0643",
+  "\u0641\u0648\u0631\u064A",
+  "\u0628\u0646\u0643 \u0641\u064A\u0635\u0644",
+  "\u0628\u0646\u0643 \u0627\u0644\u062E\u0631\u0637\u0648\u0645",
+  "\u062E\u0635\u0645",
+  "\u0627\u062C\u0644",
+  "\u062F\u064A\u0646",
+  "\u0639\u0644\u064A \u0627\u0644\u062D\u0633\u0627\u0628",
+  "\u0639\u0644\u0649 \u0627\u0644\u062D\u0633\u0627\u0628",
+  "\u062A\u062D\u0648\u064A\u0644"
+];
+function cleanClause(clause) {
+  let out = ` ${normalizeArabic(clause)} `;
+  for (const filler of FILLER_WORDS) {
+    out = out.replace(new RegExp(`(^|\\s)${normalizeArabic(filler)}(\\s|$)`, "g"), " ");
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+function nameTokens(name) {
+  return normalizeArabic(name).split(/[\s/|,.\-()]+/).map((t) => t.replace(/^ال/, "")).filter((t) => t.length >= 3);
+}
+function matchProduct(clause, products) {
+  const norm = normalizeArabic(normalizeDigits(clause));
+  for (const p of products) {
+    if (p.barcode && norm.includes(normalizeArabic(p.barcode))) return { product: p, confidence: 0.99 };
+    if (p.sku && norm.includes(normalizeArabic(p.sku))) return { product: p, confidence: 0.97 };
+  }
+  let best = null;
+  let bestScore = 0;
+  let bestHits = 0;
+  for (const p of products) {
+    const tokens = nameTokens(p.name);
+    if (!tokens.length) continue;
+    let hits = 0;
+    for (const t of tokens) if (norm.includes(t)) hits += 1;
+    if (!hits) continue;
+    let score = hits / tokens.length;
+    if (norm.includes(normalizeArabic(p.name))) score = 1.2;
+    if (nameTokens(p.category || "").some((t) => norm.includes(t))) score += 0.05;
+    if (score > bestScore || score === bestScore && hits > bestHits) {
+      bestScore = score;
+      bestHits = hits;
+      best = p;
+    }
+  }
+  if (best && bestScore >= 0.3) {
+    return { product: best, confidence: Math.min(0.96, 0.55 + Math.min(bestScore, 1) * 0.4) };
+  }
+  return { product: null, confidence: 0 };
+}
+function parseQuantity(clause) {
+  const norm = normalizeArabic(normalizeDigits(clause));
+  const digit = norm.match(/(\d+(?:\.\d+)?)/);
+  if (digit) return { quantity: parseFloat(digit[1]), explicit: true };
+  if (/ونص|و نص/.test(norm) && findUnitInText(norm)) return { quantity: 1.5, explicit: true };
+  const words = Object.entries(NUMBER_WORDS).sort((a, b) => b[0].length - a[0].length);
+  for (const [word, value] of words) {
+    if (norm.includes(normalizeArabic(word))) return { quantity: value, explicit: true };
+  }
+  if (/ونص|و نص/.test(norm)) return { quantity: 1.5, explicit: true };
+  return { quantity: 1, explicit: false };
+}
+function parseSudaneseSale(text, products) {
+  const raw = normalizeDigits(text || "").trim();
+  const normalizedText = normalizeArabic(raw);
+  let paymentMethod = "cash";
+  if (/بنكك|بنك الخرطوم|تحويل بنكي|ابلكيشن بنكك/.test(normalizedText)) paymentMethod = "bankak";
+  else if (/فوري|بنك فيصل/.test(normalizedText)) paymentMethod = "fawry";
+  else if (/اجل|دين|علي الحساب|على الحساب|شكك|شيك/.test(normalizedText)) paymentMethod = "credit";
+  const customerMatch = normalizedText.match(/(?:للعميل|للزول|للأستاذ|للاستاذ|لعم|لـ|ل)\s+([^\s,،]+)/);
+  const customerName = customerMatch && customerMatch[1] && customerMatch[1].length > 1 ? customerMatch[1] : null;
+  let discountAmount = 0;
+  let discountPercent = 0;
+  const percentMatch = normalizedText.match(/خصم\s*(\d+(?:\.\d+)?)\s*(?:%|في الميه|بالميه|بالمئه)/);
+  const amountMatch = normalizedText.match(/خصم\s*(\d+(?:\.\d+)?)/);
+  if (percentMatch) discountPercent = parseFloat(percentMatch[1]);
+  else if (amountMatch) discountAmount = parseFloat(amountMatch[1]);
+  const guarded = normalizedText.replace(/خصم\s*\d+(?:\.\d+)?\s*(?:%|في الميه|بالميه|بالمئه)?/g, " ").replace(/\s*و\s*نص(ف)?/g, " \xA7\u0646\u0635");
+  const clauses = guarded.split(/,|،|\s+ثم\s+|\s+و\s+|\s+و(?=[^\s])/g).map((c) => c.replace(/§نص/g, "\u0648\u0646\u0635").trim()).filter(Boolean);
+  const mergedClauses = [];
+  for (const part of clauses) {
+    const isFraction = /^(نص|نصف|ربع|تمن|تلاته ترباع)$/.test(normalizeArabic(part));
+    if (isFraction && mergedClauses.length) {
+      mergedClauses[mergedClauses.length - 1] = `${mergedClauses[mergedClauses.length - 1]} \u0648\u0646\u0635`;
+    } else {
+      mergedClauses.push(part);
+    }
+  }
+  const lines = [];
+  const clarifications = [];
+  for (const clause of mergedClauses) {
+    const cleaned = cleanClause(clause);
+    if (!cleaned || cleaned.length < 2) continue;
+    if (NON_PRODUCT_WORDS.some((w) => cleaned.includes(normalizeArabic(w))) && cleaned.length <= 14) continue;
+    if (/داك|داكا|ديك|الحاجه دي|الشي دا|خمسه من داك/.test(cleaned)) {
+      clarifications.push({
+        phrase: clause,
+        reason: "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641 \u0645\u0628\u0647\u0645 \u2014 \u0642\u0644 \u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641 \u0646\u0641\u0633\u0647.",
+        suggestions: products.slice(0, 4)
+      });
+      continue;
+    }
+    const { product, confidence } = matchProduct(cleaned, products);
+    if (!product) {
+      if (cleaned.length > 2) {
+        clarifications.push({
+          phrase: clause,
+          reason: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u062E\u0632\u0648\u0646\u0643 \u0623\u0648 \u0627\u0644\u0627\u0633\u0645 \u063A\u064A\u0631 \u0648\u0627\u0636\u062D.",
+          suggestions: products.slice(0, 4)
+        });
+      }
+      continue;
+    }
+    const { quantity } = parseQuantity(cleaned);
+    const spokenUnit = findUnitInText(cleaned);
+    const baseUnit = resolveProductBaseUnit(product.unit);
+    const unit = spokenUnit || baseUnit;
+    const priced = priceForUnit(product.sellingPriceSdg, product.unit, unit.id, quantity);
+    if (!priced.ok) {
+      clarifications.push({
+        phrase: clause,
+        reason: `\u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB \u0645\u0633\u0639\u0651\u0631 \u0628\u0640${baseUnit.nameAr}\u060C \u0641\u0645\u0627 \u064A\u0646\u0641\u0639 \u0646\u0628\u064A\u0639\u0647 \u0628\u0640${unit.nameAr} \u0628\u062F\u0648\u0646 \u0633\u0639\u0631 \u0645\u062E\u0635\u0635.`,
+        suggestions: [product]
+      });
+      continue;
+    }
+    lines.push({
+      product,
+      spokenName: cleaned,
+      quantity,
+      unitId: unit.id,
+      unitName: unit.symbolAr,
+      unitPrice: priced.unitPrice,
+      confidence,
+      note: priced.explanation
+    });
+  }
+  const total = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
+  const summary = lines.length ? `\u062A\u0645 \u0627\u0644\u062A\u0639\u0631\u0641 \u0639\u0644\u0649 ${lines.length} \u0635\u0646\u0641 \u0628\u0625\u062C\u0645\u0627\u0644\u064A ${Math.round(total).toLocaleString()} \u062C.\u0633${discountAmount || discountPercent ? ` (\u062E\u0635\u0645 ${discountAmount || `${discountPercent}%`})` : ""}` : "\u0645\u0627 \u062A\u0639\u0631\u0651\u0641\u0646\u0627 \u0639\u0644\u0649 \u0623\u064A \u0635\u0646\u0641 \u2014 \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629 \u0623\u0648 \u0627\u062E\u062A\u0631 \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u064A\u062F\u0648\u064A\u0627\u064B.";
+  return {
+    lines,
+    clarifications,
+    paymentMethod,
+    discountAmount,
+    discountPercent,
+    customerName,
+    summary,
+    normalizedText
+  };
+}
+
 // src/server/rates.ts
 var SOURCE_URL = "https://www.alsoug.com/currency";
 var SOURCE_NAME = "\u0633\u0648\u0642 \u0627\u0644\u0633\u0648\u062F\u0627\u0646 (alsoug.com)";
@@ -5180,10 +5563,11 @@ apiRouter.post("/employees", requireTenant, (req, res) => {
       error: `\u0648\u0635\u0644\u062A \u0644\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 \u0644\u0644\u0645\u0648\u0638\u0641\u064A\u0646 \u0641\u064A \u0628\u0627\u0642\u062A\u0643 (${plan.maxEmployees} \u0645\u0648\u0638\u0641). \u064A\u0631\u062C\u0649 \u062A\u0631\u0642\u064A\u0629 \u0627\u0634\u062A\u0631\u0627\u0643\u0643.`
     });
   }
-  const { name, email, phone, role, pin, branchId, maxDiscountPct } = req.body;
+  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions } = req.body;
   if (!name || !role) {
     return res.status(400).json({ error: "\u0627\u0644\u0627\u0633\u0645 \u0648\u0627\u0644\u0645\u0633\u0645\u0649 \u0627\u0644\u0648\u0638\u064A\u0641\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
   }
+  const pinClean = String(pin || "").replace(/\D/g, "").slice(0, 6);
   const newEmployee = {
     id: newId("emp"),
     tenantId: authReq.tenantId,
@@ -5192,8 +5576,8 @@ apiRouter.post("/employees", requireTenant, (req, res) => {
     email: email || "",
     phone: phone || "",
     role,
-    pin: pin || "0000",
-    permissions: role === "owner" ? ["all"] : ["pos:sell", "inventory:view"],
+    pin: pinClean.length >= 4 ? pinClean : "0000",
+    permissions: Array.isArray(permissions) && permissions.length ? permissions.map(String) : role === "owner" ? ["all"] : ["pos:sell", "inventory:view"],
     maxDiscountPct: Number(maxDiscountPct) || 10,
     isActive: true,
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -5210,6 +5594,64 @@ apiRouter.post("/employees", requireTenant, (req, res) => {
     details: `\u0625\u0636\u0627\u0641\u0629 \u0645\u0648\u0638\u0641 \u062C\u062F\u064A\u062F: ${name} \u0628\u062F\u0642\u0629 \u062F\u0648\u0631: ${role}`
   });
   res.json({ success: true, employee: newEmployee });
+});
+apiRouter.put("/employees/:id", requireTenant, (req, res) => {
+  const authReq = req;
+  const emp = db.getSchema().employees.find(
+    (e) => e.id === req.params.id && e.tenantId === authReq.tenantId
+  );
+  if (!emp) return res.status(404).json({ error: "\u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, isActive } = req.body || {};
+  if (typeof name === "string" && name.trim()) emp.name = name.trim();
+  if (typeof email === "string") emp.email = email;
+  if (typeof phone === "string") emp.phone = phone;
+  if (typeof role === "string" && role) emp.role = role;
+  if (typeof branchId === "string") emp.branchId = branchId || void 0;
+  if (maxDiscountPct !== void 0) emp.maxDiscountPct = Number(maxDiscountPct) || 0;
+  if (typeof isActive === "boolean") emp.isActive = isActive;
+  if (Array.isArray(permissions)) emp.permissions = permissions.map(String);
+  if (typeof pin === "string") {
+    const pinClean = pin.replace(/\D/g, "").slice(0, 6);
+    if (pinClean.length >= 4) emp.pin = pinClean;
+  }
+  db.commit();
+  db.logAudit({
+    tenantId: authReq.tenantId,
+    actorId: authReq.actorId,
+    actorName: authReq.actorName,
+    action: "UPDATE_EMPLOYEE",
+    entity: "Employee",
+    entityId: emp.id,
+    details: `\u062A\u0639\u062F\u064A\u0644 \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0648\u0638\u0641: ${emp.name}`
+  });
+  res.json({ success: true, employee: emp });
+});
+apiRouter.delete("/employees/:id", requireTenant, (req, res) => {
+  const authReq = req;
+  const list2 = db.getSchema().employees;
+  const idx = list2.findIndex((e) => e.id === req.params.id && e.tenantId === authReq.tenantId);
+  if (idx < 0) return res.status(404).json({ error: "\u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+  const emp = list2[idx];
+  if (emp.role === "owner") {
+    const otherOwners = list2.filter(
+      (e) => e.tenantId === authReq.tenantId && e.role === "owner" && e.id !== emp.id
+    );
+    if (otherOwners.length === 0) {
+      return res.status(400).json({ error: "\u0645\u0627 \u064A\u0646\u0641\u0639 \u062A\u062D\u0630\u0641 \u0627\u0644\u0645\u0627\u0644\u0643 \u0627\u0644\u0648\u062D\u064A\u062F \u0644\u0644\u0645\u062A\u062C\u0631" });
+    }
+  }
+  list2.splice(idx, 1);
+  db.commit();
+  db.logAudit({
+    tenantId: authReq.tenantId,
+    actorId: authReq.actorId,
+    actorName: authReq.actorName,
+    action: "DELETE_EMPLOYEE",
+    entity: "Employee",
+    entityId: emp.id,
+    details: `\u062D\u0630\u0641 \u0627\u0644\u0645\u0648\u0638\u0641: ${emp.name}`
+  });
+  res.json({ success: true });
 });
 apiRouter.get("/products", requireTenant, (req, res) => {
   const authReq = req;
@@ -7240,6 +7682,18 @@ apiRouter.delete("/promotions/:id", requireTenant, (req, res) => {
   res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0639\u0631\u0636 \u0627\u0644\u062A\u0631\u0648\u064A\u062C\u064A" });
 });
 var GEMINI_KEY = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
+var parseSaleHits = /* @__PURE__ */ new Map();
+function allowParseSale(tenantId, max = 20, windowMs = 6e4) {
+  const now = Date.now();
+  const rec = parseSaleHits.get(tenantId);
+  if (!rec || now - rec.t > windowMs) {
+    parseSaleHits.set(tenantId, { n: 1, t: now });
+    return true;
+  }
+  if (rec.n >= max) return false;
+  rec.n += 1;
+  return true;
+}
 var ASSISTANT_MODELS = [
   process.env.GEMINI_MODEL,
   // `flash-latest` always points at the newest stable flash model
@@ -7352,6 +7806,120 @@ async function geminiGenerate(opts) {
 }
 var SOURCE_ALIASES_PRIMARY = /alsoug|سوق\s*السودان|البديل/i;
 var SOURCE_ALIASES_BACKUP = /أخبار\s*السودان|اخبار\s*السودان|سودان\s*أخبار|sudanakhbar/i;
+apiRouter.post("/ai/parse-sale", requireTenant, async (req, res) => {
+  const authReq = req;
+  if (!allowParseSale(authReq.tenantId)) {
+    return res.status(429).json({ error: "\u062A\u062C\u0627\u0648\u0632\u062A \u062D\u062F \u0637\u0644\u0628\u0627\u062A \u0627\u0644\u062A\u062D\u0644\u064A\u0644 \u2014 \u0627\u0646\u062A\u0638\u0631 \u062F\u0642\u064A\u0642\u0629 \u0648\u062C\u0631\u0651\u0628 \u062A\u0627\u0646\u064A." });
+  }
+  const speechText = String((req.body || {}).speechText || "").trim();
+  if (!speechText) return res.status(400).json({ error: "\u0646\u0635 \u0627\u0644\u0628\u064A\u0639 \u0645\u0637\u0644\u0648\u0628" });
+  if (speechText.length > 800) return res.status(400).json({ error: "\u0627\u0644\u0646\u0635 \u0637\u0648\u064A\u0644 \u0632\u064A\u0627\u062F\u0629" });
+  const products = db.getProducts(authReq.tenantId).filter((p) => p.isActive !== false);
+  const local = parseSudaneseSale(speechText, products);
+  const pack = (source, parsed) => ({
+    source,
+    lines: parsed.lines.map((l) => ({
+      productId: l.product?.id || null,
+      productName: l.product?.name || l.spokenName,
+      quantity: l.quantity,
+      unit: l.unitName,
+      unitId: l.unitId,
+      unitPrice: l.unitPrice,
+      confidence: l.confidence,
+      notes: l.note
+    })),
+    clarifications: parsed.clarifications.map((c) => ({
+      phrase: c.phrase,
+      reason: c.reason,
+      suggestions: (c.suggestions || []).map((p) => p.name)
+    })),
+    paymentMethod: parsed.paymentMethod,
+    discountAmount: parsed.discountAmount,
+    discountPercent: parsed.discountPercent,
+    customerName: parsed.customerName,
+    summary: parsed.summary
+  });
+  const needsAi = local.lines.length === 0 || local.clarifications.length > 0;
+  if (!needsAi || !GEMINI_KEY()) {
+    return res.json(pack(local.lines.length ? "rule_engine" : "rule_engine_empty", local));
+  }
+  try {
+    const inventorySummary = products.slice(0, 80).map((p) => ({
+      id: p.id,
+      name: p.name,
+      unit: p.unit,
+      price: p.sellingPriceSdg,
+      sku: p.sku,
+      barcode: p.barcode,
+      category: p.category
+    }));
+    const prompt = `\u0623\u0646\u062A \u062E\u0628\u064A\u0631 \u0645\u062D\u0627\u0633\u0628\u064A \u064A\u0641\u0647\u0645 \u0627\u0644\u0644\u0647\u062C\u0629 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\u064A\u0629 \u0641\u064A \u0627\u0644\u062F\u0643\u0627\u0643\u064A\u0646.
+\u062D\u0644\u0651\u0644 \u0637\u0644\u0628 \u0627\u0644\u0628\u064A\u0639 \u0648\u0637\u0627\u0628\u0642\u0647 \u0645\u0639 \u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u0641\u0642\u0637. \u0644\u0627 \u062A\u062E\u062A\u0631\u0639 \u0623\u0633\u0639\u0627\u0631\u0627\u064B \u0648\u0644\u0627 \u0623\u0635\u0646\u0627\u0641\u0627\u064B \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629.
+\u0627\u0644\u0631\u0637\u0644 = 450 \u062C\u0645. \u0627\u0644\u062C\u0648\u0627\u0644 = 50 \u0643\u062C\u0645. \u0627\u0644\u062F\u0633\u062A\u0629 = 12 \u062D\u0628\u0629. \u0627\u0644\u062C\u0631\u0643\u0627\u0646\u0629 = 4 \u0644\u062A\u0631. \u0627\u0644\u0623\u0648\u0642\u064A\u0629 = 37.5 \u062C\u0645.
+
+\u0646\u0635 \u0627\u0644\u062A\u0627\u062C\u0631: "${speechText.replace(/"/g, "\xAB")}"
+
+\u0627\u0644\u0645\u062E\u0632\u0648\u0646:
+${JSON.stringify(inventorySummary)}
+
+\u0623\u0631\u062C\u0639 JSON \u062D\u0635\u0631\u0627\u064B \u0628\u0627\u0644\u0634\u0643\u0644:
+{"recognizedItems":[{"productId":"id \u0623\u0648 null","productName":"...","quantity":1,"unit":"\u0643\u064A\u0644\u0648","confidence":0.9,"notes":"..."}],"clarificationNeeded":[{"originalPhrase":"...","reason":"...","possibleMatches":["..."]}],"discountAmount":0,"discountPercent":0,"customerName":null,"paymentMethod":"cash"}`;
+    const ai = await geminiGenerate({
+      models: ASSISTANT_MODELS,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      temperature: 0.1,
+      maxTokens: 1200,
+      timeoutMs: 12e3
+    });
+    if (!ai.text) return res.json(pack("rule_engine_after_error", local));
+    let parsedJson = {};
+    try {
+      parsedJson = JSON.parse(ai.text);
+    } catch {
+      const fenced = ai.text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+      parsedJson = JSON.parse(fenced);
+    }
+    const items = Array.isArray(parsedJson.recognizedItems) ? parsedJson.recognizedItems : [];
+    const merged = { ...local, lines: [...local.lines], clarifications: [...local.clarifications] };
+    const seen = new Set(merged.lines.map((l) => l.product?.id).filter(Boolean));
+    for (const it of items) {
+      const product = products.find((p) => p.id === it.productId) || products.find((p) => p.name === it.productName);
+      if (!product || seen.has(product.id)) continue;
+      const qty = Number(it.quantity) || 1;
+      const spokenUnit = findUnitInText(String(it.unit || "")) || resolveProductBaseUnit(product.unit);
+      const priced = priceForUnit(product.sellingPriceSdg, product.unit, spokenUnit.id, qty);
+      if (!priced.ok) continue;
+      seen.add(product.id);
+      merged.lines.push({
+        product,
+        spokenName: String(it.productName || product.name),
+        quantity: qty,
+        unitId: spokenUnit.id,
+        unitName: spokenUnit.symbolAr,
+        unitPrice: priced.unitPrice,
+        confidence: Number(it.confidence) || 0.8,
+        note: priced.explanation
+      });
+    }
+    if (Array.isArray(parsedJson.clarificationNeeded)) {
+      for (const c of parsedJson.clarificationNeeded) {
+        merged.clarifications.push({
+          phrase: String(c.originalPhrase || ""),
+          reason: String(c.reason || "\u063A\u064A\u0631 \u0648\u0627\u0636\u062D"),
+          suggestions: products.filter((p) => (c.possibleMatches || []).includes(p.name)).slice(0, 4)
+        });
+      }
+    }
+    if (parsedJson.paymentMethod) merged.paymentMethod = parsedJson.paymentMethod;
+    if (Number(parsedJson.discountAmount)) merged.discountAmount = Number(parsedJson.discountAmount);
+    if (Number(parsedJson.discountPercent)) merged.discountPercent = Number(parsedJson.discountPercent);
+    if (parsedJson.customerName) merged.customerName = String(parsedJson.customerName);
+    return res.json(pack("gemini_ai", merged));
+  } catch (err) {
+    console.error("parse-sale gemini", err);
+    return res.json(pack("rule_engine_after_error", local));
+  }
+});
 apiRouter.post("/assistant/chat", async (req, res) => {
   const { message, mode, context, history } = req.body || {};
   if (!message || typeof message !== "string" || !message.trim()) {

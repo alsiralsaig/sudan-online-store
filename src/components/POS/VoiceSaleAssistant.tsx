@@ -3,6 +3,7 @@ import { Mic, MicOff, X, CheckCircle2, AlertTriangle, Sparkles, Plus, Minus, Key
 import type { Product } from '../../types/index.ts';
 import { parseSudaneseSale, type ParsedLine } from '../../lib/sudaneseSpeech.ts';
 import { priceForUnit, unitsForProduct } from '../../lib/sudaneseUnits.ts';
+import { api } from '../../lib/api.ts';
 
 /**
  * البيع بالصوت — اللهجة السودانية.
@@ -46,24 +47,75 @@ export const VoiceSaleAssistant: React.FC<VoiceSaleAssistantProps> = ({
   const [summary, setSummary] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [sourceLabel, setSourceLabel] = useState('');
   const recognitionRef = useRef<any>(null);
 
   // الحقول المطابقة للوحدات المتاحة لكل سطر
   const unitOptionsFor = (product: Product) => unitsForProduct(product.unit);
 
-  const analyze = (text: string) => {
+  const analyze = async (text: string) => {
     const value = (text || '').trim();
     if (!value) {
       setError('اكتب أو قُول جملة البيع أولاً.');
       return;
     }
     setError(null);
-    const result = parseSudaneseSale(value, products);
-    setLines(
-      result.lines.map((l, i) => ({ ...l, key: `${l.product?.id || 'x'}-${i}-${Date.now()}` }))
-    );
-    setClarifications(result.clarifications);
-    setSummary(result.summary);
+    setBusy(true);
+    try {
+      const result = parseSudaneseSale(value, products);
+      let linesOut = result.lines;
+      let clarOut = result.clarifications;
+      let summaryOut = result.summary;
+      let source = 'محرك اللهجة المحلي (بدون إنترنت)';
+
+      const needsAi = result.lines.length === 0 || result.clarifications.length > 0;
+      if (needsAi) {
+        try {
+          const ai = await api.parseSaleVoice(value);
+          if (ai.lines?.length) {
+            const mapped: ParsedLine[] = [];
+            for (const row of ai.lines) {
+              const product = products.find((p) => p.id === row.productId) || products.find((p) => p.name === row.productName);
+              if (!product) continue;
+              mapped.push({
+                product,
+                spokenName: row.productName,
+                quantity: row.quantity,
+                unitId: row.unitId || 'piece',
+                unitName: row.unit,
+                unitPrice: row.unitPrice,
+                confidence: row.confidence,
+                note: row.notes,
+              });
+            }
+            if (mapped.length) {
+              linesOut = mapped;
+              source = ai.source === 'gemini_ai' ? 'ذكاء اصطناعي + قواعد سودانية' : 'محرك اللهجة على الخادم';
+            }
+            if (ai.clarifications?.length) {
+              clarOut = ai.clarifications.map((c) => ({
+                phrase: c.phrase,
+                reason: c.reason,
+                suggestions: products.filter((p) => c.suggestions.includes(p.name)).slice(0, 4),
+              }));
+            } else {
+              clarOut = [];
+            }
+            if (ai.summary) summaryOut = ai.summary;
+          }
+        } catch {
+          /* نبقى على المحرك المحلي */
+        }
+      }
+
+      setLines(linesOut.map((l, i) => ({ ...l, key: `${l.product?.id || 'x'}-${i}-${Date.now()}` })));
+      setClarifications(clarOut);
+      setSummary(summaryOut);
+      setSourceLabel(source);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const startListening = () => {
@@ -215,7 +267,7 @@ export const VoiceSaleAssistant: React.FC<VoiceSaleAssistantProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-black leading-tight">البيع بالصوت — باللهجة السودانية</h3>
-              <p className="text-[10px] text-slate-400">يشتغل بدون إنترنت · الأسعار من مخزونك فقط</p>
+              <p className="text-[10px] text-slate-400">قواعد سودانية أولاً · Gemini للجمل الصعبة · الأسعار من مخزونك</p>
             </div>
           </div>
           <button
@@ -295,9 +347,10 @@ export const VoiceSaleAssistant: React.FC<VoiceSaleAssistantProps> = ({
                 </div>
                 <button
                   onClick={() => analyze(draftText)}
-                  className="w-full rounded-xl bg-emerald-700 py-2.5 text-xs font-black text-white hover:bg-emerald-800"
+                  disabled={busy}
+                  className="w-full rounded-xl bg-emerald-700 py-2.5 text-xs font-black text-white hover:bg-emerald-800 disabled:opacity-60"
                 >
-                  حلّل الجملة
+                  {busy ? 'جاري التحليل…' : 'حلّل الجملة'}
                 </button>
               </div>
             )}
@@ -305,6 +358,9 @@ export const VoiceSaleAssistant: React.FC<VoiceSaleAssistantProps> = ({
 
           {error && (
             <p className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-900">{error}</p>
+          )}
+          {sourceLabel && (
+            <p className="text-[10px] font-bold text-emerald-700">{sourceLabel}</p>
           )}
 
           {/* السطور المتعرَّف عليها */}

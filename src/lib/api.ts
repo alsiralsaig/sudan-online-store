@@ -216,6 +216,46 @@ class ApiClient {
     });
   }
 
+  public async updateEmployee(
+    id: string,
+    payload: Partial<Employee>
+  ): Promise<{ success: boolean; employee: Employee }> {
+    return this.request(`/employees/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteEmployee(id: string): Promise<{ success: boolean }> {
+    return this.request(`/employees/${id}`, { method: 'DELETE' });
+  }
+
+  /** تحليل جملة بيع باللهجة السودانية على الخادم (قواعد ثم Gemini) */
+  public async parseSaleVoice(speechText: string): Promise<{
+    source: string;
+    lines: {
+      productId: string | null;
+      productName: string;
+      quantity: number;
+      unit: string;
+      unitId?: string;
+      unitPrice: number;
+      confidence: number;
+      notes: string;
+    }[];
+    clarifications: { phrase: string; reason: string; suggestions: string[] }[];
+    paymentMethod: string;
+    discountAmount: number;
+    discountPercent: number;
+    customerName: string | null;
+    summary: string;
+  }> {
+    return this.request('/ai/parse-sale', {
+      method: 'POST',
+      body: JSON.stringify({ speechText }),
+    });
+  }
+
   /* Products & Inventory with Offline Fallback */
   public async getProducts(): Promise<{ products: Product[] }> {
     if (this.isOffline()) {
