@@ -21,6 +21,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
+import { waHref } from '../../lib/contact.ts';
 import type { AlbandarListing, AlbandarShowroom } from '../../types/index.ts';
 
 /**
@@ -147,8 +148,7 @@ export const ClientMarketBrowseView: React.FC<Props> = ({
       ? 'إعلانات المتاجر والمعارض الموثّقة'
       : `${visible.length} إعلاناً في هذا القسم`;
 
-  const waLink = (phone: string, text: string): string =>
-    `https://wa.me/${(phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
+  const waLink = (phone: string, text: string): string => waHref(phone, text);
 
   return (
     <div className="pb-24 bg-slate-50 min-h-screen" dir="rtl">

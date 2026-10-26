@@ -73,14 +73,32 @@ export const SANAD_SOCIALS: SocialChannel[] = [
   },
 ];
 
+/**
+ * رقم واتساب بصيغة wa.me (بدون +).
+ * 0114537190 أو 0913009060 → 249114537190 / 249913009060
+ * الرقم الدولي الجاهز 249… يبقى كما هو.
+ */
+export function toWaDigits(phone: string): string {
+  let d = String(phone || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.startsWith('249') && d.length >= 12) return d;
+  if (d.startsWith('0')) d = d.slice(1);
+  if (d.length <= 9) return `249${d}`;
+  return d;
+}
+
 /** tel: link for a phone number. */
-export const telHref = (raw: string): string => `tel:+${raw}`;
+export const telHref = (raw: string): string => {
+  const d = toWaDigits(raw);
+  return d ? `tel:+${d}` : 'tel:';
+};
 
 /** WhatsApp chat link, optionally with a ready-made Arabic greeting. */
 export const waHref = (
   raw: string,
   message = 'مرحباً بفريق منصة سند، عندي استفسار.'
-): string => `https://wa.me/${raw}?text=${encodeURIComponent(message)}`;
+): string => `https://wa.me/${toWaDigits(raw)}?text=${encodeURIComponent(message)}`;
 
 /** mailto: link with a subject line. */
 export const mailHref = (address: string, subject = 'استفسار عبر منصة سند'): string =>

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { StorefrontOrder, Branch } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
+import { waHref } from '../../lib/contact.ts';
 
 interface ClientOrderTrackerProps {
   branches: Branch[];
@@ -311,9 +312,10 @@ export const ClientOrderTracker: React.FC<ClientOrderTrackerProps> = ({
                     {br.phone && (
                       <div className="pt-1">
                         <a
-                          href={`https://wa.me/${br.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                          href={waHref(
+                            br.phone,
                             `مرحباً، أستفسر عن طلبي رقم: ${selectedOrder.orderNumber}`
-                          )}`}
+                          )}
                           target="_blank"
                           rel="noreferrer"
                           className="w-full py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg flex items-center justify-center gap-1.5 transition-colors"

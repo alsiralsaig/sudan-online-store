@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import type { AlbandarListing, AlbandarShowroom, Product, Tenant, Branch } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
+import { toWaDigits, waHref } from '../../lib/contact.ts';
 
 interface AlbandarMarketViewProps {
   tenant: Tenant | null;
@@ -156,7 +157,7 @@ export const AlbandarMarketView: React.FC<AlbandarMarketViewProps> = ({
 
   // Generate WhatsApp Direct Link
   const getWhatsAppLink = (item: AlbandarListing) => {
-    const cleanPhone = item.sellerWhatsapp.replace(/\D/g, '');
+    const cleanPhone = toWaDigits(item.sellerWhatsapp || item.sellerPhone || '');
     const message = encodeURIComponent(
       `السلام عليكم ورحمة الله، استفسار بخصوص إعلانك في سوق البندر: «${item.title}» المعروض بسعر ${item.priceSdg.toLocaleString()} ج.س في مدينة ${item.city}. هل ما زال العرض متاحاً للمعاينة؟`
     );
@@ -692,9 +693,10 @@ export const AlbandarMarketView: React.FC<AlbandarMarketViewProps> = ({
 
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
                     <a
-                      href={`https://wa.me/${shw.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(
+                      href={waHref(
+                        shw.whatsapp || shw.phone,
                         `السلام عليكم، استفسار من خلال دليل معارض سوق البندر عن خدمات ومعروضات: ${shw.name}`
-                      )}`}
+                      )}
                       target="_blank"
                       rel="noreferrer"
                       className="flex items-center justify-center gap-1.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"

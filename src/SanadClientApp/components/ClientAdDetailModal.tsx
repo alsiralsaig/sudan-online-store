@@ -12,6 +12,7 @@ import {
   Check,
 } from 'lucide-react';
 import type { ClientMarketAd } from '../types.ts';
+import { telHref, waHref } from '../../lib/contact.ts';
 
 interface ClientAdDetailModalProps {
   ad: ClientMarketAd | null;
@@ -51,7 +52,7 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
     }
   };
 
-  const whatsappPhone = (ad.whatsapp || ad.phone || '249912345678').replace(/[^0-9]/g, '');
+  const chatPhone = ad.whatsapp || ad.phone || '';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
@@ -170,9 +171,7 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
         {/* Footer Actions */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center gap-2.5">
           <a
-            href={`https://wa.me/${whatsappPhone}?text=${encodeURIComponent(
-              `مرحباً، أستفسر عن إعلانك في منصة سند: ${ad.title}`
-            )}`}
+            href={waHref(chatPhone, `مرحباً، أستفسر عن إعلانك في منصة سند: ${ad.title}`)}
             target="_blank"
             rel="noreferrer"
             className="flex-1 py-3 bg-[#25D366] hover:bg-[#20ba5a] text-slate-950 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-xs"
@@ -183,7 +182,7 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
 
           {ad.phone && (
             <a
-              href={`tel:${ad.phone}`}
+              href={telHref(ad.phone)}
               className="py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
             >
               <Phone className="w-4 h-4 text-emerald-400" />

@@ -17,6 +17,7 @@ import {
   Check,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
+import { waHref } from '../../lib/contact.ts';
 
 type Status = 'pending' | 'approved' | 'rejected';
 
@@ -51,11 +52,7 @@ const statusChip: Record<Status, { label: string; className: string }> = {
   rejected: { label: 'مرفوض', className: 'bg-red-500/15 text-red-400 border-red-500/30' },
 };
 
-/** «+249» prefixed WhatsApp link so the admin can deliver the code in one tap. */
-const whatsappLink = (phone: string, message: string) => {
-  const digits = phone.replace(/\D/g, '').replace(/^0+/, '');
-  return `https://wa.me/249${digits}?text=${encodeURIComponent(message)}`;
-};
+const whatsappLink = (phone: string, message: string) => waHref(phone, message);
 
 export const TenantApplicationsAdminView: React.FC = () => {
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
