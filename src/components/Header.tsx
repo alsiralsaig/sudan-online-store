@@ -101,15 +101,17 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="border-b border-slate-800 bg-slate-950 sticky top-0 z-40 text-slate-100">
       {/* Top Bar Contract: 3 Zones */}
-      <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-6 px-4 sm:px-6 py-3.5 min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-6 px-4 sm:px-6 py-3.5 min-w-0 overflow-visible">
         {/* Zone 1: Sanad Logo Brand Wordmark */}
-        <div className="flex items-center gap-3 shrink-0">
-          <SanadLogo size="sm" variant="full" theme="dark" onClick={() => onTabChange('welcome')} />
-          <div className="flex flex-col border-r border-slate-700 pr-3 mr-2 min-w-0 max-w-[70vw] sm:max-w-xs">
-            <span className="text-[11px] sm:text-xs font-black text-white leading-tight break-words text-right">
+        <div className="flex items-start gap-2 min-w-0 flex-1 basis-full sm:basis-auto">
+          <div className="shrink-0">
+            <SanadLogo size="sm" variant="compact" theme="dark" onClick={() => onTabChange('welcome')} />
+          </div>
+          <div className="flex flex-col border-r border-slate-700 pr-3 min-w-0 flex-1">
+            <span className="text-[11px] sm:text-xs font-black text-white leading-snug break-words [overflow-wrap:anywhere] text-right">
               {tenantName}
             </span>
-            <span className="text-[10px] sm:text-[11px] text-slate-400 leading-tight text-right">
+            <span className="text-[10px] sm:text-[11px] text-slate-400 leading-snug text-right">
               {branchName}
             </span>
           </div>
