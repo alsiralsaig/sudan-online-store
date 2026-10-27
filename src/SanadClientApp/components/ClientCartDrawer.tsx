@@ -626,21 +626,32 @@ export const ClientCartDrawer: React.FC<ClientCartDrawerProps> = ({
                 {/* Bankak Instructions */}
                 {form.paymentMethod === 'bankak' && (
                   <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2 text-xs">
-                    <div className="flex items-center justify-between text-emerald-900">
-                      <span>حساب بنكك للمتجر:</span>
-                      <strong className="font-mono text-sm bg-white px-2 py-0.5 rounded border border-emerald-300">
-                        {tenant?.settings?.bankakAccount || '1982736'}
-                      </strong>
-                    </div>
-                    <div className="text-[11px] text-emerald-800">
-                      اسم الحساب: <strong>{tenant?.settings?.bankakAccountName || 'مؤسسة الرواد التجارية'}</strong>
-                    </div>
+                    {tenant?.settings?.bankakAccount ? (
+                      <>
+                        <div className="flex items-center justify-between text-emerald-900">
+                          <span>حساب بنكك للمتجر — حوّل عليه:</span>
+                          <strong className="font-mono text-sm bg-white px-2 py-0.5 rounded border border-emerald-300" dir="ltr">
+                            {tenant.settings.bankakAccount}
+                          </strong>
+                        </div>
+                        {tenant.settings.bankakAccountName && (
+                          <div className="text-[11px] text-emerald-800">
+                            اسم الحساب: <strong>{tenant.settings.bankakAccountName}</strong>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-emerald-900">ما في رقم بنكك محفوظ لهذا المتجر.</p>
+                    )}
+                    <p className="text-[11px] text-emerald-800 leading-relaxed">
+                      بعد التحويل اكتب رقم العملية من تطبيق بنكك (اختياري للتدقيق).
+                    </p>
                     <div>
                       <input
                         type="text"
                         value={form.bankakRef}
                         onChange={(e) => setForm({ ...form, bankakRef: e.target.value })}
-                        placeholder="أدخل رقم العملية أو إشعار التحويل (اختياري الآن)..."
+                        placeholder="رقم العملية من إشعار بنكك"
                         className="w-full px-3 py-1.5 text-xs bg-white border border-emerald-200 rounded-lg focus:outline-none"
                       />
                     </div>

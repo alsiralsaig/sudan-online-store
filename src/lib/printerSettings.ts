@@ -1,15 +1,16 @@
-import type { ThermalReceiptSettings, PosPrinterSettings } from '../types/index.ts';
+import type { ThermalReceiptSettings, PosPrinterSettings, Tenant, Branch } from '../types/index.ts';
 
+/** قيم شكل الفاتورة فقط — من غير اسم شركة تجريبية */
 export const DEFAULT_RECEIPT_SETTINGS: ThermalReceiptSettings = {
-  storeName: 'شركة الرواد للتجارة والمحاصيل المحدودة',
-  storeSubtitle: 'فرع بورتسودان الرئيسي - السوق الكبير',
-  phone: '0912345678 / 0123456789',
-  address: 'بورتسودان، شارع الجمهورية، عمارة الأوقاف',
-  taxNumber: '1004892348',
-  commercialRegister: 'CR-SD-884920',
+  storeName: '',
+  storeSubtitle: '',
+  phone: '',
+  address: '',
+  taxNumber: '',
+  commercialRegister: '',
   logoUrl: '',
   footerMessage: 'شكراً لزيارتكم! البضاعة المباعة ترد وتستبدل خلال 3 أيام بموجب الفاتورة',
-  secondaryFooter: 'سند لنقاط البيع السحابية · حساب بنكك: 2498765 · www.sanad.sd',
+  secondaryFooter: '',
   defaultTemplate: '80mm',
   showQrCode: true,
   showCashierName: true,
@@ -22,6 +23,13 @@ export const DEFAULT_RECEIPT_SETTINGS: ThermalReceiptSettings = {
   pricesIncludeVat: false,
   showLoyaltyPoints: true,
 };
+
+function receiptBelongsToTenant(saved: ThermalReceiptSettings, tenantId?: string): boolean {
+  if (!tenantId) return false;
+  const tagged = (saved as ThermalReceiptSettings & { tenantId?: string }).tenantId;
+  if (tagged && tagged !== tenantId) return false;
+  return true;
+}
 
 export const DEFAULT_PRINTER_SETTINGS: PosPrinterSettings = {
   printerType: 'browser',
@@ -36,25 +44,86 @@ export const DEFAULT_PRINTER_SETTINGS: PosPrinterSettings = {
 const RECEIPT_KEY = 'sanad_thermal_receipt_settings';
 const PRINTER_KEY = 'sanad_pos_printer_settings';
 
-export function getThermalReceiptSettings(): ThermalReceiptSettings {
+function receiptStorageKey(tenantId?: string): string {
+  return tenantId ? `${RECEIPT_KEY}:${tenantId}` : RECEIPT_KEY;
+}
+
+export function getThermalReceiptSettings(tenantId?: string): ThermalReceiptSettings {
   try {
-    const raw = localStorage.getItem(RECEIPT_KEY);
+    // متجر معيّن يقرأ مفتاحه بس — ما نرجع لإعدادات متجر تاني.
+    const raw = localStorage.getItem(receiptStorageKey(tenantId));
     if (raw) {
-      return { ...DEFAULT_RECEIPT_SETTINGS, ...JSON.parse(raw) };
+      const parsed = { ...DEFAULT_RECEIPT_SETTINGS, ...JSON.parse(raw) } as ThermalReceiptSettings;
+      if (receiptBelongsToTenant(parsed, tenantId)) return parsed;
     }
   } catch (err) {
     console.warn('Error reading receipt settings from localStorage:', err);
   }
-  return DEFAULT_RECEIPT_SETTINGS;
+  return { ...DEFAULT_RECEIPT_SETTINGS };
 }
 
-export function saveThermalReceiptSettings(settings: ThermalReceiptSettings): void {
+export function saveThermalReceiptSettings(settings: ThermalReceiptSettings, tenantId?: string): void {
   try {
-    localStorage.setItem(RECEIPT_KEY, JSON.stringify(settings));
+    const payload = tenantId ? { ...settings, tenantId } : settings;
+    localStorage.setItem(receiptStorageKey(tenantId), JSON.stringify(payload));
     window.dispatchEvent(new Event('sanad_receipt_settings_updated'));
   } catch (err) {
     console.warn('Error saving receipt settings to localStorage:', err);
   }
+}
+
+/** ترويسة الفاتورة من المتجر الحالي — ما نطبع شركة تانية. */
+export function resolveReceiptSettings(
+  tenant?: Tenant | null,
+  branch?: Branch | null
+): ThermalReceiptSettings {
+  const saved = getThermalReceiptSettings(tenant?.id);
+  const trade = (tenant?.tradeName || tenant?.name || '').trim();
+  const bankak = tenant?.settings?.bankakAccount?.trim();
+  const bankakName = tenant?.settings?.bankakAccountName?.trim();
+  const savedName = (saved.storeName || '').trim();
+  const savedIsThisStore =
+    !!savedName &&
+    !!trade &&
+    (savedName === trade || savedName === (tenant?.name || '').trim());
+
+  if (savedIsThisStore) {
+    return {
+      ...saved,
+      logoUrl: saved.logoUrl || tenant?.logo || '',
+      secondaryFooter: /2498765/.test(saved.secondaryFooter || '')
+        ? [bankak ? `حساب بنكك: ${bankak}` : '', bankakName || ''].filter(Boolean).join(' · ')
+        : saved.secondaryFooter,
+    };
+  }
+
+  const footerBits = [
+    bankak ? `حساب بنكك: ${bankak}` : '',
+    bankakName || '',
+  ].filter(Boolean);
+
+  return {
+    ...saved,
+    storeName: trade || 'المتجر',
+    storeSubtitle: branch?.name || tenant?.city || '',
+    phone: tenant?.phone || branch?.phone || '',
+    address: tenant?.address || branch?.address || '',
+    taxNumber:
+      tenant?.taxNumber ||
+      tenant?.settings?.taxNumber ||
+      tenant?.settings?.taxIdentificationNumber ||
+      '',
+    commercialRegister: tenant?.settings?.commercialRegNo || '',
+    logoUrl: saved.logoUrl || tenant?.logo || '',
+    footerMessage:
+      (tenant?.settings?.receiptFooter || '').split('\n')[0].trim() || saved.footerMessage,
+    secondaryFooter: footerBits.join(' · '),
+    vatEnabled: tenant?.settings?.vatEnabled ?? saved.vatEnabled,
+    defaultVatPct: tenant?.settings?.defaultVatPct ?? saved.defaultVatPct,
+    pricesIncludeVat: tenant?.settings?.pricesIncludeVat ?? saved.pricesIncludeVat,
+    showVatBreakdown: tenant?.settings?.showVatBreakdown ?? saved.showVatBreakdown,
+    showTaxPerItem: tenant?.settings?.showTaxPerItem ?? saved.showTaxPerItem,
+  };
 }
 
 export function getPosPrinterSettings(): PosPrinterSettings {

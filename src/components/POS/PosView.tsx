@@ -44,6 +44,7 @@ import type {
   ThermalReceiptSettings,
   PosPrinterSettings,
   PromotionRule,
+  Tenant,
 } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
 import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
@@ -52,9 +53,9 @@ import { PosPrinterModal } from './PosPrinterModal.tsx';
 import { PosCustomerModal } from './PosCustomerModal.tsx';
 import { VoiceSaleAssistant } from './VoiceSaleAssistant.tsx';
 import {
-  getThermalReceiptSettings,
   getPosPrinterSettings,
   executePosPrint,
+  resolveReceiptSettings,
 } from '../../lib/printerSettings.ts';
 
 interface PosViewProps {
@@ -67,6 +68,7 @@ interface PosViewProps {
   onOpenKitchen?: () => void;
   isOffline: boolean;
   onSaleCompleted: (sale: Sale, isOffline?: boolean) => void;
+  tenant?: Tenant | null;
 }
 
 interface CartItem {
@@ -98,6 +100,7 @@ export const PosView: React.FC<PosViewProps> = ({
   onOpenKitchen,
   isOffline,
   onSaleCompleted,
+  tenant = null,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('الكل');
@@ -127,7 +130,16 @@ export const PosView: React.FC<PosViewProps> = ({
   // Default Printer & Thermal Receipt Settings
   const [isPrinterModalOpen, setIsPrinterModalOpen] = useState(false);
   const [printerSettings, setPrinterSettings] = useState<PosPrinterSettings>(getPosPrinterSettings());
-  const [receiptSettings, setReceiptSettings] = useState<ThermalReceiptSettings>(getThermalReceiptSettings());
+  const [receiptSettings, setReceiptSettings] = useState<ThermalReceiptSettings>(() =>
+    resolveReceiptSettings(tenant, currentBranch)
+  );
+
+  useEffect(() => {
+    const sync = () => setReceiptSettings(resolveReceiptSettings(tenant, currentBranch));
+    sync();
+    window.addEventListener('sanad_receipt_settings_updated', sync);
+    return () => window.removeEventListener('sanad_receipt_settings_updated', sync);
+  }, [tenant, currentBranch]);
 
   // Quick Order item note editing
   const [editingNoteProductId, setEditingNoteProductId] = useState<string | null>(null);
@@ -1518,19 +1530,35 @@ export const PosView: React.FC<PosViewProps> = ({
               {/* Bankak specific inputs */}
               {paymentMethod === 'bankak' && (
                 <div className="space-y-3 bg-red-50/50 p-4 rounded-xl border border-red-200 text-xs">
-                  <div className="flex items-center justify-between pb-2 border-b border-red-100">
-                    <span className="font-semibold text-red-900">حساب بنكك للمنشأة:</span>
-                    <span className="font-mono font-bold text-red-800 text-sm">2498765</span>
-                  </div>
+                  {tenant?.settings?.bankakAccount ? (
+                    <div className="pb-2 border-b border-red-100 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-red-900">رقم حساب بنكك للمتجر — الزبون يحوّل عليه:</span>
+                        <span className="font-mono font-bold text-red-800 text-sm" dir="ltr">
+                          {tenant.settings.bankakAccount}
+                        </span>
+                      </div>
+                      {tenant.settings.bankakAccountName && (
+                        <p className="text-[11px] text-red-800">اسم الحساب: {tenant.settings.bankakAccountName}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-red-800 leading-relaxed">
+                      ما في رقم بنكك محفوظ لهذا المتجر. أضفه من إعدادات المتجر عشان يظهر هنا للزبون.
+                    </p>
+                  )}
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      رقم المعاملة / إشعار التحويل (Bankak Ref):
+                      رقم عملية التحويل من تطبيق بنكك (اختياري)
                     </label>
+                    <p className="text-[11px] text-slate-500 mb-1 leading-relaxed">
+                      بعد ما الزبون يحوّل، يظهر ليه رقم عملية في بنكك. اكتبه هنا عشان تراجع الإيداع بعدين. لو الدفع نقد ما تحتاج الخانة دي.
+                    </p>
                     <input
                       type="text"
                       value={paymentReference}
                       onChange={(e) => setPaymentReference(e.target.value)}
-                      placeholder="مثال: BNK-TXN-884920"
+                      placeholder="رقم العملية من إشعار بنكك"
                       className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg bg-white"
                     />
                   </div>
@@ -1621,7 +1649,7 @@ export const PosView: React.FC<PosViewProps> = ({
               {/* Receipt Header (Customized in Admin) */}
               <div className="text-center border-b border-dashed border-slate-400 pb-2">
                 <h2 className="text-sm font-bold tracking-tight">
-                  {receiptSettings.storeName || 'شركة الرواد للتجارة والمحاصيل'}
+                  {receiptSettings.storeName || tenant?.tradeName || tenant?.name || 'المتجر'}
                 </h2>
                 <p className="text-[11px] text-slate-600">
                   {receiptSettings.storeSubtitle || completedSale.branchName}
@@ -1769,8 +1797,9 @@ export const PosView: React.FC<PosViewProps> = ({
                     dangerouslySetInnerHTML={{
                       __html: generateQrSvg(
                         generateZatcaTlvBase64({
-                          sellerName: receiptSettings.storeName || 'شركة الرواد للتجارة والمحاصيل',
-                          taxNumber: receiptSettings.taxNumber || '1004892348',
+                          sellerName:
+                            receiptSettings.storeName || tenant?.tradeName || tenant?.name || 'المتجر',
+                          taxNumber: receiptSettings.taxNumber || tenant?.taxNumber || '',
                           timestamp: completedSale.createdAt,
                           totalWithVat: completedSale.grandTotalSdg.toString(),
                           vatTotal: '0',

@@ -236,8 +236,10 @@ export default function App() {
       if (brRes.status === 'fulfilled') {
         setBranches(brRes.value.branches);
         const savedBranchId = api.getBranchId();
-        const activeBr = brRes.value.branches.find((b) => b.id === savedBranchId) || brRes.value.branches[0] || null;
+        const activeBr =
+          brRes.value.branches.find((b) => b.id === savedBranchId) || brRes.value.branches[0] || null;
         setCurrentBranch(activeBr);
+        if (activeBr) api.setBranchId(activeBr.id);
       }
 
       if (empRes.status === 'fulfilled') {
@@ -419,6 +421,7 @@ export default function App() {
 
   const handleTenantSwitch = (tenantId: string) => {
     api.setTenantId(tenantId);
+    api.setBranchId('');
     loadPrimaryData();
   };
 
@@ -824,6 +827,7 @@ export default function App() {
             onOpenKitchen={() => setCurrentTab('kitchen')}
             isOffline={isOffline}
             onSaleCompleted={handleSaleCompleted}
+            tenant={tenant}
           />
         )}
 

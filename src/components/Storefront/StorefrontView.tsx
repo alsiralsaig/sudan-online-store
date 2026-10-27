@@ -545,17 +545,24 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
               {/* Bankak Payment Reference Option */}
               <div className="p-3 bg-red-50/60 rounded-xl border border-red-200 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-red-900">سداد عبر بنكك (اختياري / دفع فوري):</span>
-                  <span className="font-mono text-red-800 text-xs">
-                    حساب: {tenant?.settings.bankakAccount || '2498765'}
-                  </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-red-900">سداد عبر بنكك (اختياري):</span>
+                  {tenant?.settings?.bankakAccount ? (
+                    <span className="font-mono text-red-800 text-xs" dir="ltr">
+                      حساب المتجر: {tenant.settings.bankakAccount}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-red-700">ما في حساب بنكك مسجّل للمتجر</span>
+                  )}
                 </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  حوّل على رقم المتجر فوق، وبعدين اكتب رقم العملية الظاهر في تطبيق بنكك.
+                </p>
                 <input
                   type="text"
                   value={bankakRef}
                   onChange={(e) => setBankakRef(e.target.value)}
-                  placeholder="رقم المعاملة / إشعار بنكك إن قمت بالتحويل"
+                  placeholder="رقم العملية من إشعار بنكك"
                   className="w-full px-3 py-1.5 font-mono text-xs border border-slate-300 rounded bg-white"
                 />
               </div>
