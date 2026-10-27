@@ -511,6 +511,17 @@ class ApiClient {
     return this.request('/admin/currency/refresh', { method: 'POST' });
   }
 
+  public async runCurrencyAlertScan(): Promise<{
+    success: boolean;
+    refreshed?: boolean;
+    reason?: string;
+    message: string;
+    moves?: Array<{ code: string; name: string; rate: number; percent: number }>;
+    alerts?: { triggered: any[]; inApp: number };
+  }> {
+    return this.request('/admin/currency/alerts/run', { method: 'POST' });
+  }
+
   public async getCurrencyHistory(): Promise<{ history: CurrencyRateHistory[] }> {
     return this.request('/currencies/history');
   }

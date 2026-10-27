@@ -6860,8 +6860,31 @@ apiRouter.post("/admin/telegram/test", async (_req, res) => {
   res.json({ success: verdict.sent > 0, ...verdict, ...telegramStatus() });
 });
 apiRouter.post("/admin/currency/alerts/run", async (_req, res) => {
-  const result = await checkRateMoves(detectMoves());
-  res.json({ success: true, ...result });
+  const refresh = await refreshLiveRates("\u0641\u062D\u0635 \u064A\u062F\u0648\u064A \u0644\u0644\u062A\u062D\u0631\u0643\u0627\u062A");
+  await db.flush({ lock: false }).catch(() => {
+  });
+  const moves = db.getSchema().currencies.filter((c) => !c.isBase).map((c) => ({
+    code: c.code,
+    name: c.name,
+    rate: c.rateToSdg,
+    percent: typeof c.lastMovePercent === "number" ? c.lastMovePercent : 0
+  }));
+  const big = moves.filter((m) => Math.abs(m.percent) >= THRESHOLD_PERCENT);
+  const alerts = refresh.alerts || { triggered: [], inApp: 0 };
+  let message = `\u0645\u0627 \u0641\u064A \u062A\u062D\u0631\u0643 \u0623\u0643\u0628\u0631 \u0645\u0646 ${THRESHOLD_PERCENT}% \u0645\u0642\u0627\u0631\u0646\u0629 \u0628\u0622\u062E\u0631 \u0633\u0639\u0631 \u0645\u062D\u0641\u0648\u0638.`;
+  if (!refresh.refreshed) {
+    message = "\u062A\u0639\u0630\u0631 \u062C\u0644\u0628 \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0645\u0646 \u0627\u0644\u0645\u0635\u062F\u0631 \u0627\u0644\u0622\u0646. \u062C\u0631\u0651\u0628 \xAB\u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0622\u0646\xBB \u0628\u0639\u062F \u0634\u0648\u064A\u0629.";
+  } else if (big.length) {
+    message = `\u062A\u062D\u0631\u0643 ${big.map((m) => `${m.code} (${m.percent > 0 ? "+" : ""}${m.percent}%)`).join("\u060C ")} \u2014 \u0623\u064F\u0631\u0633\u0644 \u0627\u0644\u062A\u0646\u0628\u064A\u0647.`;
+  }
+  res.json({
+    success: true,
+    refreshed: refresh.refreshed,
+    reason: refresh.reason,
+    moves,
+    alerts,
+    message
+  });
 });
 apiRouter.get("/cron/currency-rates", async (_req, res) => {
   const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u0648\u0645\u064A \u062A\u0644\u0642\u0627\u0626\u064A");

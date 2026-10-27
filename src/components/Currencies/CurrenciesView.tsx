@@ -40,6 +40,8 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
     telegram?: { configured: boolean; chats: number; kinds: string[] };
     recentAlerts: Array<{ id: string; code: string; day: string; percent: number; rate: number }>;
   } | null>(null);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanMsg, setScanMsg] = useState('');
 
   // Quick Currency Converter calculator
   const [calcAmount, setCalcAmount] = useState<string>('100');
@@ -220,20 +222,32 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
                     {alertStatus.recentAlerts[0].percent}%) — {alertStatus.recentAlerts[0].day}
                   </span>
                 )}
+                {scanMsg && (
+                  <span className="block mt-1.5 text-slate-800 font-bold">{scanMsg}</span>
+                )}
               </p>
             </div>
             <button
+              type="button"
+              disabled={scanBusy}
               onClick={async () => {
+                setScanBusy(true);
+                setScanMsg('');
                 try {
-                  await fetch('/api/admin/currency/alerts/run', { method: 'POST' });
-                } catch {
-                  /* ignore */
+                  const res = await api.runCurrencyAlertScan();
+                  setScanMsg(res.message || 'تم الفحص.');
+                  await loadAlertStatus();
+                  await loadLiveRates();
+                  onRefresh();
+                } catch (err) {
+                  setScanMsg((err as Error).message || 'تعذر الفحص. تحقق من الاتصال.');
+                } finally {
+                  setScanBusy(false);
                 }
-                loadAlertStatus();
               }}
-              className="shrink-0 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold hover:bg-amber-100"
+              className="shrink-0 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold hover:bg-amber-100 disabled:opacity-60"
             >
-              فحص التحركات
+              {scanBusy ? 'جاري الفحص…' : 'فحص التحركات'}
             </button>
           </div>
 

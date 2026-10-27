@@ -1822,8 +1822,36 @@ apiRouter.post('/admin/telegram/test', async (_req, res) => {
 
 /** Run the check on demand (used after a manual refresh / for testing). */
 apiRouter.post('/admin/currency/alerts/run', async (_req, res) => {
-  const result = await checkRateMoves(detectMoves());
-  res.json({ success: true, ...result });
+  const refresh = await refreshLiveRates('فحص يدوي للتحركات');
+  await db.flush({ lock: false }).catch(() => {});
+
+  const moves = db
+    .getSchema()
+    .currencies.filter((c) => !c.isBase)
+    .map((c) => ({
+      code: c.code,
+      name: c.name,
+      rate: c.rateToSdg,
+      percent: typeof c.lastMovePercent === 'number' ? c.lastMovePercent : 0,
+    }));
+  const big = moves.filter((m) => Math.abs(m.percent) >= THRESHOLD_PERCENT);
+  const alerts = (refresh as any).alerts || { triggered: [], inApp: 0 };
+
+  let message = `ما في تحرك أكبر من ${THRESHOLD_PERCENT}% مقارنة بآخر سعر محفوظ.`;
+  if (!refresh.refreshed) {
+    message = 'تعذر جلب الأسعار من المصدر الآن. جرّب «تحديث الآن» بعد شوية.';
+  } else if (big.length) {
+    message = `تحرك ${big.map((m) => `${m.code} (${m.percent > 0 ? '+' : ''}${m.percent}%)`).join('، ')} — أُرسل التنبيه.`;
+  }
+
+  res.json({
+    success: true,
+    refreshed: refresh.refreshed,
+    reason: (refresh as any).reason,
+    moves,
+    alerts,
+    message,
+  });
 });
 
 /** Daily cron: keeps the numbers fresh even if nobody opens the page. */
