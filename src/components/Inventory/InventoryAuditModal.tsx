@@ -245,9 +245,9 @@ export const InventoryAuditModal: React.FC<InventoryAuditModalProps> = ({
   };
 
   // Handle Scanning or manual barcode submission
-  const handleBarcodeSubmit = (code: string) => {
+  const handleBarcodeSubmit = async (code: string) => {
     const trimmed = normalizeBarcode(code);
-    if (!trimmed || !activeAudit) return;
+    if (!trimmed || !activeAudit || activeAudit.reconciled) return;
 
     const fromSession = findByBarcodeOrSku(
       activeAudit.items.map((item) => ({
@@ -272,26 +272,65 @@ export const InventoryAuditModal: React.FC<InventoryAuditModalProps> = ({
       setBarcodeInput('');
       setSuccessMessage(`تم مسح: ${targetItem.productName} (الكمية الحالية: ${nextActual})`);
       setTimeout(() => setSuccessMessage(null), 2500);
-    } else if (fromCatalog) {
-      playSound('alert');
-      setErrorMessage(
-        `الصنف «${fromCatalog.name}» موجود في الدليل، بس ما داخل جلسة الجرد دي. ابدأ جرد لكل الأصناف أو نفس التصنيف.`
-      );
-      setTimeout(() => setErrorMessage(null), 4500);
-    } else {
-      playSound('alert');
-      setErrorMessage(`ما لقينا صنف بالباركود ${trimmed} في مخزون المحل ده.`);
-      setTimeout(() => setErrorMessage(null), 3500);
+      return;
     }
+
+    if (fromCatalog) {
+      let systemQty = 0;
+      try {
+        const inv = await api.getInventory(activeAudit.branchId);
+        const row = inv.inventory.find((r) => r.productId === fromCatalog.id);
+        systemQty = row?.quantity ?? 0;
+      } catch {
+        /* نضيفو برصيد صفر لو الجرد ما رجع */
+      }
+      const newItem: InventoryAuditItem = {
+        productId: fromCatalog.id,
+        productName: fromCatalog.name,
+        sku: fromCatalog.sku,
+        barcode: fromCatalog.barcode || trimmed,
+        category: fromCatalog.category || 'عام',
+        unit: fromCatalog.unit || 'حبة',
+        costPrice: fromCatalog.purchaseCost || 0,
+        sellingPrice: fromCatalog.sellingPriceSdg || 0,
+        systemQuantity: systemQty,
+        actualQuantity: 0,
+        difference: 0 - systemQty,
+        differenceCostValue: (0 - systemQty) * (fromCatalog.purchaseCost || 0),
+        status: 'uncounted',
+        notes: 'أُضيف بالمسح أثناء الجرد',
+      };
+      const auditWithItem: InventoryAudit = {
+        ...activeAudit,
+        items: [...activeAudit.items, newItem],
+      };
+      playSound('beep');
+      setFocusedItemId(fromCatalog.id);
+      updateItemCount(fromCatalog.id, 1, newItem.notes, auditWithItem);
+      setBarcodeInput('');
+      setSuccessMessage(`اتضاف للجرد واتعد: ${fromCatalog.name} (1)`);
+      setTimeout(() => setSuccessMessage(null), 2500);
+      return;
+    }
+
+    playSound('alert');
+    setErrorMessage(`ما لقينا صنف بالباركود ${trimmed} في مخزون المحل ده.`);
+    setTimeout(() => setErrorMessage(null), 3500);
   };
 
   // Update item count & discrepancy state
-  const updateItemCount = (productId: string, actualQuantity: number, notes?: string) => {
-    if (!activeAudit || activeAudit.reconciled) return;
+  const updateItemCount = (
+    productId: string,
+    actualQuantity: number,
+    notes?: string,
+    auditBase?: InventoryAudit
+  ) => {
+    const base = auditBase || activeAudit;
+    if (!base || base.reconciled) return;
 
     const safeQty = Math.max(0, Number(actualQuantity) || 0);
 
-    const updatedItems = activeAudit.items.map((item) => {
+    const updatedItems = base.items.map((item) => {
       if (item.productId === productId) {
         const diff = safeQty - item.systemQuantity;
         const diffCost = diff * item.costPrice;
@@ -332,7 +371,7 @@ export const InventoryAuditModal: React.FC<InventoryAuditModalProps> = ({
     }
 
     const updatedAudit: InventoryAudit = {
-      ...activeAudit,
+      ...base,
       items: updatedItems,
       totalProductsCount,
       countedProductsCount,
