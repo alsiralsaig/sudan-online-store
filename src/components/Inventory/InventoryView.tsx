@@ -24,6 +24,8 @@ import {
   Image as ImageIcon,
   Video,
   Loader2,
+  Copy,
+  Check,
 } from 'lucide-react';
 import type { Product, Branch, BranchInventory, StockMovement } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
@@ -114,6 +116,33 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [copiedBarcode, setCopiedBarcode] = useState<string | null>(null);
+
+  const copyRealBarcode = async (code: string, e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    const value = (code || '').trim();
+    if (!value) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedBarcode(value);
+      window.setTimeout(() => setCopiedBarcode((cur) => (cur === value ? null : cur)), 1600);
+    } catch {
+      setMsg({ type: 'error', text: 'ما قدرنا ننسخ الباركود — جرّب تاني' });
+    }
+  };
 
   // Load Inventory data
   const loadData = async () => {
@@ -616,7 +645,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <tr>
                   <th className="py-3 px-4">الصورة / الصنف</th>
                   <th className="py-3 px-4">التصنيف والوحدة</th>
-                  <th className="py-3 px-4">الباركود / SKU</th>
+                  <th className="py-3 px-4">الباركود (اضغط للنسخ)</th>
                   {canViewCogs && <th className="py-3 px-4">سعر التكلفة</th>}
                   <th className="py-3 px-4">سعر البيع (ج.س)</th>
                   <th className="py-3 px-4">الرصيد المتاح</th>
@@ -687,8 +716,29 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       </td>
 
                       <td className="py-3 px-4 font-mono text-slate-600">
-                        <div>{product.barcode}</div>
-                        <div className="text-[10px] text-slate-400">{product.sku}</div>
+                        {product.barcode ? (
+                          <button
+                            type="button"
+                            onClick={(e) => copyRealBarcode(product.barcode, e)}
+                            title="نسخ الباركود"
+                            className="group flex items-center gap-1.5 text-right max-w-full"
+                          >
+                            <span className="font-mono font-bold text-slate-900 select-all break-all" dir="ltr">
+                              {product.barcode}
+                            </span>
+                            {copiedBarcode === product.barcode ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 shrink-0" />
+                            )}
+                          </button>
+                        ) : (
+                          <span className="text-slate-400">ما في باركود</span>
+                        )}
+                        {copiedBarcode === product.barcode && (
+                          <div className="text-[10px] text-emerald-700 font-sans font-bold">تم نسخ الباركود</div>
+                        )}
+                        <div className="text-[10px] text-slate-400 select-none">{product.sku}</div>
                       </td>
 
                       {canViewCogs && (
