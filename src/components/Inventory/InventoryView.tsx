@@ -24,6 +24,7 @@ import {
   Image as ImageIcon,
   Video,
   Loader2,
+  Camera,
 } from 'lucide-react';
 import type { Product, Branch, BranchInventory, StockMovement } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
@@ -1032,27 +1033,44 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">صورة الصنف:</label>
-                  <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-400 bg-slate-50 px-2 py-3 cursor-pointer min-h-[7.5rem]">
-                    {newImageUrl ? (
-                      <img src={newImageUrl} alt="" className="max-h-24 w-full object-contain rounded-lg" />
-                    ) : mediaBusy === 'image' ? (
+                  {newImageUrl ? (
+                    <img src={newImageUrl} alt="" className="max-h-24 w-full object-contain rounded-lg border border-slate-700 mb-1.5" />
+                  ) : mediaBusy === 'image' ? (
+                    <div className="flex items-center justify-center min-h-[5rem]">
                       <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-                    ) : (
-                      <>
-                        <ImageIcon className="w-6 h-6 text-emerald-600" />
-                        <span className="font-bold text-slate-700">اختر صورة</span>
-                      </>
-                    )}
-                    <input
-                      type="file"
-                      accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp"
-                      className="hidden"
-                      onChange={(e) => {
-                        pickProductImage(e.target.files?.[0] || null);
-                        e.target.value = '';
-                      }}
-                    />
-                  </label>
+                    </div>
+                  ) : null}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <label className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed border-emerald-500/50 bg-emerald-500/10 px-1 py-2 cursor-pointer min-h-[4.5rem]">
+                      <Camera className="w-5 h-5 text-emerald-400" />
+                      <span className="font-bold text-slate-100 text-[11px]">تصوير</span>
+                      <span className="text-[9px] text-slate-400">كاميرا مباشرة</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(e) => {
+                          pickProductImage(e.target.files?.[0] || null);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    <label className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed border-slate-400 bg-slate-50 px-1 py-2 cursor-pointer min-h-[4.5rem]">
+                      <ImageIcon className="w-5 h-5 text-emerald-600" />
+                      <span className="font-bold text-slate-700 text-[11px]">الاستوديو</span>
+                      <span className="text-[9px] text-slate-500">من المعرض فقط</span>
+                      <input
+                        type="file"
+                        accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          pickProductImage(e.target.files?.[0] || null);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
                   {newImageUrl && (
                     <button type="button" onClick={() => setNewImageUrl('')} className="mt-1 text-[10px] text-rose-600 font-bold">
                       حذف الصورة
