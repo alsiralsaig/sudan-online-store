@@ -44,6 +44,7 @@ import type {
   InventoryDiscrepancyStatus,
 } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
+import { barcodesMatch, findByBarcodeOrSku, normalizeBarcode } from '../../lib/barcodeMatch.ts';
 
 interface InventoryAuditModalProps {
   isOpen: boolean;
@@ -245,30 +246,42 @@ export const InventoryAuditModal: React.FC<InventoryAuditModalProps> = ({
 
   // Handle Scanning or manual barcode submission
   const handleBarcodeSubmit = (code: string) => {
-    const trimmed = code.trim();
+    const trimmed = normalizeBarcode(code);
     if (!trimmed || !activeAudit) return;
 
-    // Find item in activeAudit by barcode or sku or exact name match
-    const targetItem = activeAudit.items.find(
-      (item) =>
-        item.barcode?.toLowerCase() === trimmed.toLowerCase() ||
-        item.sku?.toLowerCase() === trimmed.toLowerCase() ||
-        item.productName.toLowerCase().includes(trimmed.toLowerCase())
+    const fromSession = findByBarcodeOrSku(
+      activeAudit.items.map((item) => ({
+        ...item,
+        name: item.productName,
+      })),
+      trimmed
     );
+    const fromCatalog = findByBarcodeOrSku(products, trimmed);
+    const targetItem =
+      (fromSession && activeAudit.items.find((i) => i.productId === fromSession.productId)) ||
+      (fromCatalog && activeAudit.items.find((i) => i.productId === fromCatalog.id)) ||
+      activeAudit.items.find(
+        (item) => barcodesMatch(item.barcode, trimmed) || normalizeBarcode(item.sku) === trimmed
+      );
 
     if (targetItem) {
       playSound('beep');
       setFocusedItemId(targetItem.productId);
-      // Automatically increment actualQuantity by 1 and mark as counted
       const nextActual = (targetItem.status === 'uncounted' ? 0 : targetItem.actualQuantity) + 1;
       updateItemCount(targetItem.productId, nextActual);
       setBarcodeInput('');
       setSuccessMessage(`تم مسح: ${targetItem.productName} (الكمية الحالية: ${nextActual})`);
       setTimeout(() => setSuccessMessage(null), 2500);
+    } else if (fromCatalog) {
+      playSound('alert');
+      setErrorMessage(
+        `الصنف «${fromCatalog.name}» موجود في الدليل، بس ما داخل جلسة الجرد دي. ابدأ جرد لكل الأصناف أو نفس التصنيف.`
+      );
+      setTimeout(() => setErrorMessage(null), 4500);
     } else {
       playSound('alert');
-      setErrorMessage(`لم يتم العثور على صنف بالباركود/الكود: "${trimmed}" في هذه الجلسة`);
-      setTimeout(() => setErrorMessage(null), 3000);
+      setErrorMessage(`ما لقينا صنف بالباركود ${trimmed} في مخزون المحل ده.`);
+      setTimeout(() => setErrorMessage(null), 3500);
     }
   };
 

@@ -110,3 +110,44 @@
   color: #f8fafc;
   border-color: #334155;
 }
+.merchant-shell .text-slate-700,
+.merchant-shell .text-slate-600,
+.merchant-shell main .text-slate-700,
+.merchant-shell main .text-slate-600 {
+  color: #e2e8f0;
+}
+.merchant-shell .text-slate-500,
+.merchant-shell main .text-slate-500 {
+  color: #cbd5e1;
+}
+.merchant-shell .text-slate-400,
+.merchant-shell main .text-slate-400 {
+  color: #94a3b8;
+}
+.merchant-shell .text-emerald-800,
+.merchant-shell .text-emerald-700,
+.merchant-shell .text-emerald-600 {
+  color: #34d399;
+}
+.merchant-shell .text-amber-800,
+.merchant-shell .text-amber-700 {
+  color: #fbbf24;
+}
+.merchant-shell .text-rose-700,
+.merchant-shell .text-rose-600 {
+  color: #fb7185;
+}
+.merchant-shell input::placeholder,
+.merchant-shell textarea::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+.merchant-shell main button.bg-slate-100 {
+  background-color: #334155;
+  color: #f8fafc;
+  border: 1px solid #475569;
+}
+.merchant-shell main thead,
+.merchant-shell main th {
+  color: #e2e8f0;
+}

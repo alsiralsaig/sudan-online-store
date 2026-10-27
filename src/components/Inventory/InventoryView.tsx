@@ -934,7 +934,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     type="text"
                     value={newBarcode}
                     onChange={(e) => setNewBarcode(e.target.value)}
-                    placeholder="امسح أو اترك للتوليد التلقائي"
+                    placeholder="امسح الباركود أو اتركه فاضي يتولد"
                     className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
                   />
                 </div>

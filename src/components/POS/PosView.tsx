@@ -50,6 +50,7 @@ import { api } from '../../lib/api.ts';
 import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
 import { CameraBarcodeScanner } from './CameraBarcodeScanner.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
+import { findByBarcodeOrSku } from '../../lib/barcodeMatch.ts';
 import { PosPrinterModal } from './PosPrinterModal.tsx';
 import { PosCustomerModal } from './PosCustomerModal.tsx';
 import { VoiceSaleAssistant } from './VoiceSaleAssistant.tsx';
@@ -293,9 +294,7 @@ export const PosView: React.FC<PosViewProps> = ({
     if (!cleanCode) return false;
 
     // Search product by barcode or SKU
-    const found = products.find(
-      (p) => p.barcode === cleanCode || p.sku.toLowerCase() === cleanCode.toLowerCase()
-    );
+    const found = findByBarcodeOrSku(products, cleanCode);
 
     if (found) {
       addToCart(found);
