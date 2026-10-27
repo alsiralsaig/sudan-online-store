@@ -105,11 +105,11 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Zone 1: Sanad Logo Brand Wordmark */}
         <div className="flex items-center gap-3 shrink-0">
           <SanadLogo size="sm" variant="full" theme="dark" onClick={() => onTabChange('welcome')} />
-          <div className="flex flex-col border-r border-slate-700 pr-3 mr-1 min-w-0">
-            <span className="text-[11px] sm:text-xs font-black text-white whitespace-nowrap truncate max-w-[38vw] sm:max-w-none">
+          <div className="flex flex-col border-r border-slate-700 pr-3 mr-2 min-w-0 max-w-[70vw] sm:max-w-xs">
+            <span className="text-[11px] sm:text-xs font-black text-white leading-tight break-words text-right">
               {tenantName}
             </span>
-            <span className="text-[10px] sm:text-[11px] text-slate-400 whitespace-nowrap truncate">
+            <span className="text-[10px] sm:text-[11px] text-slate-400 leading-tight text-right">
               {branchName}
             </span>
           </div>
