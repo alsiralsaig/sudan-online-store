@@ -26,3 +26,26 @@ export function findByBarcodeOrSku<T extends { barcode?: string; sku?: string; n
     items.find((it) => (it.name || '').trim() === scanned.trim())
   );
 }
+
+export function looksLikeBarcode(raw?: string | null): boolean {
+  const q = normalizeBarcode(raw);
+  return q.length >= 8 && /^\d+$/.test(q);
+}
+
+export function productMatchesSearch(
+  product: { name?: string; sku?: string; barcode?: string; category?: string },
+  query: string
+): boolean {
+  const q = (query || '').trim();
+  if (!q) return true;
+  const nq = q.toLowerCase();
+  if ((product.name || '').toLowerCase().includes(nq)) return true;
+  if ((product.category || '').toLowerCase().includes(nq)) return true;
+  if ((product.sku || '').toLowerCase().includes(nq)) return true;
+  if ((product.barcode || '').includes(q)) return true;
+  return barcodesMatch(product.barcode, q) || normalizeBarcode(product.sku) === normalizeBarcode(q);
+}
+
+export function pastedBarcode(raw: string): string {
+  return normalizeBarcode(raw);
+}

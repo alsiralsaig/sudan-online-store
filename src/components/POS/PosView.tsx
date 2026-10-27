@@ -50,7 +50,7 @@ import { api } from '../../lib/api.ts';
 import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
 import { CameraBarcodeScanner } from './CameraBarcodeScanner.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
-import { findByBarcodeOrSku } from '../../lib/barcodeMatch.ts';
+import { findByBarcodeOrSku, looksLikeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
 import { PosPrinterModal } from './PosPrinterModal.tsx';
 import { PosCustomerModal } from './PosCustomerModal.tsx';
 import { VoiceSaleAssistant } from './VoiceSaleAssistant.tsx';
@@ -420,10 +420,7 @@ export const PosView: React.FC<PosViewProps> = ({
   // Filter products
   const filteredProducts = products.filter((p) => {
     const matchesCategory = selectedCategory === 'الكل' || p.category === selectedCategory;
-    const matchesSearch =
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.barcode.includes(searchQuery) ||
-      p.sku.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = productMatchesSearch(p, searchQuery);
     return matchesCategory && matchesSearch && p.isActive;
   });
 
@@ -944,10 +941,23 @@ export const PosView: React.FC<PosViewProps> = ({
             <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="ابحث باسم المنتج، الكود، أو التصنيف..."
+              inputMode="search"
+              enterKeyHint="search"
+              autoCapitalize="off"
+              autoCorrect="off"
+              autoComplete="off"
+              placeholder="الصق الباركود أو ابحث بالاسم"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pr-10 pl-4 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm"
+              onPaste={(e) => {
+                const text = e.clipboardData.getData('text');
+                const cleaned = pastedBarcode(text) || text.trim();
+                if (!cleaned) return;
+                e.preventDefault();
+                setSearchQuery(cleaned);
+              }}
+              dir={looksLikeBarcode(searchQuery) ? 'ltr' : 'rtl'}
+              className="w-full pr-10 pl-4 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm font-mono"
             />
           </div>
 
@@ -957,9 +967,20 @@ export const PosView: React.FC<PosViewProps> = ({
               <input
                 id="pos-barcode-field"
                 type="text"
-                placeholder="إدخال رقم الباركود يدوياً..."
+                inputMode="numeric"
+                autoCapitalize="off"
+                autoCorrect="off"
+                placeholder="الصق الباركود هنا"
                 value={barcodeInput}
                 onChange={(e) => setBarcodeInput(e.target.value)}
+                onPaste={(e) => {
+                  const text = e.clipboardData.getData('text');
+                  const cleaned = pastedBarcode(text) || text.trim();
+                  if (!cleaned) return;
+                  e.preventDefault();
+                  setBarcodeInput(cleaned);
+                }}
+                dir="ltr"
                 className="w-full pr-9 pl-9 py-2.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono shadow-sm"
               />
               <button

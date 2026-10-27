@@ -29,6 +29,7 @@ import type { Product, Branch, BranchInventory, StockMovement } from '../../type
 import { api } from '../../lib/api.ts';
 import { InventoryAuditModal } from './InventoryAuditModal.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
+import { looksLikeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
 import { uploadProductImage, uploadProductVideo, PRODUCT_VIDEO_MAX_SECONDS } from '../../lib/uploadProductMedia.ts';
 
 interface InventoryViewProps {
@@ -168,10 +169,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   // Filtered rows
   const productStockRows = totalStockRows.filter((row) => {
-    const matchesSearch =
-      row.product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      row.product.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      row.product.barcode.includes(searchQuery);
+    const matchesSearch = productMatchesSearch(row.product, searchQuery);
     const matchesCategory = selectedCategory === 'الكل' || row.product.category === selectedCategory;
 
     let matchesFilter = true;
@@ -574,14 +572,27 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
 
         {/* Search */}
-        <div className="relative w-full md:w-72">
+        <div className="relative w-full md:w-80">
           <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="بحث بالاسم أو الباركود..."
+            inputMode="search"
+            enterKeyHint="search"
+            autoCapitalize="off"
+            autoCorrect="off"
+            autoComplete="off"
+            placeholder="الصق الباركود أو ابحث بالاسم"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pr-9 pl-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            onPaste={(e) => {
+              const text = e.clipboardData.getData('text');
+              const cleaned = pastedBarcode(text) || text.trim();
+              if (!cleaned) return;
+              e.preventDefault();
+              setSearchQuery(cleaned);
+            }}
+            dir={looksLikeBarcode(searchQuery) ? 'ltr' : 'rtl'}
+            className="w-full pr-9 pl-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
           />
         </div>
       </div>
@@ -816,7 +827,20 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 {productStockRows.length === 0 && (
                   <tr>
                     <td colSpan={10} className="py-12 text-center text-slate-400">
-                      لا توجد أصناف مطابقة للبحث أو التصفية الحالية.
+                      <p>ما في صنف مطابق للبحث.</p>
+                      {looksLikeBarcode(searchQuery) && canEditPrices && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewBarcode(pastedBarcode(searchQuery));
+                            setIsAddModalOpen(true);
+                          }}
+                          className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold"
+                        >
+                          <Plus className="w-4 h-4" />
+                          أضف الصنف بباركود {pastedBarcode(searchQuery)}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )}
@@ -934,7 +958,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     type="text"
                     value={newBarcode}
                     onChange={(e) => setNewBarcode(e.target.value)}
-                    placeholder="امسح الباركود أو اتركه فاضي يتولد"
+                    onPaste={(e) => {
+                      const text = e.clipboardData.getData('text');
+                      const cleaned = pastedBarcode(text);
+                      if (!cleaned) return;
+                      e.preventDefault();
+                      setNewBarcode(cleaned);
+                    }}
+                    inputMode="numeric"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    dir="ltr"
+                    placeholder="الصق أو امسح الباركود"
                     className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
                   />
                 </div>
