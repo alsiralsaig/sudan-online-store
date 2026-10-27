@@ -24,12 +24,11 @@ import {
   Image as ImageIcon,
   Video,
   Loader2,
-  Copy,
-  Check,
 } from 'lucide-react';
 import type { Product, Branch, BranchInventory, StockMovement } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
 import { InventoryAuditModal } from './InventoryAuditModal.tsx';
+import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
 import { uploadProductImage, uploadProductVideo, PRODUCT_VIDEO_MAX_SECONDS } from '../../lib/uploadProductMedia.ts';
 
 interface InventoryViewProps {
@@ -116,33 +115,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [copiedBarcode, setCopiedBarcode] = useState<string | null>(null);
-
-  const copyRealBarcode = async (code: string, e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
-    const value = (code || '').trim();
-    if (!value) return;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = value;
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-      setCopiedBarcode(value);
-      window.setTimeout(() => setCopiedBarcode((cur) => (cur === value ? null : cur)), 1600);
-    } catch {
-      setMsg({ type: 'error', text: 'ما قدرنا ننسخ الباركود — جرّب تاني' });
-    }
-  };
 
   // Load Inventory data
   const loadData = async () => {
@@ -716,28 +688,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       </td>
 
                       <td className="py-3 px-4 font-mono text-slate-600">
-                        {product.barcode ? (
-                          <button
-                            type="button"
-                            onClick={(e) => copyRealBarcode(product.barcode, e)}
-                            title="نسخ الباركود"
-                            className="group flex items-center gap-1.5 text-right max-w-full"
-                          >
-                            <span className="font-mono font-bold text-slate-900 select-all break-all" dir="ltr">
-                              {product.barcode}
-                            </span>
-                            {copiedBarcode === product.barcode ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 shrink-0" />
-                            )}
-                          </button>
-                        ) : (
-                          <span className="text-slate-400">ما في باركود</span>
-                        )}
-                        {copiedBarcode === product.barcode && (
-                          <div className="text-[10px] text-emerald-700 font-sans font-bold">تم نسخ الباركود</div>
-                        )}
+                        <CopyBarcodeButton code={product.barcode} className="text-slate-900" />
                         <div className="text-[10px] text-slate-400 select-none">{product.sku}</div>
                       </td>
 
@@ -1359,10 +1310,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                             <h4 className="font-bold text-xs text-slate-900 truncate">{prod.name}</h4>
                             <AlertCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
                           </div>
-                          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono mt-0.5">
-                            <span>{prod.category}</span>
-                            <span>·</span>
-                            <span>{prod.sku}</span>
+                          <div className="mt-0.5">
+                            <CopyBarcodeButton code={prod.barcode} compact className="text-slate-800" />
                           </div>
                         </div>
                       </div>

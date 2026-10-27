@@ -49,6 +49,7 @@ import type {
 import { api } from '../../lib/api.ts';
 import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
 import { CameraBarcodeScanner } from './CameraBarcodeScanner.tsx';
+import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
 import { PosPrinterModal } from './PosPrinterModal.tsx';
 import { PosCustomerModal } from './PosCustomerModal.tsx';
 import { VoiceSaleAssistant } from './VoiceSaleAssistant.tsx';
@@ -903,37 +904,38 @@ export const PosView: React.FC<PosViewProps> = ({
               </button>
             )}
 
-            {/* Quick Simulation Buttons for Demo / Testing */}
-            <div className="hidden xl:flex items-center gap-1 bg-slate-800/80 p-0.5 rounded-lg border border-slate-700">
-              <span className="text-[10px] text-slate-400 px-1 font-semibold flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                <span>تجربة:</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => simulateHardwareScan('628100123001')}
-                className="px-1.5 py-0.5 text-[10px] bg-slate-700 hover:bg-emerald-600 text-white rounded transition-colors"
-                title="محاكاة مسح باركود: سكر كنانة"
-              >
-                سكر
-              </button>
-              <button
-                type="button"
-                onClick={() => simulateHardwareScan('628100123002')}
-                className="px-1.5 py-0.5 text-[10px] bg-slate-700 hover:bg-emerald-600 text-white rounded transition-colors"
-                title="محاكاة مسح باركود: زيت صباح"
-              >
-                زيت
-              </button>
-              <button
-                type="button"
-                onClick={() => simulateHardwareScan('628100123004')}
-                className="px-1.5 py-0.5 text-[10px] bg-slate-700 hover:bg-emerald-600 text-white rounded transition-colors"
-                title="محاكاة مسح باركود: شاي الغزالتين"
-              >
-                شاي
-              </button>
-            </div>
+            {tenant?.id === 'tenant_alrowad' && (
+              <div className="hidden xl:flex items-center gap-1 bg-slate-800/80 p-0.5 rounded-lg border border-slate-700">
+                <span className="text-[10px] text-slate-400 px-1 font-semibold flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <span>تجربة:</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => simulateHardwareScan('628100123001')}
+                  className="px-1.5 py-0.5 text-[10px] bg-slate-700 hover:bg-emerald-600 text-white rounded transition-colors"
+                  title="محاكاة مسح باركود: سكر كنانة"
+                >
+                  سكر
+                </button>
+                <button
+                  type="button"
+                  onClick={() => simulateHardwareScan('628100123002')}
+                  className="px-1.5 py-0.5 text-[10px] bg-slate-700 hover:bg-emerald-600 text-white rounded transition-colors"
+                  title="محاكاة مسح باركود: زيت صباح"
+                >
+                  زيت
+                </button>
+                <button
+                  type="button"
+                  onClick={() => simulateHardwareScan('628100123004')}
+                  className="px-1.5 py-0.5 text-[10px] bg-slate-700 hover:bg-emerald-600 text-white rounded transition-colors"
+                  title="محاكاة مسح باركود: شاي الغزالتين"
+                >
+                  شاي
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1026,11 +1028,11 @@ export const PosView: React.FC<PosViewProps> = ({
                 <h4 className="text-xs font-semibold text-slate-900 line-clamp-2 leading-snug mb-1">
                   {prod.name}
                 </h4>
-                <div className="flex items-center justify-between mt-1">
+                <div className="flex items-center justify-between gap-1 mt-1">
                   <span className="text-xs font-bold text-emerald-700 font-mono tabular-nums">
                     {prod.sellingPriceSdg.toLocaleString()} ج.س
                   </span>
-                  <span className="text-[11px] text-slate-500 font-mono">{prod.sku}</span>
+                  <CopyBarcodeButton code={prod.barcode} compact className="text-slate-700" />
                 </div>
               </div>
             </div>
