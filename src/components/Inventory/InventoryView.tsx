@@ -30,6 +30,7 @@ import type { Product, Branch, BranchInventory, StockMovement } from '../../type
 import { api } from '../../lib/api.ts';
 import { InventoryAuditModal } from './InventoryAuditModal.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
+import { LiveCameraSheet } from '../Common/LiveCameraSheet.tsx';
 import { looksLikeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
 import { uploadProductImage, uploadProductVideo, PRODUCT_VIDEO_MAX_SECONDS } from '../../lib/uploadProductMedia.ts';
 
@@ -104,6 +105,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newVideoUrl, setNewVideoUrl] = useState('');
   const [mediaBusy, setMediaBusy] = useState<null | 'image' | 'video'>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [liveCameraOpen, setLiveCameraOpen] = useState(false);
 
   // Adjust Stock Modal
   const [adjustingProduct, setAdjustingProduct] = useState<{
@@ -1041,21 +1043,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     </div>
                   ) : null}
                   <div className="grid grid-cols-2 gap-1.5">
-                    <label className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed border-emerald-500/50 bg-emerald-500/10 px-1 py-2 cursor-pointer min-h-[4.5rem]">
+                    <button
+                      type="button"
+                      onClick={() => setLiveCameraOpen(true)}
+                      className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed border-emerald-500/50 bg-emerald-500/10 px-1 py-2 min-h-[4.5rem]"
+                    >
                       <Camera className="w-5 h-5 text-emerald-400" />
                       <span className="font-bold text-slate-100 text-[11px]">تصوير</span>
                       <span className="text-[9px] text-slate-400">كاميرا مباشرة</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        className="hidden"
-                        onChange={(e) => {
-                          pickProductImage(e.target.files?.[0] || null);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
+                    </button>
                     <label className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed border-slate-400 bg-slate-50 px-1 py-2 cursor-pointer min-h-[4.5rem]">
                       <ImageIcon className="w-5 h-5 text-emerald-600" />
                       <span className="font-bold text-slate-700 text-[11px]">الاستوديو</span>
@@ -1654,6 +1650,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           onRefresh();
         }}
       />
+      {liveCameraOpen && (
+        <LiveCameraSheet
+          onClose={() => setLiveCameraOpen(false)}
+          onCapture={(file) => {
+            setLiveCameraOpen(false);
+            void pickProductImage(file);
+          }}
+        />
+      )}
     </div>
   );
 };
