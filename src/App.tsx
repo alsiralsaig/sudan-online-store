@@ -375,19 +375,31 @@ export default function App() {
     loadPrimaryData();
   };
 
-  // Role Switcher for easy testing
-  const handleActorSwitch = (newRole: string) => {
-    const found = employees.find((e) => e.role === newRole);
-    let newActor = found
-      ? { id: found.id, name: found.name, role: found.role }
-      : { id: 'emp_owner_rowad', name: ownerDisplayName, role: 'owner' };
-    if (!found) {
-      if (newRole === 'cashier') newActor = { id: 'emp_cashier_kht', name: 'كاشير', role: 'cashier' };
-      else if (newRole === 'branch_manager') newActor = { id: 'emp_mgr_kht', name: 'مدير فرع', role: 'branch_manager' };
-      else if (newRole === 'accountant') newActor = { id: 'emp_accountant_rowad', name: 'محاسب', role: 'accountant' };
-      else if (newRole === 'super_admin') newActor = { id: 'saas_admin', name: 'مدير المنصة المركزي', role: 'super_admin' };
-      else if (newRole === 'owner') newActor = { id: 'emp_owner_rowad', name: ownerDisplayName, role: 'owner' };
+  const roleLabel = (role: string) => {
+    switch (role) {
+      case 'owner':
+        return 'المالك';
+      case 'branch_manager':
+        return 'مدير فرع';
+      case 'cashier':
+        return 'كاشير';
+      case 'inventory_officer':
+        return 'مسؤول مخزون';
+      case 'accountant':
+        return 'محاسب';
+      default:
+        return 'موظف';
     }
+  };
+
+  const visibleEmployees = employees.filter(
+    (e) => e.isActive !== false && e.role !== 'super_admin'
+  );
+
+  const handleActorSwitch = (employeeId: string) => {
+    const found = visibleEmployees.find((e) => e.id === employeeId);
+    if (!found) return;
+    const newActor = { id: found.id, name: found.name, role: found.role };
     setActor(newActor);
     api.setActor(newActor);
   };
@@ -763,17 +775,20 @@ export default function App() {
             <Users className="w-3.5 h-3.5 text-blue-400" />
             <span className="font-semibold text-white">دور المستخدم (RBAC):</span>
             <select
-              value={actor.role}
+              value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''}
               onChange={(e) => handleActorSwitch(e.target.value)}
-              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-0.5 text-[11px] focus:outline-none font-semibold"
+              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-1 text-[11px] focus:outline-none font-semibold max-w-[70vw] sm:max-w-xs"
             >
-              <option value="owner">
-                المالك ({ownerDisplayName} - صلاحيات كاملة)
-              </option>
-              <option value="branch_manager">مدير فرع (عثمان عبد الرحيم)</option>
-              <option value="cashier">كاشير نقاط البيع (محمد عبد الله)</option>
-              <option value="accountant">محاسب مالي (سارة مصطفى)</option>
-              <option value="super_admin">مدير المنصة المركزي (SaaS Super Admin)</option>
+              {visibleEmployees.length === 0 ? (
+                <option value="">{ownerDisplayName || 'المالك'}</option>
+              ) : (
+                visibleEmployees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {roleLabel(e.role)} ({e.name}
+                    {e.role === 'owner' ? ' - صلاحيات كاملة' : ''})
+                  </option>
+                ))
+              )}
             </select>
           </div>
         </div>
