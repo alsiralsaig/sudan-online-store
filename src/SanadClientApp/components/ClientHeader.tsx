@@ -196,10 +196,10 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
             className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-2 text-[11px] sm:text-xs font-black rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 active:scale-98 transition-all shadow-2xs whitespace-nowrap"
             title="طلب فتح متجر على منصة سند"
           >
-            <Store className="w-4 h-4 text-emerald-700" />
+            <Store className="w-4 h-4 text-sky-600" />
             <span>طلب متجر</span>
           </button>
-          <ThemeSwitcher compact />
+          <div className="hidden sm:flex"><ThemeSwitcher compact /></div>
 
           {/* Cart Trigger */}
           <button
@@ -230,6 +230,11 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
           onSearchChange={onSearchChange}
           onSelectProduct={onSelectProduct}
         />
+      </div>
+
+      {/* متبدّل الثيم — ظاهر دائماً على الجوال */}
+      <div className="sm:hidden px-4 py-1.5 bg-white border-b border-slate-100 flex justify-center">
+        <ThemeSwitcher compact />
       </div>
 
       {/* Navigation Tabs Bar */}

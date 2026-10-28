@@ -187,6 +187,20 @@
   color: #e2e8f0;
 }
 
+/* المنصة الرئيسية — نفس نظام التاجر */
+[data-theme="light"] .super-admin-shell { background: #f8fafc !important; color: #0f172a !important; }
+[data-theme="medium"] .super-admin-shell { background: #e0f2fe !important; color: #0c4a6e !important; }
+[data-theme="light"] .super-hero { background: #ffffff !important; border-color: #bae6fd !important; }
+[data-theme="light"] .super-hero h1 { color: #0c4a6e !important; }
+[data-theme="light"] .super-hero p, [data-theme="light"] .super-hero span.text-slate-400 { color: #475569 !important; }
+[data-theme="medium"] .super-hero { background: #f0f9ff !important; border-color: #7dd3fc !important; }
+[data-theme="medium"] .super-hero h1 { color: #0c4a6e !important; }
+[data-theme="medium"] .super-hero p { color: #334155 !important; }
+[data-theme="light"] .app-mode-bar { background: #ffffff !important; border-color: #e0f2fe !important; color: #0f172a !important; }
+[data-theme="light"] .app-mode-bar .bg-slate-900 { background: #f1f5f9 !important; border-color: #e2e8f0 !important; }
+[data-theme="medium"] .app-mode-bar { background: #f0f9ff !important; border-color: #bae6fd !important; color: #0c4a6e !important; }
+[data-theme="medium"] .app-mode-bar .bg-slate-900 { background: #e0f2fe !important; border-color: #7dd3fc !important; }
+
 /* شريط السياق (الكتلة المحددة في الصورة) — نهاري: سماوي+أبيض */
 [data-theme="light"] .theme-context-bar {
   background: #ffffff !important;

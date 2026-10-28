@@ -482,7 +482,7 @@ export default function App() {
     if (!adminAuthed) return <AdminLogin onSuccess={() => { setAdminAuthed(true); }} />;
     return (
       <PullToRefresh theme="dark">
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans antialiased select-none" dir="rtl">
+      <div className="super-admin-shell min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans antialiased select-none" dir="rtl">
         <InAppAlertBanner app="admin" />
         <SanadAppModeBar
           currentApp="super_admin"
@@ -490,7 +490,7 @@ export default function App() {
         />
         <div className="flex-1 p-4 sm:p-6 overflow-auto">
           <div className="max-w-7xl mx-auto space-y-6">
-            <div className="bg-slate-950 p-6 rounded-3xl border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="super-hero bg-slate-950 p-6 rounded-3xl border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
               <div className="space-y-1 text-right">
                 <span className="px-3 py-1 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-full text-xs font-bold font-mono">
                   SaaS Platform Super Admin
