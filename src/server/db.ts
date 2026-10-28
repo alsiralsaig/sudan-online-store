@@ -2746,7 +2746,7 @@ class Database {
 
   public syncInventoryAlerts(tenantId: string): InventoryAlert[] {
     if (!this.data.inventoryAlerts) this.data.inventoryAlerts = [];
-    const tenantProducts = this.getProducts(tenantId);
+    const tenantProducts = this.getProducts(tenantId).filter((p) => p.isActive !== false);
     const tenantBranches = this.getBranches(tenantId);
 
     for (const br of tenantBranches) {

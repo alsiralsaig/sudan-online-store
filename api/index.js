@@ -694,6 +694,61 @@ async function barcodeLookupHandler(req, res) {
   return res.json({ found: false });
 }
 
+// src/lib/staffPermissions.ts
+var PERM_DEFS = [
+  { key: "view_profits", label: "\u0627\u0644\u0627\u0637\u0644\u0627\u0639 \u0639\u0644\u0649 \u0635\u0627\u0641\u064A \u0627\u0644\u0623\u0631\u0628\u0627\u062D" },
+  { key: "view_cogs", label: "\u062A\u0643\u0644\u0641\u0629 \u0627\u0644\u0634\u0631\u0627\u0621 (COGS)" },
+  { key: "edit_prices", label: "\u062A\u0639\u062F\u064A\u0644 \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A" },
+  { key: "process_returns", label: "\u0625\u0631\u062C\u0627\u0639 \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631" },
+  { key: "override_stock", label: "\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u0628\u0627\u0644\u0633\u0627\u0644\u0628" },
+  { key: "manage_staff", label: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u0648\u0638\u0641\u064A\u0646" },
+  { key: "view_audit", label: "\u0633\u062C\u0644 \u0627\u0644\u062A\u062F\u0642\u064A\u0642" }
+];
+function defaultPermissions(role) {
+  switch (role) {
+    case "owner":
+    case "super_admin":
+      return ["all", ...PERM_DEFS.map((p) => p.key), "pos:sell", "inventory:view"];
+    case "branch_manager":
+      return ["pos:sell", "inventory:view", "edit_prices", "process_returns", "manage_staff", "view_audit"];
+    case "cashier":
+      return ["pos:sell", "inventory:view", "process_returns"];
+    case "inventory_officer":
+      return ["inventory:view", "view_cogs", "override_stock"];
+    case "accountant":
+      return ["view_profits", "view_cogs", "view_audit"];
+    case "auditor":
+      return ["view_audit", "inventory:view"];
+    default:
+      return ["pos:sell", "inventory:view"];
+  }
+}
+function hasPerm(employee, key) {
+  const perms = employee.permissions || [];
+  if (perms.includes("all") || employee.role === "owner" || employee.role === "super_admin") return true;
+  return perms.includes(key);
+}
+function resolveActorPerms(role, employee) {
+  const source = employee ? employee : {
+    role: role || "cashier",
+    permissions: defaultPermissions(role || "cashier")
+  };
+  return {
+    viewCogs: hasPerm(source, "view_cogs"),
+    viewProfits: hasPerm(source, "view_profits"),
+    editPrices: hasPerm(source, "edit_prices"),
+    processReturns: hasPerm(source, "process_returns"),
+    overrideStock: hasPerm(source, "override_stock"),
+    manageStaff: hasPerm(source, "manage_staff"),
+    viewAudit: hasPerm(source, "view_audit")
+  };
+}
+
+// src/lib/barcodeMatch.ts
+function normalizeBarcode(raw) {
+  return (raw || "").replace(/[\s\u200e\u200f-]/g, "");
+}
+
 // src/server/db.ts
 init_pg();
 
@@ -3375,7 +3430,7 @@ var Database = class {
   }
   syncInventoryAlerts(tenantId) {
     if (!this.data.inventoryAlerts) this.data.inventoryAlerts = [];
-    const tenantProducts = this.getProducts(tenantId);
+    const tenantProducts = this.getProducts(tenantId).filter((p) => p.isActive !== false);
     const tenantBranches = this.getBranches(tenantId);
     for (const br of tenantBranches) {
       for (const prod of tenantProducts) {
@@ -5703,7 +5758,7 @@ apiRouter.delete("/employees/:id", requireTenant, (req, res) => {
 });
 apiRouter.get("/products", requireTenant, (req, res) => {
   const authReq = req;
-  const products = db.getProducts(authReq.tenantId);
+  const products = db.getProducts(authReq.tenantId).filter((p) => p.isActive !== false);
   res.json({ products });
 });
 apiRouter.post("/products", requireTenant, (req, res) => {
@@ -5762,6 +5817,70 @@ apiRouter.post("/products", requireTenant, (req, res) => {
   }
   db.commit();
   res.json({ success: true, product: newProduct });
+});
+var requireProductEditor = (req, res, next) => {
+  const actor = req;
+  const employee = db.getSchema().employees.find((e) => e.tenantId === actor.tenantId && e.id === actor.actorId);
+  const perms = resolveActorPerms(actor.actorRole, employee);
+  if (!perms.editPrices) return res.status(403).json({ error: "\u0644\u064A\u0633\u062A \u0644\u062F\u064A\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0623\u0635\u0646\u0627\u0641." });
+  next();
+};
+apiRouter.put("/products/:id", requireTenant, requireProductEditor, (req, res) => {
+  const actor = req;
+  const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
+  if (!product) return res.status(404).json({ error: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u062A\u062C\u0631\u0643." });
+  const body = req.body || {};
+  const textFields = ["name", "sku", "barcode", "category", "unit", "costCurrency", "imageUrl", "videoUrl"];
+  for (const field of textFields) {
+    if (field in body && (typeof body[field] !== "string" || body[field].length > (field === "imageUrl" || field === "videoUrl" ? 2048 : 250)))
+      return res.status(400).json({ error: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
+  }
+  if ("name" in body && !body.name.trim()) return res.status(400).json({ error: "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641 \u0645\u0637\u0644\u0648\u0628." });
+  for (const field of ["purchaseCost", "sellingPriceSdg", "minStockAlert", "customTaxRate"]) {
+    if (field in body && !(field === "customTaxRate" && body[field] === null) && (typeof body[field] !== "number" || !Number.isFinite(body[field]) || body[field] < 0 || field === "customTaxRate" && body[field] > 100))
+      return res.status(400).json({ error: "\u062A\u0623\u0643\u062F \u0645\u0646 \u0635\u062D\u0629 \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0648\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u062F\u0646\u0649 \u0648\u0627\u0644\u0636\u0631\u064A\u0628\u0629." });
+  }
+  if ("sellingPriceSdg" in body && !(body.sellingPriceSdg > 0)) return res.status(400).json({ error: "\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 \u0623\u0643\u0628\u0631 \u0645\u0646 \u0635\u0641\u0631." });
+  if ("isTaxExempt" in body && typeof body.isTaxExempt !== "boolean") return res.status(400).json({ error: "\u062D\u0627\u0644\u0629 \u0627\u0644\u0636\u0631\u064A\u0628\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
+  if ("barcode" in body && body.barcode.trim() && normalizeBarcode(body.barcode) !== normalizeBarcode(product.barcode)) {
+    const code = normalizeBarcode(body.barcode);
+    const duplicate = db.getProducts(actor.tenantId).find((p) => p.id !== product.id && p.isActive !== false && normalizeBarcode(p.barcode) === code);
+    if (duplicate) return res.status(409).json({ error: `\u0627\u0644\u0628\u0627\u0631\u0643\u0648\u062F \u0645\u0633\u062A\u062E\u062F\u0645 \u0628\u0627\u0644\u0641\u0639\u0644 \u0644\u0644\u0635\u0646\u0641 \xAB${duplicate.name}\xBB.` });
+  }
+  const employee = db.getSchema().employees.find((e) => e.tenantId === actor.tenantId && e.id === actor.actorId);
+  if ("purchaseCost" in body && !resolveActorPerms(actor.actorRole, employee).viewCogs) return res.status(403).json({ error: "\u0644\u064A\u0633\u062A \u0644\u062F\u064A\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u062A\u0639\u062F\u064A\u0644 \u062A\u0643\u0644\u0641\u0629 \u0627\u0644\u0634\u0631\u0627\u0621." });
+  if ("stockQuantity" in body) {
+    const { branchId, stockQuantity, expectedStock } = body;
+    const branch = db.getSchema().branches.find((b) => b.id === branchId && b.tenantId === actor.tenantId);
+    if (!branch || typeof stockQuantity !== "number" || !Number.isFinite(stockQuantity) || typeof expectedStock !== "number" || !Number.isFinite(expectedStock))
+      return res.status(400).json({ error: "\u0628\u064A\u0627\u0646\u0627\u062A \u0631\u0635\u064A\u062F \u0627\u0644\u0641\u0631\u0639 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
+    const current = db.getProductStock(actor.tenantId, branchId, product.id);
+    if (current !== expectedStock) return res.status(409).json({ error: "\u0627\u0644\u0631\u0635\u064A\u062F \u062A\u063A\u064A\u0631 \u0623\u062B\u0646\u0627\u0621 \u0627\u0644\u062A\u0639\u062F\u064A\u0644. \u0623\u063A\u0644\u0642 \u0627\u0644\u062A\u0641\u0627\u0635\u064A\u0644 \u0648\u0623\u0639\u062F \u0641\u062A\u062D\u0647\u0627 \u0644\u0644\u0645\u0631\u0627\u062C\u0639\u0629." });
+    if (stockQuantity !== current) {
+      const adjustment = db.adjustStock({ tenantId: actor.tenantId, branchId, productId: product.id, delta: stockQuantity - current, type: "adjustment", reason: "\u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0631\u0635\u064A\u062F \u0645\u0646 \u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0635\u0646\u0641", actorName: actor.actorName });
+      if (!adjustment.success) return res.status(400).json({ error: adjustment.error });
+    }
+  }
+  for (const field of textFields) if (field in body) product[field] = body[field].trim();
+  for (const field of ["purchaseCost", "sellingPriceSdg", "minStockAlert"]) if (field in body) product[field] = body[field];
+  if ("minStockAlert" in body) product.minimumStock = body.minStockAlert;
+  if ("isTaxExempt" in body) product.isTaxExempt = body.isTaxExempt;
+  if ("customTaxRate" in body) product.customTaxRate = body.customTaxRate === null ? void 0 : body.customTaxRate;
+  db.commit();
+  db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: "UPDATE_PRODUCT", entity: "Product", entityId: product.id, details: `\u062A\u0639\u062F\u064A\u0644 \u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB` });
+  res.json({ success: true, product });
+});
+apiRouter.delete("/products/:id", requireTenant, requireProductEditor, (req, res) => {
+  const actor = req;
+  const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
+  if (!product) return res.status(404).json({ error: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u062A\u062C\u0631\u0643." });
+  product.isActive = false;
+  for (const alert of db.getSchema().inventoryAlerts || []) {
+    if (alert.tenantId === actor.tenantId && alert.productId === product.id) alert.status = "dismissed";
+  }
+  db.commit();
+  db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: "ARCHIVE_PRODUCT", entity: "Product", entityId: product.id, details: `\u0625\u0632\u0627\u0644\u0629 \u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB \u0645\u0646 \u0627\u0644\u0642\u0648\u0627\u0626\u0645 \u0645\u0639 \u062D\u0641\u0638 \u0633\u062C\u0644\u0647` });
+  res.json({ success: true });
 });
 apiRouter.get("/inventory", requireTenant, (req, res) => {
   const authReq = req;
@@ -6173,6 +6292,9 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
     if (existing) {
       return res.json({ success: true, sale: existing, isDuplicate: true });
     }
+  }
+  if (!isOfflineCreated && items.some((item) => db.getSchema().products.some((p) => p.id === item.productId && p.tenantId === authReq.tenantId && p.isActive === false))) {
+    return res.status(409).json({ error: "\u0623\u062D\u062F \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0623\u064F\u0632\u064A\u0644 \u0645\u0646 \u0627\u0644\u0645\u062A\u062C\u0631. \u062D\u062F\u0651\u062B \u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0648\u0623\u0639\u062F \u0645\u0631\u0627\u062C\u0639\u0629 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629." });
   }
   const branch = db.getSchema().branches.find((b) => b.id === branchId);
   const tenant = db.getTenant(authReq.tenantId);
@@ -6624,6 +6746,9 @@ apiRouter.post("/storefront/:slug/order", (req, res) => {
   const { customerName, customerPhone, deliveryMethod, pickupBranchId, deliveryAddress, items, bankakRef, notes } = req.body;
   if (!customerName || !customerPhone || !items || !items.length) {
     return res.status(400).json({ error: "\u064A\u0631\u062C\u0649 \u0625\u0643\u0645\u0627\u0644 \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0627\u0633\u0645 \u0648\u0627\u0644\u0647\u0627\u062A\u0641 \u0648\u0633\u0644\u0629 \u0627\u0644\u0645\u0634\u062A\u0631\u064A\u0627\u062A" });
+  }
+  if (items.some((i) => !db.getSchema().products.some((p) => p.id === i.productId && p.tenantId === tenant.id && p.isActive !== false))) {
+    return res.status(409).json({ error: "\u0623\u062D\u062F \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0644\u0645 \u064A\u0639\u062F \u0645\u062A\u0627\u062D\u0627\u064B. \u062D\u062F\u0651\u062B \u0627\u0644\u0645\u062A\u062C\u0631 \u0648\u0631\u0627\u062C\u0639 \u0627\u0644\u0633\u0644\u0629." });
   }
   let totalSdg = 0;
   const orderItems = items.map((i) => {
@@ -7503,7 +7628,7 @@ apiRouter.get("/albandar/showrooms", (_req, res) => {
 apiRouter.post("/albandar/publish-product", requireTenant, (req, res) => {
   const authReq = req;
   const { productId, category, condition, locationDetails } = req.body;
-  const product = db.getSchema().products.find((p) => p.id === productId && p.tenantId === authReq.tenantId);
+  const product = db.getSchema().products.find((p) => p.id === productId && p.tenantId === authReq.tenantId && p.isActive !== false);
   if (!product) {
     return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u062A\u062C \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0642\u0627\u0626\u0645\u0629 \u0645\u0646\u062A\u062C\u0627\u062A\u0643" });
   }

@@ -1,5 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { barcodeLookupHandler } from './barcodeLookup.ts';
+import { resolveActorPerms } from '../lib/staffPermissions.ts';
+import { normalizeBarcode } from '../lib/barcodeMatch.ts';
 import { db } from './db.ts';
 import { parseSudaneseSale } from '../lib/sudaneseSpeech.ts';
 import { findUnitInText, priceForUnit, resolveProductBaseUnit } from '../lib/sudaneseUnits.ts';
@@ -329,7 +331,7 @@ apiRouter.delete('/employees/:id', requireTenant, (req, res) => {
    ========================================================================= */
 apiRouter.get('/products', requireTenant, (req, res) => {
   const authReq = req as AuthenticatedRequest;
-  const products = db.getProducts(authReq.tenantId);
+  const products = db.getProducts(authReq.tenantId).filter((p) => p.isActive !== false);
   res.json({ products });
 });
 
@@ -382,6 +384,80 @@ apiRouter.post('/products', requireTenant, (req, res) => {
 
   db.commit();
   res.json({ success: true, product: newProduct });
+});
+
+// Product edits and archive are scoped to the current tenant. The app's existing
+// actor/permission model is used here as well as in the merchant UI.
+const requireProductEditor = (req: Request, res: Response, next: NextFunction) => {
+  const actor = req as AuthenticatedRequest;
+  const employee = db.getSchema().employees.find((e) => e.tenantId === actor.tenantId && e.id === actor.actorId);
+  const perms = resolveActorPerms(actor.actorRole, employee);
+  if (!perms.editPrices) return res.status(403).json({ error: 'ليست لديك صلاحية تعديل الأصناف.' });
+  next();
+};
+
+apiRouter.put('/products/:id', requireTenant, requireProductEditor, (req, res) => {
+  const actor = req as AuthenticatedRequest;
+  const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
+  if (!product) return res.status(404).json({ error: 'الصنف غير موجود في متجرك.' });
+  const body = req.body || {};
+  const textFields = ['name', 'sku', 'barcode', 'category', 'unit', 'costCurrency', 'imageUrl', 'videoUrl'] as const;
+  for (const field of textFields) {
+    if (field in body && (typeof body[field] !== 'string' || body[field].length > (field === 'imageUrl' || field === 'videoUrl' ? 2048 : 250)))
+      return res.status(400).json({ error: 'بيانات الصنف غير صالحة.' });
+  }
+  if ('name' in body && !body.name.trim()) return res.status(400).json({ error: 'اسم الصنف مطلوب.' });
+  for (const field of ['purchaseCost', 'sellingPriceSdg', 'minStockAlert', 'customTaxRate'] as const) {
+    if (field in body && !(field === 'customTaxRate' && body[field] === null) && (typeof body[field] !== 'number' || !Number.isFinite(body[field]) || body[field] < 0 || (field === 'customTaxRate' && body[field] > 100)))
+      return res.status(400).json({ error: 'تأكد من صحة الأسعار والحد الأدنى والضريبة.' });
+  }
+  if ('sellingPriceSdg' in body && !(body.sellingPriceSdg > 0)) return res.status(400).json({ error: 'سعر البيع يجب أن يكون أكبر من صفر.' });
+  if ('isTaxExempt' in body && typeof body.isTaxExempt !== 'boolean') return res.status(400).json({ error: 'حالة الضريبة غير صالحة.' });
+  if ('barcode' in body && body.barcode.trim() && normalizeBarcode(body.barcode) !== normalizeBarcode(product.barcode)) {
+    const code = normalizeBarcode(body.barcode);
+    const duplicate = db.getProducts(actor.tenantId).find((p) => p.id !== product.id && p.isActive !== false && normalizeBarcode(p.barcode) === code);
+    if (duplicate) return res.status(409).json({ error: `الباركود مستخدم بالفعل للصنف «${duplicate.name}».` });
+  }
+  const employee = db.getSchema().employees.find((e) => e.tenantId === actor.tenantId && e.id === actor.actorId);
+  if ('purchaseCost' in body && !resolveActorPerms(actor.actorRole, employee).viewCogs) return res.status(403).json({ error: 'ليست لديك صلاحية تعديل تكلفة الشراء.' });
+
+  // Stock is optional. Reject stale edits rather than overwriting a sale made
+  // while the details dialog was open. Adjustments generate stock movements.
+  if ('stockQuantity' in body) {
+    const { branchId, stockQuantity, expectedStock } = body;
+    const branch = db.getSchema().branches.find((b) => b.id === branchId && b.tenantId === actor.tenantId);
+    if (!branch || typeof stockQuantity !== 'number' || !Number.isFinite(stockQuantity) || typeof expectedStock !== 'number' || !Number.isFinite(expectedStock))
+      return res.status(400).json({ error: 'بيانات رصيد الفرع غير صالحة.' });
+    const current = db.getProductStock(actor.tenantId, branchId, product.id);
+    if (current !== expectedStock) return res.status(409).json({ error: 'الرصيد تغير أثناء التعديل. أغلق التفاصيل وأعد فتحها للمراجعة.' });
+    if (stockQuantity !== current) {
+      const adjustment = db.adjustStock({ tenantId: actor.tenantId, branchId, productId: product.id, delta: stockQuantity - current, type: 'adjustment', reason: 'تعديل الرصيد من تفاصيل الصنف', actorName: actor.actorName });
+      if (!adjustment.success) return res.status(400).json({ error: adjustment.error });
+    }
+  }
+
+  for (const field of textFields) if (field in body) (product as any)[field] = body[field].trim();
+  for (const field of ['purchaseCost', 'sellingPriceSdg', 'minStockAlert'] as const) if (field in body) (product as any)[field] = body[field];
+  if ('minStockAlert' in body) product.minimumStock = body.minStockAlert;
+  if ('isTaxExempt' in body) product.isTaxExempt = body.isTaxExempt;
+  if ('customTaxRate' in body) product.customTaxRate = body.customTaxRate === null ? undefined : body.customTaxRate;
+  db.commit();
+  db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: 'UPDATE_PRODUCT', entity: 'Product', entityId: product.id, details: `تعديل تفاصيل الصنف «${product.name}»` });
+  res.json({ success: true, product });
+});
+
+apiRouter.delete('/products/:id', requireTenant, requireProductEditor, (req, res) => {
+  const actor = req as AuthenticatedRequest;
+  const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
+  if (!product) return res.status(404).json({ error: 'الصنف غير موجود في متجرك.' });
+  // Archive instead of erasing sales, stock movements, inventory and invoices.
+  product.isActive = false;
+  for (const alert of db.getSchema().inventoryAlerts || []) {
+    if (alert.tenantId === actor.tenantId && alert.productId === product.id) alert.status = 'dismissed';
+  }
+  db.commit();
+  db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: 'ARCHIVE_PRODUCT', entity: 'Product', entityId: product.id, details: `إزالة الصنف «${product.name}» من القوائم مع حفظ سجله` });
+  res.json({ success: true });
 });
 
 apiRouter.get('/inventory', requireTenant, (req, res) => {
@@ -894,6 +970,11 @@ apiRouter.post('/pos/sales', requireTenant, (req, res) => {
     }
   }
 
+  // A stale online cart must not sell a product archived in another session.
+  // Keep accepting earlier offline-created sales so their history can sync.
+  if (!isOfflineCreated && items.some((item: any) => db.getSchema().products.some((p) => p.id === item.productId && p.tenantId === authReq.tenantId && p.isActive === false))) {
+    return res.status(409).json({ error: 'أحد الأصناف أُزيل من المتجر. حدّث قائمة الأصناف وأعد مراجعة الفاتورة.' });
+  }
   const branch = db.getSchema().branches.find((b) => b.id === branchId);
   const tenant = db.getTenant(authReq.tenantId);
 
@@ -1483,6 +1564,9 @@ apiRouter.post('/storefront/:slug/order', (req, res) => {
     return res.status(400).json({ error: 'يرجى إكمال بيانات الاسم والهاتف وسلة المشتريات' });
   }
 
+  if (items.some((i: any) => !db.getSchema().products.some((p) => p.id === i.productId && p.tenantId === tenant.id && p.isActive !== false))) {
+    return res.status(409).json({ error: 'أحد الأصناف لم يعد متاحاً. حدّث المتجر وراجع السلة.' });
+  }
   let totalSdg = 0;
   const orderItems = items.map((i: any) => {
     const prod = db.getSchema().products.find((p) => p.id === i.productId && p.tenantId === tenant.id);
@@ -2578,7 +2662,7 @@ apiRouter.post('/albandar/publish-product', requireTenant, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { productId, category, condition, locationDetails } = req.body;
 
-  const product = db.getSchema().products.find((p) => p.id === productId && p.tenantId === authReq.tenantId);
+  const product = db.getSchema().products.find((p) => p.id === productId && p.tenantId === authReq.tenantId && p.isActive !== false);
   if (!product) {
     return res.status(404).json({ error: 'المنتج غير موجود في قائمة منتجاتك' });
   }

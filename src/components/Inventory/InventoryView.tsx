@@ -32,6 +32,7 @@ import { InventoryAuditModal } from './InventoryAuditModal.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
 import { LiveCameraSheet } from '../Common/LiveCameraSheet.tsx';
 import { CameraBarcodeScanner } from '../POS/CameraBarcodeScanner.tsx';
+import { ProductDetailsModal } from './ProductDetailsModal.tsx';
 import { looksLikeBarcode, normalizeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
 import { uploadProductImage, uploadProductVideo, PRODUCT_VIDEO_MAX_SECONDS } from '../../lib/uploadProductMedia.ts';
 
@@ -91,6 +92,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   // Add Product Modal
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [barcodeScannerTarget, setBarcodeScannerTarget] = useState<'search' | 'new' | null>(null);
+  const [detailsProduct, setDetailsProduct] = useState<Product | null>(null);
   const [newProductName, setNewProductName] = useState('');
   const [newSku, setNewSku] = useState('');
   const [newBarcode, setNewBarcode] = useState('');
@@ -742,9 +744,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     : 'hover:bg-slate-50/70 transition-colors';
 
                   return (
-                    <tr key={product.id} className={rowClass}>
+                    <tr key={product.id} className={`${rowClass} cursor-pointer`} onClick={() => setDetailsProduct(product)} title="اضغط لعرض تفاصيل الصنف">
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-3">
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setDetailsProduct(product); }} className="flex items-center gap-3 text-right" aria-label={`تفاصيل ${product.name}`}>
                           <div className="w-10 h-10 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200 relative">
                             {product.imageUrl ? (
                               <img
@@ -784,7 +786,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                               </span>
                             )}
                           </div>
-                        </div>
+                        </button>
                       </td>
 
                       <td className="py-3 px-4">
@@ -792,7 +794,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         <span className="text-[11px] text-slate-500 font-mono">({product.unit})</span>
                       </td>
 
-                      <td className="py-3 px-4 font-mono text-slate-600">
+                      <td className="py-3 px-4 font-mono text-slate-600" onClick={(e) => e.stopPropagation()}>
                         <CopyBarcodeButton code={product.barcode} className="text-slate-900" />
                         <div className="text-[10px] text-slate-400 select-none">{product.sku}</div>
                       </td>
@@ -886,7 +888,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         )}
                       </td>
 
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => {
                             // If low stock, prefill adjustment with the shortage delta
@@ -926,7 +928,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            setNewBarcode(pastedBarcode(searchQuery));
+                            updateNewBarcode(pastedBarcode(searchQuery));
                             setIsAddModalOpen(true);
                           }}
                           className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold"
@@ -1733,6 +1735,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </form>
         </div>
       )}
+
+      {detailsProduct && (() => {
+        const branch = branches.find((b) => b.id === (selectedBranchId || currentBranch?.id)) || branches[0] || null;
+        const stock = inventoryList.find((i) => i.productId === detailsProduct.id && i.branchId === branch?.id)?.quantity ?? 0;
+        return <ProductDetailsModal key={detailsProduct.id} product={detailsProduct} branch={branch} stock={stock} stockReady={!isLoading} canEdit={canEditPrices} canViewCogs={canViewCogs}
+          onClose={() => setDetailsProduct(null)} onChanged={() => { setDetailsProduct(null); onRefresh(); void loadData(); }} />;
+      })()}
 
       {/* Smart Inventory Audit Modal */}
       <InventoryAuditModal

@@ -276,6 +276,14 @@ class ApiClient {
     });
   }
 
+  public async updateProduct(id: string, payload: Record<string, unknown>): Promise<{ success: boolean; product: Product }> {
+    return this.request(`/products/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+  }
+
+  public async deleteProduct(id: string): Promise<{ success: boolean }> {
+    return this.request(`/products/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   public async getInventory(branchId?: string): Promise<{ inventory: (BranchInventory & { product?: Product; branch?: Branch })[] }> {
     const q = branchId ? `?branchId=${branchId}` : '';
     return this.request(`/inventory${q}`);
