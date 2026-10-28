@@ -493,7 +493,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900 pb-16">
+    <div className="client-shell min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900 pb-16">
       {/* New notifications drop from the top of the screen while browsing */}
       <InAppAlertBanner
         app="client"

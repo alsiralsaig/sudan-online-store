@@ -271,7 +271,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
   ];
 
   return (
-    <div className="pb-24 bg-slate-50" dir="rtl">
+    <div className="client-shell pb-24 bg-slate-50" dir="rtl">
       {/* ---- Slim top bar: logo + «أقسام» (right) · actions (left) ------
           The old full-width header (slogan block + search field + tab rows)
           was pure dead space on a phone; the reference landing page opens
