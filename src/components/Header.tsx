@@ -62,7 +62,6 @@ export const Header: React.FC<HeaderProps> = ({
   onTabChange,
   tenantName,
   branchName,
-  actor,
   isOffline,
   isSimulatingOffline,
   onToggleSimulateOffline,
@@ -79,24 +78,6 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [isAlertsOpen, setIsAlertsOpen] = React.useState(false);
   const [isTenantModalOpen, setIsTenantModalOpen] = React.useState(false);
-  const getRoleLabel = (role: string) => {
-    switch (role) {
-      case 'owner':
-        return 'المالك';
-      case 'branch_manager':
-        return 'مدير فرع';
-      case 'cashier':
-        return 'كاشير';
-      case 'inventory_officer':
-        return 'مسؤول مخزون';
-      case 'accountant':
-        return 'محاسب';
-      case 'super_admin':
-        return 'مدير المنصة';
-      default:
-        return 'موظف';
-    }
-  };
 
   return (
     <header className="border-b border-slate-800 bg-slate-950 sticky top-0 z-40 text-slate-100">
@@ -191,12 +172,12 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenCloud}
               title={isOffline ? 'السحابة: دون اتصال — اضغط للتفاصيل' : 'السحابة والرفع'}
-              className={`relative flex items-center gap-1.5 rounded-xl border-2 px-2.5 py-1.5 font-black text-xs transition-all ${
+              className={`relative flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 font-black text-xs transition-all ${
                 isOffline
-                  ? 'border-amber-400 bg-amber-500/15 text-amber-200'
+                  ? 'border-amber-300 bg-amber-500 text-slate-950'
                   : pendingOfflineCount > 0
-                    ? 'border-sky-400 bg-sky-500/15 text-sky-200'
-                    : 'border-emerald-400 bg-emerald-500/15 text-emerald-200'
+                    ? 'border-sky-300 bg-sky-500 text-slate-950'
+                    : 'border-emerald-300 bg-emerald-600 text-white'
               }`}
             >
               {isOffline ? (
@@ -215,9 +196,10 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          <div className="relative flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-950/40 pl-1 pr-1 py-0.5">
+          <div className="relative flex items-center">
             <NotificationBell
               app="merchant"
+              theme="dark"
               onNavigate={(tab) => onTabChange(tab as any)}
             />
             <span className="hidden sm:inline pl-2 pr-1 text-[11px] font-bold text-rose-200">
@@ -248,10 +230,10 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Store application — same entry point as the shopper app */}
           <button
             onClick={() => setIsTenantModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 transition-all whitespace-nowrap"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-500 transition-all whitespace-nowrap"
             title="طلب فتح متجر جديد على منصة سند"
           >
-            <PlusCircle className="w-3.5 h-3.5 text-emerald-700" />
+            <PlusCircle className="w-3.5 h-3.5 text-white" />
             <span>طلب متجر</span>
           </button>
 
@@ -259,7 +241,7 @@ export const Header: React.FC<HeaderProps> = ({
           {onOpenActivateStore && (
             <button
               onClick={onOpenActivateStore}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-200 transition-all whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border border-amber-300 bg-amber-500 text-slate-950 hover:bg-amber-400 transition-all whitespace-nowrap"
               title="عندك كود دخول من الإدارة؟ فعّل متجرك هنا"
             >
               <KeyRound className="w-3.5 h-3.5" />
@@ -270,20 +252,20 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onToggleSimulateOffline}
             title={isOffline ? 'اضغط للاتصال بالإنترنت' : 'اضغط لمحاكاة انقطاع الإنترنت وتجربة الكاشير دون اتصال'}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition-colors whitespace-nowrap ${
               isOffline
-                ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                ? 'bg-amber-500 text-slate-950 border border-amber-300'
+                : 'bg-emerald-600 text-white border border-emerald-300'
             }`}
           >
             {isOffline ? (
               <>
-                <WifiOff className="w-3.5 h-3.5 text-amber-700" />
+                <WifiOff className="w-3.5 h-3.5 text-slate-950" />
                 <span>وضع دون اتصال {isSimulatingOffline && '(محاكاة)'}</span>
               </>
             ) : (
               <>
-                <Wifi className="w-3.5 h-3.5 text-emerald-600" />
+                <Wifi className="w-3.5 h-3.5 text-white" />
                 <span>متصل بالخادم</span>
               </>
             )}
@@ -324,18 +306,15 @@ export const Header: React.FC<HeaderProps> = ({
             <span>جرد بالهاتف</span>
           </button>
 
-          {/* Inventory Reorder Point Alerts Notification Bell */}
+          {/* جرس نواقص المخزون — يظهر فقط لو فيه تنبيه، عشان ما يعمل زحمة فاضية */}
+          {inventoryAlerts.length > 0 && (
           <div className="relative">
             <button
               onClick={() => setIsAlertsOpen(!isAlertsOpen)}
               title="تنبيهات نواقص المخزون وحد إعادة الطلب"
-              className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                inventoryAlerts.length > 0
-                  ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
-                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-              }`}
+              className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg border bg-amber-500 text-slate-950 border-amber-300 hover:bg-amber-400 transition-all"
             >
-              <Bell className={`w-3.5 h-3.5 ${inventoryAlerts.length > 0 ? 'text-amber-600 animate-pulse' : 'text-slate-500'}`} />
+              <Bell className="w-3.5 h-3.5 text-slate-950 animate-pulse" />
               <span className="hidden lg:inline">تنبيهات المخزون</span>
               {inventoryAlerts.length > 0 && (
                 <span className="flex items-center justify-center min-w-[18px] h-4.5 px-1 rounded-full text-[10px] font-black bg-rose-600 text-white font-mono">
@@ -437,17 +416,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
           </div>
-
-          {/* Current Actor Tag */}
-          <div className="flex items-center gap-2 pl-2 border-r border-slate-200 pr-2">
-            <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-xs font-semibold text-slate-700">
-              {actor.name.slice(0, 1)}
-            </div>
-            <div className="hidden md:flex flex-col text-right">
-              <span className="text-xs font-semibold text-slate-800 leading-tight">{actor.name}</span>
-              <span className="text-[11px] text-slate-500">{getRoleLabel(actor.role)}</span>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 

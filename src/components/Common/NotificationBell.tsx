@@ -324,7 +324,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
         title="الإشعارات"
         className={`relative flex items-center justify-center w-9 h-9 rounded-xl border transition-all ${
           isDark
-            ? 'bg-slate-800/80 border-slate-700 text-slate-200 hover:bg-slate-700'
+            ? 'bg-slate-800 border-slate-300 text-white hover:bg-slate-700'
             : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-500 hover:bg-slate-50'
         }`}
       >
