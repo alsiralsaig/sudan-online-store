@@ -49,7 +49,7 @@ export function createApp() {
   app.use('/api', async (req, res, next) => {
     // Media is stored in its own table and never enters the in-memory
     // snapshot, so it does not need the refresh/flush cycle.
-    if (req.path === '/media' || req.path.startsWith('/media/')) {
+    if (req.path === '/media' || req.path.startsWith('/media/') || req.path.startsWith('/barcode-lookup/')) {
       return next();
     }
 

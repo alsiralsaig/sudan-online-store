@@ -1,5 +1,5 @@
 // Sanad POS & Commerce Service Worker (PWA)
-const CACHE_NAME = 'sanad-pwa-v7.2';
+const CACHE_NAME = 'sanad-pwa-v7.3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

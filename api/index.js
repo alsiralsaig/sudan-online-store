@@ -9,7 +9,7 @@ var __export = (target, all) => {
 };
 
 // src/server/telegram.ts
-async function sendTelegram(text, opts = {}) {
+async function sendTelegram(text2, opts = {}) {
   if (!token()) return { sent: 0, skipped: "NOT_CONFIGURED" };
   const ids = chatIds();
   if (ids.length === 0) return { sent: 0, skipped: "NO_CHAT_ID" };
@@ -22,7 +22,7 @@ async function sendTelegram(text, opts = {}) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           chat_id: chatId,
-          text,
+          text: text2,
           disable_web_page_preview: true,
           ...opts.markdown === false ? {} : { parse_mode: "Markdown" }
         })
@@ -261,14 +261,14 @@ var init_ntfy = __esm({
 });
 
 // src/server/alerts.ts
-async function notifyAll(text) {
+async function notifyAll(text2) {
   const channels = channelsConfigured();
   if (channels.length === 0) return { sent: 0, skipped: "NOT_CONFIGURED", channels };
   let sent = 0;
   let skipped = "";
   if (channels.includes("telegram")) {
     try {
-      const v = await sendTelegram(text);
+      const v = await sendTelegram(text2);
       sent += v.sent;
       if (v.sent === 0 && !skipped) skipped = `telegram:${v.skipped}`;
     } catch (err) {
@@ -277,7 +277,7 @@ async function notifyAll(text) {
   }
   if (channels.includes("email")) {
     try {
-      const v = await sendEmail(emailSubject(text), text);
+      const v = await sendEmail(emailSubject(text2), text2);
       sent += v.sent;
       if (v.sent === 0 && !skipped) skipped = `email:${v.skipped}`;
     } catch (err) {
@@ -286,8 +286,8 @@ async function notifyAll(text) {
   }
   if (channels.includes("ntfy")) {
     try {
-      const firstLine = text.split("\n").find((l) => l.trim()) || "\u062A\u0646\u0628\u064A\u0647 \u0645\u0646 \u0633\u0646\u062F";
-      const v = await sendNtfy(emailSubject(text), text, { dedupe: false });
+      const firstLine = text2.split("\n").find((l) => l.trim()) || "\u062A\u0646\u0628\u064A\u0647 \u0645\u0646 \u0633\u0646\u062F";
+      const v = await sendNtfy(emailSubject(text2), text2, { dedupe: false });
       sent += v.sent;
       if (v.sent === 0 && !skipped) skipped = `ntfy:${v.skipped || firstLine.slice(0, 0)}`;
     } catch (err) {
@@ -404,9 +404,9 @@ async function runWatch(deps) {
   }
   const report = buildReport(checks);
   let notified = "SKIPPED";
-  const notifySafe = async (text) => {
+  const notifySafe = async (text2) => {
     try {
-      return await deps.notify(text);
+      return await deps.notify(text2);
     } catch (err) {
       return { sent: 0, skipped: `THREW:${err.message.slice(0, 40)}` };
     }
@@ -473,14 +473,14 @@ async function runWatchdog() {
 function alertDbFailure(err) {
   const message = err?.message || String(err);
   if (!shouldSendAlert(`db:${message.slice(0, 60)}`)) return;
-  const text = [
+  const text2 = [
     "\u{1F6A8} *\u0642\u0627\u0639\u062F\u0629 \u0628\u064A\u0627\u0646\u0627\u062A \u0633\u0646\u062F \u0641\u0634\u0644\u062A*",
     `\u0627\u0644\u062E\u0637\u0623: ${message.slice(0, 200)}`,
     lastDbError && lastDbError !== message ? `\u0633\u0627\u0628\u0642\u0627\u064B: ${lastDbError.slice(0, 120)}` : "",
     "",
     "\u0627\u0644\u0641\u062D\u0635: /api/health"
   ].filter(Boolean).join("\n");
-  void notifyAll(text).catch(() => {
+  void notifyAll(text2).catch(() => {
   });
 }
 var ALERT_COOLDOWN_MS, lastAlertAt, lastAlertKey, lastWasHealthy;
@@ -560,10 +560,10 @@ function activeClient() {
   if (injected) return injected;
   return getPool();
 }
-async function query(text, params) {
+async function query(text2, params) {
   const client = activeClient();
   try {
-    const result = await client.query(text, params);
+    const result = await client.query(text2, params);
     clearDbError();
     return result;
   } catch (err) {
@@ -649,6 +649,50 @@ import { fileURLToPath } from "url";
 
 // src/server/routes.ts
 import { Router } from "express";
+
+// src/server/barcodeLookup.ts
+var CATALOGS = [
+  { name: "Open Food Facts", base: "https://world.openfoodfacts.org" },
+  { name: "Open Beauty Facts", base: "https://world.openbeautyfacts.org" },
+  { name: "Open Products Facts", base: "https://world.openproductsfacts.org" }
+];
+function text(value) {
+  return typeof value === "string" ? value.trim().slice(0, 250) : "";
+}
+async function queryCatalog(catalog, barcode) {
+  const fields = "product_name_ar,product_name_en,product_name,brands,quantity";
+  const response = await fetch(`${catalog.base}/api/v2/product/${barcode}?fields=${fields}`, {
+    headers: { "User-Agent": "SanadPOS/1.0 (alsiralsaig@gmail.com)" },
+    signal: AbortSignal.timeout(7e3)
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`catalog unavailable: ${response.status}`);
+  const body = await response.json();
+  if (body.status !== 1 || !body.product) return null;
+  const p = body.product;
+  const productName = text(p.product_name_ar) || text(p.product_name) || text(p.product_name_en);
+  if (!productName) return null;
+  const brand = text(p.brands).split(",")[0].trim();
+  const quantity = text(p.quantity);
+  const nameParts = [productName];
+  if (brand && !productName.toLocaleLowerCase().includes(brand.toLocaleLowerCase())) nameParts.push(brand);
+  if (quantity && !productName.toLocaleLowerCase().includes(quantity.toLocaleLowerCase())) nameParts.push(quantity);
+  return { name: nameParts.join(" - "), source: catalog.name, sourceUrl: `${catalog.base}/product/${barcode}` };
+}
+async function barcodeLookupHandler(req, res) {
+  const barcode = req.params.barcode;
+  if (!/^(?:\d{8}|\d{12,14})$/.test(barcode)) {
+    return res.status(400).json({ error: "\u0627\u0633\u062A\u062E\u062F\u0645 \u0628\u0627\u0631\u0643\u0648\u062F \u0631\u0642\u0645\u064A \u0645\u0646 8 \u0623\u0648 12 \u0625\u0644\u0649 14 \u0631\u0642\u0645\u0627\u064B." });
+  }
+  res.set("Cache-Control", "no-store");
+  const results = await Promise.allSettled(CATALOGS.map((catalog) => queryCatalog(catalog, barcode)));
+  const match = results.find((result) => result.status === "fulfilled" && result.value !== null);
+  if (match?.status === "fulfilled" && match.value) return res.json({ found: true, product: match.value });
+  if (results.some((result) => result.status === "rejected")) {
+    return res.status(503).json({ error: "\u062A\u0639\u0630\u0631 \u0627\u0644\u0628\u062D\u062B \u0641\u064A \u0642\u0648\u0627\u0639\u062F \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u062D\u0627\u0644\u064A\u0627\u064B. \u062D\u0627\u0648\u0644 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649 \u0623\u0648 \u0623\u0643\u0645\u0644 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u064A\u062F\u0648\u064A\u0627\u064B." });
+  }
+  return res.json({ found: false });
+}
 
 // src/server/db.ts
 init_pg();
@@ -3776,8 +3820,8 @@ function normalizeDigits(input) {
   const arabic = "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669";
   return (input || "").replace(/[٠-٩]/g, (d) => String(arabic.indexOf(d)));
 }
-function findUnitInText(text) {
-  const norm = normalizeArabic(normalizeDigits(text));
+function findUnitInText(text2) {
+  const norm = normalizeArabic(normalizeDigits(text2));
   const sorted = [...SUDANESE_UNITS].sort((a, b) => b.nameAr.length - a.nameAr.length);
   for (const unit of sorted) {
     for (const alias of [unit.nameAr, ...unit.aliases]) {
@@ -3937,8 +3981,8 @@ function parseQuantity(clause) {
   if (/ونص|و نص/.test(norm)) return { quantity: 1.5, explicit: true };
   return { quantity: 1, explicit: false };
 }
-function parseSudaneseSale(text, products) {
-  const raw = normalizeDigits(text || "").trim();
+function parseSudaneseSale(text2, products) {
+  const raw = normalizeDigits(text2 || "").trim();
   const normalizedText = normalizeArabic(raw);
   let paymentMethod = "cash";
   if (/بنكك|بنك الخرطوم|تحويل بنكي|ابلكيشن بنكك/.test(normalizedText)) paymentMethod = "bankak";
@@ -4096,8 +4140,8 @@ var AR_MONTHS = {
   \u0646\u0648\u0641\u0645\u0628\u0631: 10,
   \u062F\u064A\u0633\u0645\u0628\u0631: 11
 };
-var parseArabicPublishedAt = (text) => {
-  const m = text.match(
+var parseArabicPublishedAt = (text2) => {
+  const m = text2.match(
     /(\d{1,2})\s+([\u0600-\u06FF]{3,10})\s*[،,]?\s*(\d{4})\s*(?:-|—|\|)?\s*(\d{1,2})[:.](\d{2})?\s*(صباح|مساء|ص|م)?/
   );
   if (!m) return void 0;
@@ -4127,10 +4171,10 @@ var AR_LABEL_TO_CODE = [
   { re: /الدينار\s*الكويتي/i, code: "KWD" }
 ];
 var parseSudanAkhbarArticle = (html) => {
-  const text = htmlToText(html);
+  const text2 = htmlToText(html);
   const title = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  const blockStart = text.search(/متوسط\s*(اسعار|أسعار)\s*العملات/i);
-  const scope = blockStart >= 0 ? text.slice(blockStart) : text;
+  const blockStart = text2.search(/متوسط\s*(اسعار|أسعار)\s*العملات/i);
+  const scope = blockStart >= 0 ? text2.slice(blockStart) : text2;
   const rates = [];
   const seen = /* @__PURE__ */ new Set();
   const NUM = "([0-9][0-9,]{2,}(?:\\.[0-9]+)?)";
@@ -4171,7 +4215,7 @@ var parseSudanAkhbarArticle = (html) => {
     if (seen.has(code)) continue;
     let value = null;
     for (const { re: candidate, pick } of patternsFor(re.source)) {
-      const m = scope.match(candidate) || text.match(candidate);
+      const m = scope.match(candidate) || text2.match(candidate);
       if (!m) continue;
       const parsedValue = toNumber(m[pick] ?? m[1]);
       if (parsedValue === null || parsedValue < 100 || parsedValue >= 15e5) continue;
@@ -4182,7 +4226,7 @@ var parseSudanAkhbarArticle = (html) => {
     rates.push({ code, official: null, parallel: value });
     seen.add(code);
   }
-  const publishedAt = parseArabicPublishedAt(text.slice(0, Math.max(400, text.indexOf("\u0645\u0635\u062F\u0631 \u0627\u0644\u062E\u0628\u0631") + 200))) || parseArabicPublishedAt(text);
+  const publishedAt = parseArabicPublishedAt(text2.slice(0, Math.max(400, text2.indexOf("\u0645\u0635\u062F\u0631 \u0627\u0644\u062E\u0628\u0631") + 200))) || parseArabicPublishedAt(text2);
   return { rates, publishedAt, title: title || void 0 };
 };
 var BROWSER_HEADERS = {
@@ -4204,8 +4248,8 @@ var fetchViaReader = async (url, timeoutMs = 14e3) => {
     });
     clearTimeout(t);
     if (!res.ok) return null;
-    const text = await res.text();
-    return text.length > 200 ? text : null;
+    const text2 = await res.text();
+    return text2.length > 200 ? text2 : null;
   } catch {
     return null;
   }
@@ -4804,10 +4848,10 @@ var PHONE = (process.env.WHATSAPP_ALERT_PHONE || "").replace(/[^\d]/g, "");
 var CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || "";
 var API_URL2 = process.env.WHATSAPP_API_URL || "https://api.callmebot.com/whatsapp.php";
 var QUOTA_MARKERS = ["full", "limit", "quota", "not allowed", "blocked", "invalid apikey"];
-var sendWhatsApp = async (text) => {
+var sendWhatsApp = async (text2) => {
   if (!PHONE || !CALLMEBOT_KEY) return { ok: false, reason: "NOT_CONFIGURED" };
   try {
-    const url = `${API_URL2}?phone=${encodeURIComponent(PHONE)}&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
+    const url = `${API_URL2}?phone=${encodeURIComponent(PHONE)}&text=${encodeURIComponent(text2)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     const res = await fetch(url, { signal: controller.signal });
@@ -5440,6 +5484,7 @@ async function runBackup(at = /* @__PURE__ */ new Date()) {
 
 // src/server/routes.ts
 var apiRouter = Router();
+apiRouter.get("/barcode-lookup/:barcode", barcodeLookupHandler);
 var requireTenant = (req, res, next) => {
   const tenantId = req.headers["x-tenant-id"] || "tenant_alrowad";
   const tenant = db.getTenant(tenantId);
@@ -6660,15 +6705,15 @@ apiRouter.put("/storefront-orders/:id/status", requireTenant, (req, res) => {
       delivered: { title: "\u062A\u0645 \u062A\u0633\u0644\u064A\u0645 \u0637\u0644\u0628\u0643", body: `\u0637\u0644\u0628 ${order.orderNumber} \u062A\u0645 \u062A\u0633\u0644\u064A\u0645\u0647 \u0628\u0646\u062C\u0627\u062D. \u0634\u0643\u0631\u0627\u064B \u0644\u062B\u0642\u062A\u0643 \u0628\u0633\u0646\u062F.` },
       cancelled: { title: "\u062A\u0645 \u0625\u0644\u063A\u0627\u0621 \u0637\u0644\u0628\u0643", body: `\u0637\u0644\u0628 ${order.orderNumber} \u062A\u0645 \u0625\u0644\u063A\u0627\u0624\u0647. \u0644\u0644\u0627\u0633\u062A\u0641\u0633\u0627\u0631 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0627\u0644\u0645\u062A\u062C\u0631.` }
     };
-    const text = STATUS_TEXT[status] || {
+    const text2 = STATUS_TEXT[status] || {
       title: "\u062A\u062D\u062F\u064A\u062B \u0639\u0644\u0649 \u0637\u0644\u0628\u0643",
       body: `\u062D\u0627\u0644\u0629 \u0637\u0644\u0628 ${order.orderNumber} \u0623\u0635\u0628\u062D\u062A: ${status}`
     };
     notify({
       app: "client",
       kind: "order_status",
-      title: text.title,
-      body: text.body,
+      title: text2.title,
+      body: text2.body,
       linkTab: "track_order",
       recipientToken: order.ownerToken,
       tenantId: authReq.tenantId
@@ -7840,8 +7885,8 @@ async function geminiGenerate(opts) {
         return { text: null, error: lastError, model };
       }
       const parts = data?.candidates?.[0]?.content?.parts || [];
-      const text = parts.map((p) => p?.text).filter(Boolean).join("\n").trim() || null;
-      if (text) return { text, model };
+      const text2 = parts.map((p) => p?.text).filter(Boolean).join("\n").trim() || null;
+      if (text2) return { text: text2, model };
       lastError = `EMPTY:${data?.candidates?.[0]?.finishReason || "unknown"}`;
     } catch (err) {
       lastError = err?.name === "AbortError" ? "TIMEOUT" : String(err?.message || err).slice(0, 140);
@@ -8056,8 +8101,8 @@ apiRouter.post("/assistant/chat", async (req, res) => {
   }
 });
 apiRouter.post("/assistant/speak", async (req, res) => {
-  const { text } = req.body || {};
-  if (!text || typeof text !== "string") {
+  const { text: text2 } = req.body || {};
+  if (!text2 || typeof text2 !== "string") {
     return res.status(400).json({ error: "\u0627\u0644\u0646\u0635 \u0645\u0637\u0644\u0648\u0628" });
   }
   const key = GEMINI_KEY();
@@ -8071,7 +8116,7 @@ apiRouter.post("/assistant/speak", async (req, res) => {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: String(text).slice(0, 700) }] }],
+          contents: [{ role: "user", parts: [{ text: String(text2).slice(0, 700) }] }],
           generationConfig: {
             responseModalities: ["AUDIO"],
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } }
@@ -8976,7 +9021,7 @@ function createApp() {
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
   app.use("/api", async (req, res, next) => {
-    if (req.path === "/media" || req.path.startsWith("/media/")) {
+    if (req.path === "/media" || req.path.startsWith("/media/") || req.path.startsWith("/barcode-lookup/")) {
       return next();
     }
     if (!isDbEnabled()) {

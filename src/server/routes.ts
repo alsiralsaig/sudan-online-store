@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { barcodeLookupHandler } from './barcodeLookup.ts';
 import { db } from './db.ts';
 import { parseSudaneseSale } from '../lib/sudaneseSpeech.ts';
 import { findUnitInText, priceForUnit, resolveProductBaseUnit } from '../lib/sudaneseUnits.ts';
@@ -49,6 +50,8 @@ import type {
 import { getPublicKey as getPushPublicKey, notify as notifyUser, notifyLowStock, runNotificationScan } from './notifications.ts';
 
 export const apiRouter = Router();
+
+apiRouter.get('/barcode-lookup/:barcode', barcodeLookupHandler);
 
 // Middleware: Extract & validate tenant context
 export interface AuthenticatedRequest extends Request {

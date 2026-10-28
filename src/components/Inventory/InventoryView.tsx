@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Package,
   Plus,
@@ -32,7 +32,7 @@ import { InventoryAuditModal } from './InventoryAuditModal.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
 import { LiveCameraSheet } from '../Common/LiveCameraSheet.tsx';
 import { CameraBarcodeScanner } from '../POS/CameraBarcodeScanner.tsx';
-import { looksLikeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
+import { looksLikeBarcode, normalizeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
 import { uploadProductImage, uploadProductVideo, PRODUCT_VIDEO_MAX_SECONDS } from '../../lib/uploadProductMedia.ts';
 
 interface InventoryViewProps {
@@ -108,6 +108,81 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [mediaBusy, setMediaBusy] = useState<null | 'image' | 'video'>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [liveCameraOpen, setLiveCameraOpen] = useState(false);
+  const [lookupState, setLookupState] = useState<{ kind: 'loading' | 'found' | 'missing' | 'error' | 'existing'; message: string; source?: string; sourceUrl?: string } | null>(null);
+  const lookupAbortRef = useRef<AbortController | null>(null);
+  const lookupSequenceRef = useRef(0);
+  const currentBarcodeRef = useRef('');
+  const suggestedRef = useRef({ name: '' });
+
+  const updateNewBarcode = (value: string) => {
+    if (value !== currentBarcodeRef.current) {
+      lookupAbortRef.current?.abort();
+      lookupSequenceRef.current += 1;
+      setLookupState(null);
+      const previous = suggestedRef.current;
+      if (previous.name) setNewProductName((name) => name === previous.name ? '' : name);
+      suggestedRef.current = { name: '' };
+    }
+    currentBarcodeRef.current = value;
+    setNewBarcode(value);
+  };
+
+  useEffect(() => {
+    if (!isAddModalOpen) {
+      lookupAbortRef.current?.abort();
+      lookupSequenceRef.current += 1;
+      setLookupState(null);
+    }
+    return () => { lookupAbortRef.current?.abort(); };
+  }, [isAddModalOpen]);
+
+  const lookupBarcode = async (raw: string) => {
+    const code = normalizeBarcode(raw);
+    lookupAbortRef.current?.abort();
+    const requestId = ++lookupSequenceRef.current;
+    if (!code) {
+      setLookupState({ kind: 'error', message: 'امسح الباركود أو اكتب رقمه أولاً.' });
+      return;
+    }
+    const sameCode = (other: string) => {
+      const a = normalizeBarcode(other);
+      if (!a) return false;
+      return a === code || (/^\d+$/.test(a) && /^\d+$/.test(code) && a.replace(/^0+/, '') === code.replace(/^0+/, ''));
+    };
+    const existing = products.find((product) => sameCode(product.barcode || ''));
+    if (existing) {
+      setLookupState({ kind: 'existing', message: `هذا الباركود مسجل مسبقاً باسم «${existing.name}». يمكنك فتحه في قائمة المخزون.` });
+      return;
+    }
+    if (!/^(?:\d{8}|\d{12,14})$/.test(code)) {
+      setLookupState({ kind: 'error', message: 'البحث الخارجي يدعم باركوداً رقمياً من 8 أو 12 إلى 14 رقماً. يمكنك إدخال بقية البيانات يدوياً.' });
+      return;
+    }
+    const controller = new AbortController();
+    lookupAbortRef.current = controller;
+    setLookupState({ kind: 'loading', message: 'جارٍ البحث عن الصنف بالباركود...' });
+    try {
+      const response = await fetch(`/api/barcode-lookup/${encodeURIComponent(code)}`, { signal: controller.signal });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'تعذر البحث حالياً.');
+      if (requestId !== lookupSequenceRef.current || controller.signal.aborted) return;
+      if (!result.found || !result.product) {
+        setLookupState({ kind: 'missing', message: 'لم نعثر على الصنف في المصادر المتاحة. أضف بياناته يدوياً.' });
+        return;
+      }
+      const suggestion = result.product as { name: string; source: string; sourceUrl: string };
+      // Never overwrite a name that the merchant already entered.
+      setNewProductName((old) => {
+        if (old.trim()) return old;
+        suggestedRef.current.name = suggestion.name;
+        return suggestion.name;
+      });
+      setLookupState({ kind: 'found', message: 'تم العثور على اسم الصنف. الأسعار والكميات لا تُجلب تلقائياً؛ أدخلها أو راجعها قبل الحفظ.', source: suggestion.source, sourceUrl: suggestion.sourceUrl });
+    } catch (error: any) {
+      if (controller.signal.aborted || requestId !== lookupSequenceRef.current) return;
+      setLookupState({ kind: 'error', message: error.message || 'تعذر الاتصال للبحث. يمكنك إكمال البيانات يدوياً.' });
+    }
+  };
 
   // Adjust Stock Modal
   const [adjustingProduct, setAdjustingProduct] = useState<{
@@ -213,6 +288,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       if (res.success) {
         setIsAddModalOpen(false);
         setNewProductName('');
+        setNewSku('');
+        updateNewBarcode('');
+        suggestedRef.current = { name: '' };
         setNewIsTaxExempt(false);
         setNewCustomTaxRate('');
         setNewImageUrl('');
@@ -933,6 +1011,34 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </div>
 
             <div className="p-6 space-y-4 text-xs overflow-y-auto">
+              <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 space-y-2">
+                <p className="font-bold text-emerald-600 flex items-center gap-1.5"><Barcode className="w-4 h-4" /> إضافة بالباركود</p>
+                <p className="text-slate-500">امسح أو أدخل الباركود للبحث عن بيانات الصنف في قواعد عامة عبر الإنترنت.</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text" value={newBarcode} inputMode="numeric" autoComplete="off" autoCapitalize="off" autoCorrect="off" dir="ltr"
+                    onChange={(e) => updateNewBarcode(e.target.value)}
+                    onPaste={(e) => {
+                      const code = pastedBarcode(e.clipboardData.getData('text'));
+                      if (!code) return;
+                      e.preventDefault(); updateNewBarcode(code); void lookupBarcode(code);
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void lookupBarcode(newBarcode); } }}
+                    placeholder="رقم الباركود" aria-label="رقم الباركود"
+                    className="min-w-0 flex-1 px-3 py-2 font-mono border border-slate-300 rounded-lg"
+                  />
+                  <button type="button" onClick={() => setBarcodeScannerTarget('new')} title="مسح الباركود بالكاميرا" aria-label="مسح الباركود بالكاميرا"
+                    className="p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shrink-0"><Camera className="w-4 h-4" /></button>
+                  <button type="button" onClick={() => void lookupBarcode(newBarcode)} disabled={lookupState?.kind === 'loading'}
+                    className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-bold rounded-lg shrink-0">بحث</button>
+                </div>
+                {lookupState && <div role="status" className={`rounded-lg p-2 leading-relaxed ${lookupState.kind === 'found' ? 'bg-emerald-500/15 text-emerald-700' : lookupState.kind === 'existing' ? 'bg-amber-500/15 text-amber-700' : 'bg-slate-500/10 text-slate-600'}`}>
+                  {lookupState.kind === 'loading' && <Loader2 className="w-3.5 h-3.5 inline animate-spin me-1" />}
+                  {lookupState.message}
+                  {lookupState.source && lookupState.sourceUrl && <> المصدر: <a className="underline" href={lookupState.sourceUrl} target="_blank" rel="noreferrer">{lookupState.source}</a>.</>}
+                  {lookupState.kind === 'existing' && <button type="button" className="underline font-bold block mt-1" onClick={() => { setSearchQuery(newBarcode); setIsAddModalOpen(false); }}>عرض الصنف في المخزون</button>}
+                </div>}
+              </div>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">اسم المنتج التجاري الكامل:</label>
                 <input
@@ -967,48 +1073,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">الباركود:</label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={newBarcode}
-                      onChange={(e) => setNewBarcode(e.target.value)}
-                      onPaste={(e) => {
-                        const text = e.clipboardData.getData('text');
-                        const cleaned = pastedBarcode(text);
-                        if (!cleaned) return;
-                        e.preventDefault();
-                        setNewBarcode(cleaned);
-                      }}
-                      inputMode="numeric"
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                      dir="ltr"
-                      placeholder="الصق أو امسح الباركود"
-                      className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setBarcodeScannerTarget('new')}
-                      className="p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shrink-0 transition-colors"
-                      title="مسح باركود الصنف بالكاميرا"
-                    >
-                      <Camera className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">رمز SKU:</label>
-                  <input
-                    type="text"
-                    value={newSku}
-                    onChange={(e) => setNewSku(e.target.value)}
-                    placeholder="توليد تلقائي"
-                    className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
-                  />
-                </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">رمز SKU:</label>
+                <input
+                  type="text"
+                  value={newSku}
+                  onChange={(e) => setNewSku(e.target.value)}
+                  placeholder="توليد تلقائي"
+                  className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
+                />
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -1687,7 +1760,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         onClose={() => setBarcodeScannerTarget(null)}
         onScanSuccess={(code) => {
           if (barcodeScannerTarget === 'new') {
-            setNewBarcode(code);
+            updateNewBarcode(code);
+            void lookupBarcode(code);
           } else if (barcodeScannerTarget === 'search') {
             setSearchQuery(code);
           }
