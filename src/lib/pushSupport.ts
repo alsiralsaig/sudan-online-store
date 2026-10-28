@@ -48,6 +48,7 @@ const IN_APP_PATTERNS = [
   /MicroMessenger/i,
   /Twitter/i,
   /musical_ly|BytedanceWebview|TikTok/i,
+  /GSA\/|; wv\)|\bwv\b|WebView/i,
 ];
 
 export const isInAppBrowser = (): boolean => IN_APP_PATTERNS.some((re) => re.test(UA()));
@@ -101,17 +102,21 @@ export function detectPushSupport(): PushSupport {
     };
   }
 
-  if (isInAppBrowser() && !hasApis) {
+  if (isInAppBrowser()) {
+    // حتى لو واجهات الدفع موجودة، المتصفح المدمج غالباً يفشل في الاشتراك
+    const title = hasApis
+      ? 'تفتح المنصة من داخل تطبيق (فيسبوك/واتساب أو معاينة) — الإشعارات الفورية قد لا تعمل هنا، لكن إشعارات داخل التطبيق تعمل طبيعي.'
+      : 'تفتح المنصة من داخل تطبيق أو متصفح مدمج — هذا النوع يمنع إشعارات الهاتف الفورية.';
     return {
       state: 'in_app_browser',
-      title: 'يبدو أنك تفتح المنصة من داخل تطبيق (واتساب/فيسبوك…) أو متصفح مدمج — وهذا النوع يمنع إشعارات الهاتف.',
+      title,
       steps: [
-        'اضغط زر ⋯ أو ⋮ أعلى الشاشة واختر «فتح في المتصفح» أو «Open in Chrome».',
-        'أو انسخ الرابط وافتحه في Chrome (أندرويد) أو Safari (آيفون).',
-        'ثم افتح جرس الإشعارات واضغط «تفعيل إشعارات الهاتف».',
+        'هذه ليست مشكلة في سند — الإشعارات داخل التطبيق (الجرس) تعمل طبيعي وستصلك كل التنبيهات.',
+        'للإشعارات الفورية خارج التطبيق: اضغط ⋯ أو ⋮ أعلى الشاشة واختر «فتح في المتصفح» / Open in Chrome.',
+        'أو انسخ الرابط وافتحه في Chrome (أندرويد) أو Safari (آيفون)، ثم فعّل «إشعارات الهاتف».',
       ],
       canRetry: true,
-      needsOtherBrowser: true,
+      needsOtherBrowser: hasApis ? false : true,
     };
   }
 
@@ -146,14 +151,14 @@ export function detectPushSupport(): PushSupport {
     return {
       state: 'no_push_api',
       title:
-        'هذا المتصفح لا يوفّر إشعارات الويب. استخدم Chrome (أندرويد) أو Safari (آيفون) أو Edge.',
+        'الإشعارات الفورية خارج التطبيق غير متاحة في هذا المتصفح — لكن الإشعارات داخل التطبيق (الجرس) تعمل وستصلك كل التنبيهات.',
       steps: [
-        'افتح الرابط في Chrome / Safari / Edge بشكل مباشر.',
-        'لو كنت في وضع التخفي (Incognito) اخرج منه — التخفي يمنع الإشعارات.',
-        'ثم اضغط «تفعيل إشعارات الهاتف».',
+        'للإشعارات الفورية خارج التطبيق: افتح الرابط في Chrome (أندرويد) أو Safari (آيفون) أو Edge.',
+        'تأكد أنك لست في وضع التخفي (Incognito) — التخفي يمنع الإشعارات الفورية.',
+        'ثم اضغط «تفعيل إشعارات الهاتف». هذه خطوة اختيارية، ليست إلزامية.',
       ],
       canRetry: true,
-      needsOtherBrowser: true,
+      needsOtherBrowser: false,
     };
   }
 
