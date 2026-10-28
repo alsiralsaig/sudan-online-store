@@ -762,21 +762,21 @@ export default function App() {
       />
 
       {/* Context Bar — merchant sees only his store + branch & role switcher (no tenant list) */}
-      <div className="bg-slate-800 text-slate-300 text-[11px] px-6 py-1.5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700">
+      <div className="theme-context-bar bg-slate-800 text-slate-300 [&[data-theme=light]]:bg-sky-50 text-[11px] px-6 py-1.5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-1.5">
-            <Building className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="font-semibold text-white">{tenant?.tradeName || tenant?.name || 'متجرك'}</span>
-            <span className="text-slate-500">• {tenant?.city || ''}</span>
+            <Building className="w-3.5 h-3.5 text-sky-400" />
+            <span className="font-semibold text-white ctx-tenant">{tenant?.tradeName || tenant?.name || 'متجرك'}</span>
+            <span className="text-slate-500 ctx-city">• {tenant?.city || ''}</span>
           </div>
 
           {/* Branch Switcher */}
           <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-white">فرع العمل:</span>
+            <span className="font-semibold text-white ctx-label">فرع العمل:</span>
             <select
               value={currentBranch?.id || ''}
               onChange={(e) => handleBranchSwitch(e.target.value)}
-              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-0.5 text-[11px] focus:outline-none"
+              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-0.5 text-[11px] focus:outline-none ctx-select"
             >
               {branches.map((b) => (
                 <option key={b.id} value={b.id}>
@@ -788,12 +788,12 @@ export default function App() {
 
           {/* Role Switcher */}
           <div className="flex items-center gap-1.5">
-            <Users className="w-3.5 h-3.5 text-blue-400" />
-            <span className="font-semibold text-white">دور المستخدم (RBAC):</span>
+            <Users className="w-3.5 h-3.5 text-sky-400" />
+            <span className="font-semibold text-white ctx-label">دور المستخدم (RBAC):</span>
             <select
               value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''}
               onChange={(e) => handleActorSwitch(e.target.value)}
-              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-1 text-[11px] focus:outline-none font-semibold max-w-[70vw] sm:max-w-xs"
+              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-1 text-[11px] focus:outline-none font-semibold max-w-[70vw] sm:max-w-xs ctx-select"
             >
               {visibleEmployees.length === 0 ? (
                 <option value="">{ownerDisplayName || 'المالك'}</option>
@@ -810,22 +810,22 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2">
-          <button onClick={async()=>{ await api.merchantLogout(); setMerchantAuthed(false); }} className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px]">خروج المتجر</button>
+          <button onClick={async()=>{ await api.merchantLogout(); setMerchantAuthed(false); }} className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px] ctx-btn-ghost">خروج المتجر</button>
           <button
             onClick={() => switchAppMode('client')}
-            className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-lg text-[11px] flex items-center gap-1 transition-all shadow-xs"
+            className="px-2.5 py-1 bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-all shadow-xs"
             title="فتح تطبيق المتسوقين والجمهور SanadClientApp"
           >
-            <Globe className="w-3.5 h-3.5" />
+            <Globe className="w-3.5 h-3.5 text-white" />
             <span>عرض تطبيق الجمهور (SanadClientApp)</span>
           </button>
         </div>
 
         {/* Offline indicator quick status */}
-        <div className="flex items-center gap-3 font-mono text-[10px]">
+        <div className="flex items-center gap-3 font-mono text-[10px] ctx-meta">
           <span>العملة الافتراضية: SDG (جنيه سوداني)</span>
           {pendingOfflineCount > 0 && (
-            <span className="text-amber-400 font-bold">
+            <span className="text-amber-400 font-bold ctx-pending">
               • فواتير أوفلاين معلقة: {pendingOfflineCount}
             </span>
           )}

@@ -186,3 +186,44 @@
 [data-theme="dark"] .merchant-shell main th {
   color: #e2e8f0;
 }
+
+/* شريط السياق (الكتلة المحددة في الصورة) — نهاري: سماوي+أبيض */
+[data-theme="light"] .theme-context-bar {
+  background: #ffffff !important;
+  border-color: #e0f2fe !important;
+  color: #0c4a6e !important;
+}
+[data-theme="light"] .theme-context-bar .ctx-tenant,
+[data-theme="light"] .theme-context-bar .ctx-label,
+[data-theme="light"] .theme-context-bar .ctx-meta {
+  color: #0c4a6e !important;
+}
+[data-theme="light"] .theme-context-bar .ctx-city { color: #64748b !important; }
+[data-theme="light"] .theme-context-bar .ctx-select {
+  background: #f0f9ff !important;
+  color: #0f172a !important;
+  border-color: #7dd3fc !important;
+}
+[data-theme="light"] .theme-context-bar .ctx-btn-ghost {
+  background: #f1f5f9 !important;
+  color: #334155 !important;
+  border-color: #cbd5e1 !important;
+}
+[data-theme="medium"] .theme-context-bar {
+  background: #e0f2fe !important;
+  border-color: #7dd3fc !important;
+  color: #0c4a6e !important;
+}
+[data-theme="medium"] .theme-context-bar .ctx-tenant,
+[data-theme="medium"] .theme-context-bar .ctx-label,
+[data-theme="medium"] .theme-context-bar .ctx-meta { color: #0c4a6e !important; }
+[data-theme="medium"] .theme-context-bar .ctx-select {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #0ea5e9 !important;
+}
+[data-theme="medium"] .theme-context-bar .ctx-btn-ghost {
+  background: #ffffff !important;
+  color: #0c4a6e !important;
+  border-color: #7dd3fc !important;
+}
