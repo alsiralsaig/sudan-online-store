@@ -31,6 +31,7 @@ import {
 import { NotificationBell } from '../../components/Common/NotificationBell.tsx';
 import { SanadLogo } from '../../components/Common/SanadLogo.tsx';
 import { TenantApplicationModal } from '../../components/Common/TenantApplicationModal.tsx';
+import { ThemeSwitcher } from '../../components/Common/ThemeSwitcher.tsx';
 import { ClientSectionsDropdown } from './ClientSectionsDropdown.tsx';
 import { SlideStrip } from './SlideStrip.tsx';
 import { PushOptInCard } from '../../components/Common/PushOptInCard.tsx';
@@ -351,11 +352,13 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
         </div>
 
         {/* Thin shortcut strip — scrolls on its own, never widens the page */}
-        <div className="max-w-md md:max-w-4xl mx-auto overflow-x-auto no-scrollbar border-t border-slate-100/80">
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 w-max">
-            <button
-              onClick={() => setTenantModalOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-emerald-900 text-white text-[11px] font-black whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1 shadow-sm"
+        <div className="max-w-md md:max-w-4xl mx-auto flex items-center gap-2 border-t border-slate-100/80 px-1.5 py-1">
+          <div className="shrink-0"><ThemeSwitcher compact /></div>
+          <div className="flex-1 overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-1.5 px-1 py-0.5 w-max">
+              <button
+                onClick={() => setTenantModalOpen(true)}
+                className="px-2.5 py-1 rounded-lg bg-sky-600 text-white text-[11px] font-black whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1 shadow-sm"
             >
               <StoreIcon className="w-3 h-3" /> طلب متجر
             </button>
@@ -387,8 +390,9 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
               onClick={() => onNavigateTab?.('track_order')}
               className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 text-[11px] font-bold whitespace-nowrap active:scale-95 transition-transform flex items-center gap-1"
             >
-              <Clock3 className="w-3 h-3 text-emerald-700" /> تتبع طلبي
+              <Clock3 className="w-3 h-3 text-sky-600" /> تتبع طلبي
             </button>
+            </div>
           </div>
         </div>
       </div>
