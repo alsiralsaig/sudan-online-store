@@ -97,8 +97,6 @@ export const InventoryAuditModal: React.FC<InventoryAuditModalProps> = ({
   // Barcode Scanning / Camera simulator
   const [barcodeInput, setBarcodeInput] = useState('');
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [cameraPermissionError, setCameraPermissionError] = useState(false);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const barcodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Selected item in phone focus mode
@@ -180,11 +178,6 @@ export const InventoryAuditModal: React.FC<InventoryAuditModalProps> = ({
       loadAudits();
     }
   }, [isOpen, branch?.id]);
-
-  // When CameraBarcodeScanner modal handles scanning directly, no dummy stream needed here
-  useEffect(() => {
-    setCameraPermissionError(false);
-  }, [isCameraActive]);
 
   // Create new audit session
   const handleStartNewAudit = async () => {

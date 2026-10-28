@@ -56,6 +56,7 @@ import { PosCustomerModal } from './PosCustomerModal.tsx';
 import { VoiceSaleAssistant } from './VoiceSaleAssistant.tsx';
 import {
   getPosPrinterSettings,
+  getThermalReceiptSettings,
   executePosPrint,
   resolveReceiptSettings,
 } from '../../lib/printerSettings.ts';

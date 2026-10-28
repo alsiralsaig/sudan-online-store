@@ -84,6 +84,9 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
   const lastScannedCodeRef = useRef<{ code: string; time: number }>({ code: '', time: 0 });
   const continuousModeRef = useRef(continuousMode);
   const frameCounterRef = useRef(0);
+  const cameraGenerationRef = useRef(0);
+  const callbacksRef = useRef({ onClose, onScanSuccess });
+  callbacksRef.current = { onClose, onScanSuccess };
 
   useEffect(() => {
     continuousModeRef.current = continuousMode;
@@ -126,6 +129,7 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
   }, [soundEnabled]);
 
   const stopScanner = useCallback(() => {
+    cameraGenerationRef.current += 1;
     if (scanLoopTimerRef.current !== null) {
       window.clearTimeout(scanLoopTimerRef.current);
       scanLoopTimerRef.current = null;
@@ -167,12 +171,14 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
       lastScannedCodeRef.current = { code: cleanCode, time: now };
       setLastScanned(cleanCode);
       playBeep();
-      onScanSuccess(cleanCode);
+      callbacksRef.current.onScanSuccess(cleanCode);
 
       if (!continuousModeRef.current) {
+        const generation = cameraGenerationRef.current;
         window.setTimeout(() => {
+          if (!isMountedRef.current || cameraGenerationRef.current !== generation) return;
           stopScanner();
-          onClose();
+          callbacksRef.current.onClose();
         }, 280);
       } else {
         window.setTimeout(() => {
@@ -182,13 +188,14 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
         }, 1300);
       }
     },
-    [onClose, onScanSuccess, playBeep, stopScanner]
+    [playBeep, stopScanner]
   );
 
   // Start camera stream & dual-engine barcode reader
   const startCamera = useCallback(
     async (explicitDeviceId?: string) => {
       stopScanner();
+      const generation = cameraGenerationRef.current;
       setErrorMsg(null);
 
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -239,6 +246,7 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
 
       let lastErr: any = null;
       for (const constraints of constraintAttempts) {
+        if (!isMountedRef.current || cameraGenerationRef.current !== generation) return;
         try {
           stream = await navigator.mediaDevices.getUserMedia(constraints);
           if (stream) break;
@@ -247,7 +255,7 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
         }
       }
 
-      if (!isMountedRef.current) {
+      if (!isMountedRef.current || cameraGenerationRef.current !== generation) {
         stream?.getTracks().forEach((t) => t.stop());
         return;
       }
@@ -296,6 +304,11 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
         // ignore enumerate error
       }
 
+      if (!isMountedRef.current || cameraGenerationRef.current !== generation) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
       // Apply continuous autofocus, exposure & inspect torch + zoom capabilities
       if (videoTrack) {
         try {
@@ -315,6 +328,10 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
         }
       }
 
+      if (!isMountedRef.current || cameraGenerationRef.current !== generation) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       const videoEl = videoRef.current;
       if (videoEl) {
         videoEl.srcObject = stream;
@@ -322,7 +339,7 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
         await videoEl.play().catch(() => {});
       }
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || cameraGenerationRef.current !== generation) return;
       setIsScanning(true);
 
       // Prepare optional Native BarcodeDetector (fast hardware MLKit path when supported)
@@ -360,7 +377,7 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
 
       // Continuous non-overlapping decode loop (Native + ZXing C++ WASM)
       const tick = async () => {
-        if (!isMountedRef.current || !streamRef.current) return;
+        if (!isMountedRef.current || cameraGenerationRef.current !== generation || streamRef.current !== stream) return;
 
         const v = videoRef.current;
         if (v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0 && !isBusyDecodingRef.current) {
@@ -420,7 +437,7 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
               }
             }
 
-            if (foundText && isMountedRef.current) {
+            if (foundText && isMountedRef.current && cameraGenerationRef.current === generation) {
               handleSuccessfulScan(foundText);
             }
           } catch {
@@ -430,7 +447,7 @@ export const CameraBarcodeScanner: React.FC<CameraBarcodeScannerProps> = ({
           }
         }
 
-        if (isMountedRef.current && streamRef.current) {
+        if (isMountedRef.current && cameraGenerationRef.current === generation && streamRef.current === stream) {
           scanLoopTimerRef.current = window.setTimeout(tick, 90);
         }
       };
