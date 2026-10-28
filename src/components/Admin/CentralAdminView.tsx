@@ -82,6 +82,19 @@ export const CentralAdminView: React.FC = () => {
     loadAll();
   }, []);
 
+  const [codeFor, setCodeFor] = useState<{ tenantId: string; name: string; code: string } | null>(null);
+
+  const handleIssueCode = async (tenantId: string, name: string) => {
+    if (!confirm(`توليد رمز جديد للمتجر «${name}»؟\nالرمز القديم سيُلغى فوراً. انسخ الجديد وأرسله للتاجر عبر واتساب آمن.`)) return;
+    try {
+      const res = await api.issueMerchantCode(tenantId);
+      setCodeFor({ tenantId, name, code: res.code });
+      loadAll();
+    } catch (e: any) {
+      alert('فشل توليد الرمز: ' + (e.message || ''));
+    }
+  };
+
   // Suspend / Activate Tenant
   const handleToggleTenantStatus = async (tenantId: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'active' ? 'suspended' : 'active';
@@ -295,16 +308,25 @@ export const CentralAdminView: React.FC = () => {
                       )}
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <button
-                        onClick={() => handleToggleTenantStatus(t.id, t.status)}
-                        className={`px-3 py-1 rounded text-xs font-semibold whitespace-nowrap transition-colors ${
-                          t.status === 'active'
-                            ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
-                            : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
-                        }`}
-                      >
-                        {t.status === 'active' ? 'تجميد الحساب' : 'إعادة التفعيل'}
-                      </button>
+                      <div className="flex flex-col gap-1 items-center">
+                        <button
+                          onClick={() => handleIssueCode(t.id, t.name)}
+                          className="px-3 py-1 rounded text-[11px] font-black bg-slate-900 text-white hover:bg-black whitespace-nowrap"
+                        >
+                          {t.hasMerchantCode ? 'إعادة إصدار رمز المتجر' : 'إصدار رمز المتجر'}
+                        </button>
+                        <span className={`text-[10px] ${t.hasMerchantCode ? 'text-emerald-600' : 'text-amber-600'}`}>{t.hasMerchantCode ? 'له رمز' : 'بلا رمز — أنشئه الآن'}</span>
+                        <button
+                          onClick={() => handleToggleTenantStatus(t.id, t.status)}
+                          className={`px-3 py-1 rounded text-xs font-semibold whitespace-nowrap transition-colors ${
+                            t.status === 'active'
+                              ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                              : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                          }`}
+                        >
+                          {t.status === 'active' ? 'تجميد الحساب' : 'إعادة التفعيل'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -532,6 +554,28 @@ export const CentralAdminView: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {codeFor && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4" dir="rtl">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl border border-slate-200">
+            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm">رمز المتجر — {codeFor.name}</h3>
+                <p className="text-[11px] text-slate-400">يُعرض مرة واحدة فقط. انسخه وأرسله عبر واتساب آمن.</p>
+              </div>
+              <button onClick={() => setCodeFor(null)} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6 space-y-3">
+              <p className="text-[11px] text-slate-600">القديم (إن وجد) أُلغي. الجديد:</p>
+              <div className="rounded-xl bg-slate-950 text-emerald-300 font-mono text-sm tracking-widest px-4 py-4 text-center select-all border border-slate-800">{codeFor.code}</div>
+              <div className="flex gap-2">
+                <button onClick={async()=>{ await navigator.clipboard.writeText(codeFor.code); alert('تم النسخ'); }} className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-black">نسخ الرمز</button>
+                <a href={`https://wa.me/?text=${encodeURIComponent(`رمز متجرك في منصة سند: ${codeFor.code} — احتفظ به ولا تشاركه إلا مع موظفيك`)}`} target="_blank" rel="noreferrer" className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black text-center">إرسال واتساب</a>
+              </div>
+              <button onClick={()=>setCodeFor(null)} className="w-full py-2 text-xs text-slate-600">إغلاق — لن يظهر مرة أخرى</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
