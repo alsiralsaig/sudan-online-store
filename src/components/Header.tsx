@@ -150,16 +150,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             المحاسبة والتقارير
           </button>
-          <button
-            onClick={() => onTabChange('admin')}
-            className={`whitespace-nowrap pb-1 transition-colors ${
-              currentTab === 'admin'
-                ? 'text-emerald-700 font-semibold border-b-2 border-emerald-600'
-                : 'hover:text-slate-900'
-            }`}
-          >
-            إدارة المنصة المركزية
-          </button>
+          {/* إدارة المنصة المركزية — لا تظهر داخل تطبيق التاجر؛ للإدارة فقط عبر ?app=super_admin */}
         </nav>
 
         {/* Zone 3: Primary Action & Quick Tools */}
@@ -561,15 +552,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Megaphone className="w-3.5 h-3.5 text-emerald-600" />
           <span>إعلاناتي</span>
         </button>
-        <button
-          onClick={() => onTabChange('admin')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'admin' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <ShieldAlert className="w-3.5 h-3.5" />
-          <span>إدارة المنصة المركزية</span>
-        </button>
+        {/* إدارة المنصة المركزية محجوبة في متجر التاجر — للإدارة فقط عبر ?app=super_admin */}
       </div>
 
       <TenantApplicationModal

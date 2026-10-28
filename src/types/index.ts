@@ -40,6 +40,10 @@ export interface Tenant {
   subscriptionExpiresAt: string;
   settings: TenantSettings;
   createdAt: string;
+  /** Hashed store access code — never store plaintext. */
+  merchantCodeHash?: string;
+  merchantCodeIssuedAt?: string;
+  merchantCodeIssuedBy?: string;
 }
 
 export interface SubscriptionPlan {

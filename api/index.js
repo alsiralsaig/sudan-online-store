@@ -3068,6 +3068,29 @@ var Database = class {
   getTenantBySlug(slug) {
     return this.data.tenants.find((t) => t.slug === slug);
   }
+  findTenantByMerchantCodeHash(hash) {
+    if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return void 0;
+    return this.data.tenants.find((t) => t.merchantCodeHash === hash);
+  }
+  setMerchantCode(tenantId, hash, issuedBy) {
+    const tenant = this.getTenant(tenantId);
+    if (!tenant) return null;
+    if (!/^[0-9a-f]{64}$/.test(hash)) return null;
+    tenant.merchantCodeHash = hash;
+    tenant.merchantCodeIssuedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (issuedBy) tenant.merchantCodeIssuedBy = issuedBy;
+    this.save();
+    return tenant;
+  }
+  clearMerchantCode(tenantId) {
+    const tenant = this.getTenant(tenantId);
+    if (!tenant) return false;
+    delete tenant.merchantCodeHash;
+    delete tenant.merchantCodeIssuedAt;
+    delete tenant.merchantCodeIssuedBy;
+    this.save();
+    return true;
+  }
   // Branch helper
   getBranches(tenantId) {
     return this.data.branches.filter((b) => b.tenantId === tenantId);
@@ -5537,31 +5560,343 @@ async function runBackup(at = /* @__PURE__ */ new Date()) {
   }
 }
 
-// src/server/routes.ts
-var apiRouter = Router();
-apiRouter.get("/barcode-lookup/:barcode", barcodeLookupHandler);
-var requireTenant = (req, res, next) => {
-  const tenantId = req.headers["x-tenant-id"] || "tenant_alrowad";
-  const tenant = db.getTenant(tenantId);
-  if (!tenant) {
-    return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629 \u0641\u064A \u0627\u0644\u0646\u0638\u0627\u0645" });
+// src/server/securitySessions.ts
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+function safeEqual(a, b) {
+  const first = createHash("sha256").update(a, "utf8").digest();
+  const second = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(first, second);
+}
+function validSigningSecret(secret) {
+  return typeof secret === "string" && secret.length >= 32 && secret.length <= 1024;
+}
+function passwordMatches(input, configured2) {
+  if (typeof input !== "string" || input.length > 1024 || !configured2 || configured2.length > 1024) return false;
+  return safeEqual(input, configured2);
+}
+function newMerchantCode() {
+  const hex = randomBytes(20).toString("hex").toUpperCase();
+  return `SND-${hex.match(/.{1,4}/g).join("-")}`;
+}
+function merchantCodeHash(input) {
+  if (typeof input !== "string" || input.length > 80) return null;
+  const normalized = input.toUpperCase().replace(/[\s-]/g, "");
+  if (!/^SND[0-9A-F]{40}$/.test(normalized)) return null;
+  return createHash("sha256").update(`sanad-merchant-code-v1:${normalized}`, "utf8").digest("hex");
+}
+function adminRevision(password) {
+  return createHash("sha256").update(`sanad-admin-password-v1:${password}`, "utf8").digest("hex");
+}
+function signature(payload, secret) {
+  return createHmac("sha256", secret).update(`sanad-session-v1.${payload}`).digest("base64url");
+}
+function signSession(input, secret, now = Date.now()) {
+  if (!validSigningSecret(secret)) throw new Error("AUTH_SECRET_NOT_CONFIGURED");
+  if (!/^[0-9a-f]{64}$/.test(input.revision)) throw new Error("INVALID_REVISION");
+  if (input.role === "merchant" && (typeof input.tenantId !== "string" || !input.tenantId || input.tenantId.length > 200)) throw new Error("TENANT_REQUIRED");
+  if (input.role === "admin" && input.tenantId !== void 0) throw new Error("INVALID_ADMIN_TENANT");
+  const maxAge = input.role === "admin" ? 12 * 60 * 60 * 1e3 : 14 * 24 * 60 * 60 * 1e3;
+  const claims = { v: 1, role: input.role, ...input.role === "merchant" ? { tenantId: input.tenantId } : {}, revision: input.revision, issuedAt: now, expiresAt: now + maxAge, nonce: randomBytes(16).toString("hex") };
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  return `${payload}.${signature(payload, secret)}`;
+}
+function verifySession(token2, secret, role, now = Date.now()) {
+  if (!validSigningSecret(secret) || typeof token2 !== "string" || token2.length > 4096) return null;
+  const pieces = token2.split(".");
+  if (pieces.length !== 2 || !/^[A-Za-z0-9_-]+$/.test(pieces[0]) || !/^[A-Za-z0-9_-]{43}$/.test(pieces[1])) return null;
+  if (!safeEqual(pieces[1], signature(pieces[0], secret))) return null;
+  try {
+    const value = JSON.parse(Buffer.from(pieces[0], "base64url").toString("utf8"));
+    if (!value || typeof value !== "object") return null;
+    const claims = value;
+    if (claims.v !== 1 || claims.role !== role || !Number.isSafeInteger(claims.issuedAt) || !Number.isSafeInteger(claims.expiresAt) || claims.issuedAt > now || claims.expiresAt <= now || claims.expiresAt <= claims.issuedAt || !/^[0-9a-f]{64}$/.test(claims.revision) || !/^[0-9a-f]{32}$/.test(claims.nonce)) return null;
+    if (claims.role === "merchant" && (typeof claims.tenantId !== "string" || !claims.tenantId || claims.tenantId.length > 200)) return null;
+    if (claims.role === "admin" && claims.tenantId !== void 0) return null;
+    const maxAge = role === "admin" ? 12 * 60 * 60 * 1e3 : 14 * 24 * 60 * 60 * 1e3;
+    if (claims.expiresAt - claims.issuedAt > maxAge) return null;
+    return claims;
+  } catch {
+    return null;
   }
-  req.tenantId = tenantId;
+}
+function sessionRevisionMatches(claims, expected) {
+  return typeof expected === "string" && /^[0-9a-f]{64}$/.test(expected) && safeEqual(claims.revision, expected);
+}
+
+// src/server/auth.ts
+function getSecret() {
+  return process.env.SANAD_AUTH_SECRET;
+}
+function getAdminPassword() {
+  return process.env.SANAD_ADMIN_PASSWORD;
+}
+function parseCookies(header) {
+  const out = {};
+  if (!header) return out;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const k = part.slice(0, eq).trim();
+    const v = part.slice(eq + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  }
+  return out;
+}
+function bearerToken(req) {
+  const h = req.headers.authorization || "";
+  if (h.toLowerCase().startsWith("bearer ")) return h.slice(7).trim();
+  return void 0;
+}
+function extractToken(req, names) {
+  const cookies = parseCookies(req.headers.cookie);
+  for (const n of names) {
+    if (cookies[n]) return cookies[n];
+  }
+  const bearer = bearerToken(req);
+  if (bearer) return bearer;
+  const alt = req.headers["x-admin-token"] || req.headers["x-merchant-token"];
+  if (alt) return alt;
+  return void 0;
+}
+function cookieOpts(maxAgeSec) {
+  const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+  return `HttpOnly; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax${isProd ? "; Secure" : ""}`;
+}
+function setCookie(res, name, value, maxAgeSec) {
+  const serialized = `${name}=${encodeURIComponent(value)}; ${cookieOpts(maxAgeSec)}`;
+  const existing = res.getHeader("Set-Cookie");
+  if (!existing) {
+    res.setHeader("Set-Cookie", serialized);
+  } else if (Array.isArray(existing)) {
+    res.setHeader("Set-Cookie", [...existing, serialized]);
+  } else {
+    res.setHeader("Set-Cookie", [existing, serialized]);
+  }
+}
+function clearCookie(res, name) {
+  const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+  const serialized = `${name}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${isProd ? "; Secure" : ""}`;
+  const existing = res.getHeader("Set-Cookie");
+  if (!existing) res.setHeader("Set-Cookie", serialized);
+  else if (Array.isArray(existing)) res.setHeader("Set-Cookie", [...existing, serialized]);
+  else res.setHeader("Set-Cookie", [existing, serialized]);
+}
+function authSecretConfigured() {
+  return validSigningSecret(getSecret());
+}
+function adminAuthMiddleware(req, res, next) {
+  const secret = getSecret();
+  const password = getAdminPassword();
+  if (!validSigningSecret(secret) || !password) {
+    if (process.env.NODE_ENV !== "production" && !process.env.VERCEL && !validSigningSecret(secret)) {
+      req.adminName = "\u0645\u062F\u064A\u0631 \u0627\u0644\u0645\u0646\u0635\u0629 (\u0645\u0624\u0642\u062A \u2014 \u0628\u0644\u0627 \u062D\u0645\u0627\u064A\u0629)";
+      return next();
+    }
+    return res.status(500).json({ error: "AUTH_NOT_CONFIGURED", message: "\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0623\u0645\u0627\u0646 \u063A\u064A\u0631 \u0645\u0643\u062A\u0645\u0644\u0629 \u0641\u064A \u0627\u0644\u062E\u0627\u062F\u0645." });
+  }
+  const token2 = extractToken(req, ["sanad_admin_token", "sanad_admin"]);
+  if (!token2) return res.status(401).json({ error: "UNAUTHORIZED", message: "\u064A\u062C\u0628 \u062A\u0633\u062C\u064A\u0644 \u062F\u062E\u0648\u0644 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0623\u0648\u0644\u0627\u064B." });
+  const claims = verifySession(token2, secret, "admin");
+  if (!claims) return res.status(401).json({ error: "UNAUTHORIZED", message: "\u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u062C\u0644\u0633\u0629\u060C \u0633\u062C\u0651\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0645\u062C\u062F\u062F\u0627\u064B." });
+  const expected = adminRevision(password);
+  if (!sessionRevisionMatches(claims, expected)) {
+    return res.status(401).json({ error: "UNAUTHORIZED", message: "\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u062A\u063A\u064A\u0651\u0631\u062A\u060C \u0633\u062C\u0651\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0645\u062C\u062F\u062F\u0627\u064B." });
+  }
+  req.adminName = "\u0645\u062F\u064A\u0631 \u0627\u0644\u0645\u0646\u0635\u0629";
+  req.adminRevision = expected;
+  req.adminClaims = claims;
+  next();
+}
+function merchantAuthMiddleware(req, res, next) {
+  const secret = getSecret();
+  if (!validSigningSecret(secret)) {
+    const fallbackId = req.headers["x-tenant-id"] || "tenant_alrowad";
+    const fallbackTenant = db.getTenant(fallbackId);
+    if (!fallbackTenant) return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629 \u0641\u064A \u0627\u0644\u0646\u0638\u0627\u0645" });
+    const authReq2 = req;
+    authReq2.tenantId = fallbackId;
+    const rawActorName2 = req.headers["x-actor-name"] || "";
+    let decodedActorName = fallbackTenant.ownerName || fallbackTenant.tradeName || "\u0645\u0627\u0644\u0643 \u0627\u0644\u0645\u062A\u062C\u0631";
+    if (rawActorName2) {
+      try {
+        decodedActorName = decodeURIComponent(rawActorName2);
+      } catch {
+        decodedActorName = rawActorName2;
+      }
+    }
+    authReq2.actorName = decodedActorName;
+    authReq2.actorRole = req.headers["x-actor-role"] || "owner";
+    authReq2.actorId = req.headers["x-actor-id"] || "emp_owner_" + fallbackId;
+    authReq2.authRole = "merchant";
+    return next();
+  }
+  const token2 = extractToken(req, ["sanad_merchant_token", "sanad_merchant"]);
+  if (!token2) return res.status(401).json({ error: "UNAUTHORIZED", message: "\u064A\u062C\u0628 \u062A\u0633\u062C\u064A\u0644 \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631 \u0623\u0648\u0644\u0627\u064B." });
+  const claims = verifySession(token2, secret, "merchant");
+  if (!claims || !claims.tenantId) return res.status(401).json({ error: "UNAUTHORIZED", message: "\u062C\u0644\u0633\u0629 \u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
+  const tenant = db.getTenant(claims.tenantId);
+  if (!tenant) return res.status(401).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (tenant.status === "suspended") return res.status(403).json({ error: "TENANT_SUSPENDED", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0648\u0642\u0648\u0641." });
+  const storedHash = tenant.merchantCodeHash;
+  if (!storedHash || !/^[0-9a-f]{64}$/.test(storedHash)) {
+    return res.status(401).json({ error: "CODE_NOT_ISSUED", message: "\u0644\u0645 \u064A\u062A\u0645 \u0625\u0635\u062F\u0627\u0631 \u0631\u0645\u0632 \u0644\u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631 \u0628\u0639\u062F." });
+  }
+  if (!sessionRevisionMatches(claims, storedHash)) {
+    return res.status(401).json({ error: "CODE_ROTATED", message: "\u0631\u0645\u0632 \u0627\u0644\u0645\u062A\u062C\u0631 \u062A\u063A\u064A\u0651\u0631\u060C \u0633\u062C\u0651\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0645\u062C\u062F\u062F\u0627\u064B." });
+  }
+  const authReq = req;
+  authReq.tenantId = tenant.id;
+  const rawActorId = req.headers["x-actor-id"] || "emp_owner_" + tenant.id;
   const rawActorName = req.headers["x-actor-name"] || "";
-  let decodedActorName = "\u0623\u062D\u0645\u062F \u0627\u0644\u0637\u064A\u0628 \u0627\u0644\u0631\u0648\u0627\u062F";
+  let decodedName = tenant.ownerName || tenant.tradeName || "\u0645\u0627\u0644\u0643 \u0627\u0644\u0645\u062A\u062C\u0631";
   if (rawActorName) {
     try {
-      decodedActorName = decodeURIComponent(rawActorName);
+      decodedName = decodeURIComponent(rawActorName);
     } catch {
-      decodedActorName = rawActorName;
+      decodedName = rawActorName;
     }
   }
-  req.actorName = decodedActorName;
-  req.actorRole = req.headers["x-actor-role"] || "owner";
-  req.actorId = req.headers["x-actor-id"] || "emp_owner_rowad";
+  const rawRole = req.headers["x-actor-role"] || "owner";
+  const employees = db.getSchema().employees || [];
+  const employee = employees.find((e) => e.id === rawActorId);
+  if (employee) {
+    if (employee.tenantId !== tenant.id) {
+      return res.status(403).json({ error: "FORBIDDEN_ACTOR", message: "\u0647\u0630\u0627 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+    }
+    authReq.actorId = employee.id;
+    authReq.actorName = employee.name;
+    authReq.actorRole = employee.role;
+  } else {
+    authReq.actorId = `emp_owner_${tenant.id}`;
+    authReq.actorName = decodedName;
+    authReq.actorRole = rawRole || "owner";
+  }
+  authReq.authRole = "merchant";
+  req.merchantClaims = claims;
   next();
-};
-apiRouter.get("/tenants/list", (req, res) => {
+}
+function issueAdminSession(password, res) {
+  const secret = getSecret();
+  const configured2 = getAdminPassword();
+  if (!validSigningSecret(secret) || !configured2) return null;
+  if (!passwordMatches(password, configured2)) return null;
+  const revision = adminRevision(configured2);
+  const token2 = signSession({ role: "admin", revision }, secret);
+  setCookie(res, "sanad_admin_token", token2, 12 * 60 * 60);
+  return token2;
+}
+function destroyAdminSession(res) {
+  clearCookie(res, "sanad_admin_token");
+}
+function issueMerchantSession(tenantId, codeHash, res) {
+  const secret = getSecret();
+  if (!validSigningSecret(secret)) return null;
+  const tenant = db.getTenant(tenantId);
+  if (!tenant) return null;
+  const stored = tenant.merchantCodeHash;
+  if (stored !== codeHash) return null;
+  const token2 = signSession({ role: "merchant", tenantId, revision: codeHash }, secret);
+  setCookie(res, "sanad_merchant_token", token2, 14 * 24 * 60 * 60);
+  return token2;
+}
+function destroyMerchantSession(res) {
+  clearCookie(res, "sanad_merchant_token");
+}
+
+// src/server/routes.ts
+import crypto from "node:crypto";
+var apiRouter = Router();
+apiRouter.get("/barcode-lookup/:barcode", barcodeLookupHandler);
+function tryMerchantTenantId(req) {
+  const secret = process.env.SANAD_AUTH_SECRET;
+  if (!validSigningSecret(secret)) return null;
+  const cookieHeader = req.headers.cookie;
+  let token2;
+  if (cookieHeader) {
+    for (const part of cookieHeader.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const k = part.slice(0, eq).trim();
+      if (k === "sanad_merchant_token") token2 = decodeURIComponent(part.slice(eq + 1).trim());
+    }
+  }
+  if (!token2) {
+    const h = req.headers.authorization || "";
+    if (h.toLowerCase().startsWith("bearer ")) token2 = h.slice(7).trim();
+  }
+  if (!token2) token2 = req.headers["x-merchant-token"] || void 0;
+  if (!token2) return null;
+  const claims = verifySession(token2, secret, "merchant");
+  if (!claims || !claims.tenantId) return null;
+  const tenant = db.getTenant(claims.tenantId);
+  if (!tenant) return null;
+  const stored = tenant.merchantCodeHash;
+  if (!stored || claims.revision !== stored) return null;
+  return claims.tenantId;
+}
+apiRouter.get("/auth/status", (req, res) => {
+  res.json({
+    authSecretConfigured: authSecretConfigured(),
+    adminPasswordConfigured: !!process.env.SANAD_ADMIN_PASSWORD
+  });
+});
+apiRouter.post("/auth/admin/login", (req, res) => {
+  const { password } = req.body || {};
+  if (!validSigningSecret(process.env.SANAD_AUTH_SECRET)) {
+    return res.status(500).json({ error: "AUTH_NOT_CONFIGURED", message: "\u0645\u0641\u062A\u0627\u062D \u0627\u0644\u062C\u0644\u0633\u0627\u062A \u063A\u064A\u0631 \u0645\u064F\u0647\u064A\u0623 \u0641\u064A \u0627\u0644\u062E\u0627\u062F\u0645." });
+  }
+  if (!process.env.SANAD_ADMIN_PASSWORD) {
+    return res.status(500).json({ error: "ADMIN_NOT_CONFIGURED", message: "\u0643\u0644\u0645\u0629 \u0645\u0631\u0648\u0631 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u063A\u064A\u0631 \u0645\u064F\u0647\u064A\u0623\u0629." });
+  }
+  const token2 = issueAdminSession(String(password || ""), res);
+  if (!token2) return res.status(401).json({ error: "INVALID_CREDENTIALS", message: "\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629." });
+  res.json({ success: true, token: token2 });
+});
+apiRouter.post("/auth/admin/logout", (req, res) => {
+  destroyAdminSession(res);
+  res.json({ success: true });
+});
+apiRouter.get("/auth/admin/me", adminAuthMiddleware, (req, res) => {
+  res.json({ authenticated: true, role: "admin" });
+});
+apiRouter.post("/auth/merchant/login", (req, res) => {
+  const { code, slug, tenantId } = req.body || {};
+  const rawCode = String(code || "").trim();
+  if (!validSigningSecret(process.env.SANAD_AUTH_SECRET)) {
+    return res.status(500).json({ error: "AUTH_NOT_CONFIGURED", message: "\u0645\u0641\u062A\u0627\u062D \u0627\u0644\u062C\u0644\u0633\u0627\u062A \u063A\u064A\u0631 \u0645\u064F\u0647\u064A\u0623 \u0641\u064A \u0627\u0644\u062E\u0627\u062F\u0645." });
+  }
+  const hash = merchantCodeHash(rawCode);
+  if (!hash) return res.status(401).json({ error: "INVALID_CODE", message: "\u0631\u0645\u0632 \u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D \u2014 \u062A\u0623\u0643\u062F \u0645\u0646 \u0627\u0644\u0646\u0633\u062E \u0627\u0644\u0643\u0627\u0645\u0644." });
+  let tenant = db.findTenantByMerchantCodeHash(hash);
+  const hint = String(slug || tenantId || "").trim();
+  if (hint) {
+    const hinted = db.getTenant(hint) || db.getTenantBySlug(hint);
+    if (!hinted) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+    if (hinted.id !== tenant?.id) {
+      if (tenant) return res.status(401).json({ error: "CODE_TENANT_MISMATCH", message: "\u0627\u0644\u0631\u0645\u0632 \u0644\u0627 \u064A\u0637\u0627\u0628\u0642 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+      const stored = hinted.merchantCodeHash;
+      if (stored !== hash) return res.status(401).json({ error: "INVALID_CODE", message: "\u0627\u0644\u0631\u0645\u0632 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D \u0644\u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+      tenant = hinted;
+    }
+  }
+  if (!tenant) return res.status(401).json({ error: "INVALID_CODE", message: "\u0627\u0644\u0631\u0645\u0632 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D." });
+  if (tenant.status === "suspended") return res.status(403).json({ error: "TENANT_SUSPENDED", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0648\u0642\u0648\u0641." });
+  const token2 = issueMerchantSession(tenant.id, hash, res);
+  if (!token2) return res.status(500).json({ error: "ISSUE_FAILED", message: "\u062A\u0639\u0630\u0631 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062C\u0644\u0633\u0629." });
+  res.json({ success: true, token: token2, tenant: { id: tenant.id, name: tenant.name, tradeName: tenant.tradeName, slug: tenant.slug, city: tenant.city } });
+});
+apiRouter.post("/auth/merchant/logout", (req, res) => {
+  destroyMerchantSession(res);
+  res.json({ success: true });
+});
+apiRouter.get("/auth/merchant/me", merchantAuthMiddleware, (req, res) => {
+  const authReq = req;
+  const tenant = db.getTenant(authReq.tenantId);
+  if (!tenant) return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
+  const { merchantCodeHash: _h, ...safe } = tenant;
+  res.json({ authenticated: true, role: "merchant", tenant: safe });
+});
+apiRouter.get("/tenants/list", adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   res.json({
     tenants: schema.tenants.filter((t) => t.status !== "suspended").map((t) => ({
@@ -5578,11 +5913,13 @@ apiRouter.get("/tenants/list", (req, res) => {
     }))
   });
 });
-apiRouter.get("/tenants/current", requireTenant, (req, res) => {
+apiRouter.get("/tenants/current", merchantAuthMiddleware, (req, res) => {
   const tenant = db.getTenant(req.tenantId);
-  res.json({ tenant });
+  if (!tenant) return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
+  const { merchantCodeHash: _h, ...safe } = tenant;
+  res.json({ tenant: safe });
 });
-apiRouter.put("/tenants/current", requireTenant, (req, res) => {
+apiRouter.put("/tenants/current", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const tenant = db.getTenant(authReq.tenantId);
   if (!tenant) return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
@@ -5605,14 +5942,15 @@ apiRouter.put("/tenants/current", requireTenant, (req, res) => {
     entityId: tenant.id,
     details: "\u062A\u062D\u062F\u064A\u062B \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u0648\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631 \u0648\u0627\u0644\u0637\u0628\u0627\u0639\u0629"
   });
-  res.json({ success: true, tenant });
+  const { merchantCodeHash: _hm, ...safeUpd } = tenant;
+  res.json({ success: true, tenant: safeUpd });
 });
-apiRouter.get("/branches", requireTenant, (req, res) => {
+apiRouter.get("/branches", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branches = db.getBranches(authReq.tenantId);
   res.json({ branches });
 });
-apiRouter.post("/branches", requireTenant, (req, res) => {
+apiRouter.post("/branches", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const tenant = db.getTenant(authReq.tenantId);
   const plan = db.getSchema().subscriptionPlans.find((p) => p.id === tenant?.subscriptionPlanId);
@@ -5651,12 +5989,12 @@ apiRouter.post("/branches", requireTenant, (req, res) => {
   });
   res.json({ success: true, branch: newBranch });
 });
-apiRouter.get("/employees", requireTenant, (req, res) => {
+apiRouter.get("/employees", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const employees = db.getSchema().employees.filter((e) => e.tenantId === authReq.tenantId);
   res.json({ employees });
 });
-apiRouter.post("/employees", requireTenant, (req, res) => {
+apiRouter.post("/employees", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const tenant = db.getTenant(authReq.tenantId);
   const plan = db.getSchema().subscriptionPlans.find((p) => p.id === tenant?.subscriptionPlanId);
@@ -5698,7 +6036,7 @@ apiRouter.post("/employees", requireTenant, (req, res) => {
   });
   res.json({ success: true, employee: newEmployee });
 });
-apiRouter.put("/employees/:id", requireTenant, (req, res) => {
+apiRouter.put("/employees/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const emp = db.getSchema().employees.find(
     (e) => e.id === req.params.id && e.tenantId === authReq.tenantId
@@ -5729,7 +6067,7 @@ apiRouter.put("/employees/:id", requireTenant, (req, res) => {
   });
   res.json({ success: true, employee: emp });
 });
-apiRouter.delete("/employees/:id", requireTenant, (req, res) => {
+apiRouter.delete("/employees/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const list2 = db.getSchema().employees;
   const idx = list2.findIndex((e) => e.id === req.params.id && e.tenantId === authReq.tenantId);
@@ -5756,12 +6094,12 @@ apiRouter.delete("/employees/:id", requireTenant, (req, res) => {
   });
   res.json({ success: true });
 });
-apiRouter.get("/products", requireTenant, (req, res) => {
+apiRouter.get("/products", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const products = db.getProducts(authReq.tenantId).filter((p) => p.isActive !== false);
   res.json({ products });
 });
-apiRouter.post("/products", requireTenant, (req, res) => {
+apiRouter.post("/products", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const {
     name,
@@ -5825,7 +6163,7 @@ var requireProductEditor = (req, res, next) => {
   if (!perms.editPrices) return res.status(403).json({ error: "\u0644\u064A\u0633\u062A \u0644\u062F\u064A\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0623\u0635\u0646\u0627\u0641." });
   next();
 };
-apiRouter.put("/products/:id", requireTenant, requireProductEditor, (req, res) => {
+apiRouter.put("/products/:id", merchantAuthMiddleware, requireProductEditor, (req, res) => {
   const actor = req;
   const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
   if (!product) return res.status(404).json({ error: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u062A\u062C\u0631\u0643." });
@@ -5870,7 +6208,7 @@ apiRouter.put("/products/:id", requireTenant, requireProductEditor, (req, res) =
   db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: "UPDATE_PRODUCT", entity: "Product", entityId: product.id, details: `\u062A\u0639\u062F\u064A\u0644 \u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB` });
   res.json({ success: true, product });
 });
-apiRouter.delete("/products/:id", requireTenant, requireProductEditor, (req, res) => {
+apiRouter.delete("/products/:id", merchantAuthMiddleware, requireProductEditor, (req, res) => {
   const actor = req;
   const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
   if (!product) return res.status(404).json({ error: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u062A\u062C\u0631\u0643." });
@@ -5882,13 +6220,13 @@ apiRouter.delete("/products/:id", requireTenant, requireProductEditor, (req, res
   db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: "ARCHIVE_PRODUCT", entity: "Product", entityId: product.id, details: `\u0625\u0632\u0627\u0644\u0629 \u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB \u0645\u0646 \u0627\u0644\u0642\u0648\u0627\u0626\u0645 \u0645\u0639 \u062D\u0641\u0638 \u0633\u062C\u0644\u0647` });
   res.json({ success: true });
 });
-apiRouter.get("/inventory", requireTenant, (req, res) => {
+apiRouter.get("/inventory", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const inventory = db.getInventory(authReq.tenantId, branchId);
   res.json({ inventory });
 });
-apiRouter.post("/inventory/adjust", requireTenant, (req, res) => {
+apiRouter.post("/inventory/adjust", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { branchId, productId, delta, reason, type } = req.body;
   if (!branchId || !productId || delta === void 0 || !reason) {
@@ -5917,13 +6255,13 @@ apiRouter.post("/inventory/adjust", requireTenant, (req, res) => {
   });
   res.json({ success: true, newBalance: result.newBalance });
 });
-apiRouter.get("/inventory/movements", requireTenant, (req, res) => {
+apiRouter.get("/inventory/movements", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const movements = db.getSchema().stockMovements.filter((m) => m.tenantId === authReq.tenantId && (!branchId || m.branchId === branchId));
   res.json({ movements });
 });
-apiRouter.get("/inventory/alerts", requireTenant, (req, res) => {
+apiRouter.get("/inventory/alerts", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const alerts = db.getInventoryAlerts(authReq.tenantId, branchId);
@@ -5931,7 +6269,7 @@ apiRouter.get("/inventory/alerts", requireTenant, (req, res) => {
   const criticalCount = alerts.filter((a) => a.severity === "critical" && a.status !== "dismissed").length;
   res.json({ alerts, unreadCount, criticalCount });
 });
-apiRouter.post("/inventory/alerts/sync", requireTenant, (req, res) => {
+apiRouter.post("/inventory/alerts/sync", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.body?.branchId;
   const alerts = db.syncInventoryAlerts(authReq.tenantId);
@@ -5940,17 +6278,17 @@ apiRouter.post("/inventory/alerts/sync", requireTenant, (req, res) => {
   const criticalCount = filtered.filter((a) => a.severity === "critical" && a.status !== "dismissed").length;
   res.json({ success: true, alerts: filtered, unreadCount, criticalCount });
 });
-apiRouter.post("/inventory/alerts/:id/read", requireTenant, (req, res) => {
+apiRouter.post("/inventory/alerts/:id/read", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const success = db.markInventoryAlertRead(authReq.tenantId, req.params.id);
   res.json({ success });
 });
-apiRouter.post("/inventory/alerts/:id/dismiss", requireTenant, (req, res) => {
+apiRouter.post("/inventory/alerts/:id/dismiss", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const success = db.dismissInventoryAlert(authReq.tenantId, req.params.id);
   res.json({ success });
 });
-apiRouter.post("/inventory/import-csv", requireTenant, (req, res) => {
+apiRouter.post("/inventory/import-csv", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { branchId, items } = req.body;
   if (!items || !Array.isArray(items) || items.length === 0) {
@@ -5964,13 +6302,13 @@ apiRouter.post("/inventory/import-csv", requireTenant, (req, res) => {
   });
   res.json(result);
 });
-apiRouter.get("/inventory/audits", requireTenant, (req, res) => {
+apiRouter.get("/inventory/audits", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const audits = db.getInventoryAudits(authReq.tenantId, branchId);
   res.json({ success: true, audits });
 });
-apiRouter.get("/inventory/audits/:id", requireTenant, (req, res) => {
+apiRouter.get("/inventory/audits/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const audit = db.getInventoryAudit(authReq.tenantId, req.params.id);
   if (!audit) {
@@ -5978,7 +6316,7 @@ apiRouter.get("/inventory/audits/:id", requireTenant, (req, res) => {
   }
   res.json({ success: true, audit });
 });
-apiRouter.post("/inventory/audits", requireTenant, (req, res) => {
+apiRouter.post("/inventory/audits", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { branchId, title, scope, categoryFilter, deviceInfo, notes } = req.body;
   if (!branchId) {
@@ -5998,7 +6336,7 @@ apiRouter.post("/inventory/audits", requireTenant, (req, res) => {
   });
   res.status(201).json({ success: true, audit });
 });
-apiRouter.put("/inventory/audits/:id", requireTenant, (req, res) => {
+apiRouter.put("/inventory/audits/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const updated = db.updateInventoryAudit(authReq.tenantId, req.params.id, req.body);
   if (!updated) {
@@ -6006,7 +6344,7 @@ apiRouter.put("/inventory/audits/:id", requireTenant, (req, res) => {
   }
   res.json({ success: true, audit: updated });
 });
-apiRouter.post("/inventory/audits/:id/reconcile", requireTenant, (req, res) => {
+apiRouter.post("/inventory/audits/:id/reconcile", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const result = db.reconcileInventoryAudit({
     tenantId: authReq.tenantId,
@@ -6019,7 +6357,7 @@ apiRouter.post("/inventory/audits/:id/reconcile", requireTenant, (req, res) => {
   }
   res.json({ success: true, audit: result.audit, adjustedCount: result.adjustedCount });
 });
-apiRouter.post("/inventory/audits/:id/cancel", requireTenant, (req, res) => {
+apiRouter.post("/inventory/audits/:id/cancel", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const result = db.cancelInventoryAudit(authReq.tenantId, req.params.id);
   if (!result.success) {
@@ -6027,12 +6365,12 @@ apiRouter.post("/inventory/audits/:id/cancel", requireTenant, (req, res) => {
   }
   res.json({ success: true });
 });
-apiRouter.get("/transfers", requireTenant, (req, res) => {
+apiRouter.get("/transfers", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const transfers = db.getSchema().branchTransfers.filter((t) => t.tenantId === authReq.tenantId);
   res.json({ transfers });
 });
-apiRouter.post("/transfers/request", requireTenant, (req, res) => {
+apiRouter.post("/transfers/request", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { sourceBranchId, targetBranchId, items, notes } = req.body;
   if (!sourceBranchId || !targetBranchId || !items || !items.length) {
@@ -6077,7 +6415,7 @@ apiRouter.post("/transfers/request", requireTenant, (req, res) => {
   });
   res.json({ success: true, transfer: newTransfer });
 });
-apiRouter.post("/transfers/:id/dispatch", requireTenant, (req, res) => {
+apiRouter.post("/transfers/:id/dispatch", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const transfer = db.getSchema().branchTransfers.find((t) => t.id === req.params.id && t.tenantId === authReq.tenantId);
   if (!transfer) return res.status(404).json({ error: "\u0637\u0644\u0628 \u0627\u0644\u062A\u062D\u0648\u064A\u0644 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
@@ -6119,7 +6457,7 @@ apiRouter.post("/transfers/:id/dispatch", requireTenant, (req, res) => {
   });
   res.json({ success: true, transfer });
 });
-apiRouter.post("/transfers/:id/receive", requireTenant, (req, res) => {
+apiRouter.post("/transfers/:id/receive", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const transfer = db.getSchema().branchTransfers.find((t) => t.id === req.params.id && t.tenantId === authReq.tenantId);
   if (!transfer) return res.status(404).json({ error: "\u0637\u0644\u0628 \u0627\u0644\u062A\u062D\u0648\u064A\u0644 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
@@ -6163,7 +6501,7 @@ apiRouter.post("/transfers/:id/receive", requireTenant, (req, res) => {
   });
   res.json({ success: true, transfer });
 });
-apiRouter.get("/pos/shifts/current", requireTenant, (req, res) => {
+apiRouter.get("/pos/shifts/current", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const cashierId = req.query.cashierId || authReq.actorId;
   const branchId = req.query.branchId;
@@ -6172,7 +6510,7 @@ apiRouter.get("/pos/shifts/current", requireTenant, (req, res) => {
   });
   res.json({ shift: openShift || null });
 });
-apiRouter.post("/pos/shifts/open", requireTenant, (req, res) => {
+apiRouter.post("/pos/shifts/open", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { branchId, openingCashSdg, cashierId, cashierName } = req.body;
   if (!branchId) return res.status(400).json({ error: "\u064A\u0631\u062C\u0649 \u062A\u062D\u062F\u064A\u062F \u0627\u0644\u0641\u0631\u0639 \u0644\u0641\u062A\u062D \u0627\u0644\u0648\u0631\u062F\u064A\u0629" });
@@ -6213,7 +6551,7 @@ apiRouter.post("/pos/shifts/open", requireTenant, (req, res) => {
   });
   res.json({ success: true, shift: newShift });
 });
-apiRouter.post("/pos/shifts/close", requireTenant, (req, res) => {
+apiRouter.post("/pos/shifts/close", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { shiftId, actualCashSdg, closeNotes } = req.body;
   const shift = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
@@ -6238,7 +6576,7 @@ apiRouter.post("/pos/shifts/close", requireTenant, (req, res) => {
   });
   res.json({ success: true, shift });
 });
-apiRouter.post("/pos/shifts/:id/review", requireTenant, (req, res) => {
+apiRouter.post("/pos/shifts/:id/review", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const shift = db.getSchema().cashierShifts.find((s) => s.id === req.params.id && s.tenantId === authReq.tenantId);
   if (!shift) return res.status(404).json({ error: "\u0627\u0644\u0648\u0631\u062F\u064A\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
@@ -6259,12 +6597,12 @@ apiRouter.post("/pos/shifts/:id/review", requireTenant, (req, res) => {
   });
   res.json({ success: true, shift });
 });
-apiRouter.get("/pos/shifts", requireTenant, (req, res) => {
+apiRouter.get("/pos/shifts", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const shifts = db.getSchema().cashierShifts.filter((s) => s.tenantId === authReq.tenantId);
   res.json({ shifts });
 });
-apiRouter.post("/pos/sales", requireTenant, (req, res) => {
+apiRouter.post("/pos/sales", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const {
     id,
@@ -6293,10 +6631,25 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
       return res.json({ success: true, sale: existing, isDuplicate: true });
     }
   }
+  const branch = db.getSchema().branches.find((b) => b.id === branchId && b.tenantId === authReq.tenantId);
+  if (!branch) return res.status(400).json({ error: "\u0627\u0644\u0641\u0631\u0639 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+  for (const it of items) {
+    const prod = db.getSchema().products.find((p) => p.id === it.productId && p.tenantId === authReq.tenantId);
+    if (!prod) return res.status(400).json({ error: `\u0627\u0644\u0635\u0646\u0641 ${it.productId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631.` });
+    if (prod.isActive === false && !isOfflineCreated) return res.status(409).json({ error: `\u0627\u0644\u0635\u0646\u0641 \xAB${prod.name}\xBB \u0623\u064F\u0632\u064A\u0644 \u0645\u0646 \u0627\u0644\u0645\u062A\u062C\u0631.` });
+  }
+  if (shiftId) {
+    const shiftCheck = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
+    if (!shiftCheck) return res.status(400).json({ error: "\u0627\u0644\u0648\u0631\u062F\u064A\u0629 \u0644\u0627 \u062A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+    if (shiftCheck.branchId !== branchId) return res.status(400).json({ error: "\u0627\u0644\u0648\u0631\u062F\u064A\u0629 \u0644\u0627 \u062A\u062A\u0628\u0639 \u0646\u0641\u0633 \u0627\u0644\u0641\u0631\u0639." });
+  }
+  if (customerId) {
+    const custCheck = db.getSchema().customers.find((c) => c.id === customerId && c.tenantId === authReq.tenantId);
+    if (!custCheck) return res.status(400).json({ error: "\u0627\u0644\u0639\u0645\u064A\u0644 \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+  }
   if (!isOfflineCreated && items.some((item) => db.getSchema().products.some((p) => p.id === item.productId && p.tenantId === authReq.tenantId && p.isActive === false))) {
     return res.status(409).json({ error: "\u0623\u062D\u062F \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0623\u064F\u0632\u064A\u0644 \u0645\u0646 \u0627\u0644\u0645\u062A\u062C\u0631. \u062D\u062F\u0651\u062B \u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0648\u0623\u0639\u062F \u0645\u0631\u0627\u062C\u0639\u0629 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629." });
   }
-  const branch = db.getSchema().branches.find((b) => b.id === branchId);
   const tenant = db.getTenant(authReq.tenantId);
   const isVatActive = clientVatEnabled !== void 0 ? Boolean(clientVatEnabled) : tenant?.settings?.vatEnabled ?? true;
   const effectiveDefaultVatPct = Number(clientDefaultVatPct ?? tenant?.settings?.defaultVatPct ?? 15);
@@ -6305,7 +6658,7 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
   let computedTaxTotal = 0;
   const processedItems = [];
   for (const item of items) {
-    const product = db.getSchema().products.find((p) => p.id === item.productId);
+    const product = db.getSchema().products.find((p) => p.id === item.productId && p.tenantId === authReq.tenantId);
     const qty = Number(item.quantity);
     const unitPrice = Number(item.unitPriceSdg || product?.sellingPriceSdg || 0);
     const discount = Number(item.discountSdg || 0);
@@ -6417,7 +6770,7 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
     db.createKitchenTicket(kTicket);
   }
   if (shiftId) {
-    const shift = db.getSchema().cashierShifts.find((s) => s.id === shiftId);
+    const shift = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
     if (shift && shift.status === "open") {
       shift.salesCount += 1;
       shift.totalSalesSdg += grandTotal;
@@ -6441,13 +6794,13 @@ apiRouter.post("/pos/sales", requireTenant, (req, res) => {
   });
   res.json({ success: true, sale, earnedPoints, customer: updatedCustomer });
 });
-apiRouter.get("/pos/sales", requireTenant, (req, res) => {
+apiRouter.get("/pos/sales", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const sales = db.getSchema().sales.filter((s) => s.tenantId === authReq.tenantId && (!branchId || s.branchId === branchId));
   res.json({ sales });
 });
-apiRouter.post("/pos/sales/:id/refund", requireTenant, (req, res) => {
+apiRouter.post("/pos/sales/:id/refund", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const sale = db.getSchema().sales.find((s) => s.id === req.params.id && s.tenantId === authReq.tenantId);
   if (!sale) return res.status(404).json({ error: "\u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
@@ -6559,19 +6912,19 @@ apiRouter.post("/pos/sales/:id/refund", requireTenant, (req, res) => {
   });
   res.json({ success: true, returnRecord: returnRec, sale });
 });
-apiRouter.get("/pos/returns", requireTenant, (req, res) => {
+apiRouter.get("/pos/returns", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const returns = db.getSchema().returns.filter((r) => r.tenantId === authReq.tenantId && (!branchId || r.branchId === branchId));
   res.json({ returns });
 });
-apiRouter.get("/pos/customers", requireTenant, (req, res) => {
+apiRouter.get("/pos/customers", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const search = req.query.search || req.query.q || void 0;
   const customers = db.getCustomers(authReq.tenantId, search);
   res.json({ customers });
 });
-apiRouter.post("/pos/customers", requireTenant, (req, res) => {
+apiRouter.post("/pos/customers", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { name, phone, email, city, address, taxNumber, notes } = req.body;
   if (!name || !name.trim()) {
@@ -6611,7 +6964,7 @@ apiRouter.post("/pos/customers", requireTenant, (req, res) => {
   });
   res.json({ success: true, customer });
 });
-apiRouter.put("/pos/customers/:id", requireTenant, (req, res) => {
+apiRouter.put("/pos/customers/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { id } = req.params;
   const { name, phone, email, city, address, taxNumber, notes, loyaltyPoints } = req.body;
@@ -6630,7 +6983,7 @@ apiRouter.put("/pos/customers/:id", requireTenant, (req, res) => {
   }
   res.json({ success: true, customer: updated });
 });
-apiRouter.get("/pos/customers/:id/history", requireTenant, (req, res) => {
+apiRouter.get("/pos/customers/:id/history", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { id } = req.params;
   const customer = db.getCustomer(authReq.tenantId, id);
@@ -6654,7 +7007,7 @@ apiRouter.get("/pos/customers/:id/history", requireTenant, (req, res) => {
     }
   });
 });
-apiRouter.post("/sync/batch", requireTenant, (req, res) => {
+apiRouter.post("/sync/batch", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { sales } = req.body;
   if (!sales || !Array.isArray(sales)) {
@@ -6668,6 +7021,12 @@ apiRouter.post("/sync/batch", requireTenant, (req, res) => {
       if (existing) {
         syncedIds.push(saleData.id);
         continue;
+      }
+      const syncBranch = db.getSchema().branches.find((b) => b.id === saleData.branchId && b.tenantId === authReq.tenantId);
+      if (!syncBranch) throw new Error(`\u0627\u0644\u0641\u0631\u0639 ${saleData.branchId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631`);
+      for (const it of saleData.items || []) {
+        const prod = db.getSchema().products.find((p) => p.id === it.productId && p.tenantId === authReq.tenantId);
+        if (!prod) throw new Error(`\u0627\u0644\u0635\u0646\u0641 ${it.productId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631`);
       }
       const newSale = {
         ...saleData,
@@ -6807,12 +7166,12 @@ apiRouter.post("/storefront/:slug/order", (req, res) => {
   });
   res.json({ success: true, order: newOrder });
 });
-apiRouter.get("/storefront-orders", requireTenant, (req, res) => {
+apiRouter.get("/storefront-orders", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const orders = db.getSchema().storefrontOrders.filter((o) => o.tenantId === authReq.tenantId);
   res.json({ orders });
 });
-apiRouter.put("/storefront-orders/:id/status", requireTenant, (req, res) => {
+apiRouter.put("/storefront-orders/:id/status", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const order = db.getSchema().storefrontOrders.find((o) => o.id === req.params.id && o.tenantId === authReq.tenantId);
   if (!order) return res.status(404).json({ error: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
@@ -6911,7 +7270,7 @@ apiRouter.get("/currency/parallel-rates", async (_req, res) => {
     refreshEveryHours: RATES_REFRESH_HOURS
   });
 });
-apiRouter.post("/admin/currency/refresh", async (req, res) => {
+apiRouter.post("/admin/currency/refresh", adminAuthMiddleware, async (req, res) => {
   const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u062F\u0648\u064A \u0645\u0646 \u0644\u0648\u062D\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629");
   if (!result.refreshed) {
     return res.status(502).json({
@@ -7012,11 +7371,11 @@ apiRouter.get("/currency/alerts/status", (_req, res) => {
 apiRouter.get("/integrations/telegram/status", (_req, res) => {
   res.json({ success: true, ...telegramStatus() });
 });
-apiRouter.get("/admin/telegram/discover", async (_req, res) => {
+apiRouter.get("/admin/telegram/discover", adminAuthMiddleware, async (_req, res) => {
   const result = await discoverChats();
   res.json({ success: result.ok, ...result, configured: telegramConfigured() });
 });
-apiRouter.post("/admin/telegram/test", async (_req, res) => {
+apiRouter.post("/admin/telegram/test", adminAuthMiddleware, async (_req, res) => {
   if (!telegramConfigured()) {
     return res.status(400).json({
       success: false,
@@ -7029,7 +7388,7 @@ apiRouter.post("/admin/telegram/test", async (_req, res) => {
   );
   res.json({ success: verdict.sent > 0, ...verdict, ...telegramStatus() });
 });
-apiRouter.post("/admin/currency/alerts/run", async (_req, res) => {
+apiRouter.post("/admin/currency/alerts/run", adminAuthMiddleware, async (_req, res) => {
   const refresh = await refreshLiveRates("\u0641\u062D\u0635 \u064A\u062F\u0648\u064A \u0644\u0644\u062A\u062D\u0631\u0643\u0627\u062A");
   await db.flush({ lock: false }).catch(() => {
   });
@@ -7070,7 +7429,7 @@ apiRouter.get("/cron/currency-rates", async (_req, res) => {
     watch: { ok: watch.ok, notified: watch.notified, problems: watch.problems }
   });
 });
-apiRouter.get("/currencies", requireTenant, async (_req, res) => {
+apiRouter.get("/currencies", merchantAuthMiddleware, async (_req, res) => {
   if (needsRefresh()) {
     try {
       await refreshLiveRates();
@@ -7089,7 +7448,7 @@ apiRouter.get("/currencies", requireTenant, async (_req, res) => {
     }
   });
 });
-apiRouter.put("/currencies/:code", requireTenant, (req, res) => {
+apiRouter.put("/currencies/:code", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { rateToSdg, isActive } = req.body;
   const currency = db.getSchema().currencies.find((c) => c.code === req.params.code.toUpperCase());
@@ -7124,12 +7483,12 @@ apiRouter.put("/currencies/:code", requireTenant, (req, res) => {
   });
   res.json({ success: true, currency });
 });
-apiRouter.get("/currencies/history", requireTenant, (req, res) => {
+apiRouter.get("/currencies/history", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const history = db.getSchema().currencyRateHistory.filter((h) => h.tenantId === authReq.tenantId);
   res.json({ history });
 });
-apiRouter.get("/reports/summary", requireTenant, (req, res) => {
+apiRouter.get("/reports/summary", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const sales = db.getSchema().sales.filter((s) => s.tenantId === authReq.tenantId && (!branchId || s.branchId === branchId));
@@ -7293,12 +7652,12 @@ apiRouter.get("/reports/summary", requireTenant, (req, res) => {
     }
   });
 });
-apiRouter.get("/expenses", requireTenant, (req, res) => {
+apiRouter.get("/expenses", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const expenses = db.getSchema().expenses.filter((e) => e.tenantId === authReq.tenantId);
   res.json({ expenses });
 });
-apiRouter.post("/expenses", requireTenant, (req, res) => {
+apiRouter.post("/expenses", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { branchId, category, amountSdg, description, receiptNumber } = req.body;
   if (!branchId || !category || !amountSdg || !description) {
@@ -7330,12 +7689,12 @@ apiRouter.post("/expenses", requireTenant, (req, res) => {
   });
   res.json({ success: true, expense: newExpense });
 });
-apiRouter.get("/purchases", requireTenant, (req, res) => {
+apiRouter.get("/purchases", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const purchases = db.getSchema().purchases.filter((p) => p.tenantId === authReq.tenantId);
   res.json({ purchases });
 });
-apiRouter.post("/purchases", requireTenant, (req, res) => {
+apiRouter.post("/purchases", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { branchId, supplierName, invoiceNumber, currency, exchangeRate, items, paymentStatus, notes } = req.body;
   if (!branchId || !supplierName || !items || !items.length) {
@@ -7401,7 +7760,7 @@ apiRouter.post("/purchases", requireTenant, (req, res) => {
 apiRouter.get("/subscriptions/plans", (req, res) => {
   res.json({ plans: db.getSchema().subscriptionPlans });
 });
-apiRouter.get("/subscriptions/current", requireTenant, (req, res) => {
+apiRouter.get("/subscriptions/current", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const tenant = db.getTenant(authReq.tenantId);
   const plan = db.getSchema().subscriptionPlans.find((p) => p.id === tenant?.subscriptionPlanId);
@@ -7412,7 +7771,7 @@ apiRouter.get("/subscriptions/current", requireTenant, (req, res) => {
     payments
   });
 });
-apiRouter.post("/subscriptions/submit-payment", requireTenant, (req, res) => {
+apiRouter.post("/subscriptions/submit-payment", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { planId, amountSdg, paymentMethod, paymentRef, bankTransferSlipUrl } = req.body;
   if (!planId || !amountSdg || !paymentRef) {
@@ -7442,14 +7801,16 @@ apiRouter.post("/subscriptions/submit-payment", requireTenant, (req, res) => {
   });
   res.json({ success: true, payment: paymentRecord });
 });
-apiRouter.get("/admin/tenants", (req, res) => {
+apiRouter.get("/admin/tenants", adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   const summary = schema.tenants.map((t) => {
     const branches = schema.branches.filter((b) => b.tenantId === t.id);
     const employees = schema.employees.filter((e) => e.tenantId === t.id);
     const plan = schema.subscriptionPlans.find((p) => p.id === t.subscriptionPlanId);
+    const { merchantCodeHash: merchantCodeHash2, ...safe } = t;
     return {
-      ...t,
+      ...safe,
+      hasMerchantCode: !!merchantCodeHash2,
       branchCount: branches.length,
       employeeCount: employees.length,
       planName: plan?.name
@@ -7457,7 +7818,7 @@ apiRouter.get("/admin/tenants", (req, res) => {
   });
   res.json({ tenants: summary });
 });
-apiRouter.post("/admin/tenants/:id/status", (req, res) => {
+apiRouter.post("/admin/tenants/:id/status", adminAuthMiddleware, (req, res) => {
   const { status, reason } = req.body;
   const tenant = db.getTenant(req.params.id);
   if (!tenant) return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
@@ -7472,9 +7833,45 @@ apiRouter.post("/admin/tenants/:id/status", (req, res) => {
     entityId: tenant.id,
     details: `\u062A\u063A\u064A\u064A\u0631 \u062D\u0627\u0644\u0629 \u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u0625\u0644\u0649: ${status}. \u0627\u0644\u0633\u0628\u0628: ${reason || "\u0625\u062C\u0631\u0627\u0621 \u0625\u062F\u0627\u0631\u064A"}`
   });
-  res.json({ success: true, tenant });
+  const { merchantCodeHash: _h, ...safeTenant } = tenant;
+  res.json({ success: true, tenant: { ...safeTenant, hasMerchantCode: !!_h } });
 });
-apiRouter.get("/admin/payments", (req, res) => {
+apiRouter.post("/admin/tenants/:id/merchant-code", adminAuthMiddleware, (req, res) => {
+  const tenant = db.getTenant(req.params.id);
+  if (!tenant) return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
+  const newCode2 = newMerchantCode();
+  const hash = merchantCodeHash(newCode2);
+  if (!hash) return res.status(500).json({ error: "CODE_GEN_FAILED" });
+  db.setMerchantCode(tenant.id, hash, "saas_admin");
+  db.commit();
+  db.logAudit({
+    tenantId: tenant.id,
+    actorId: "saas_admin",
+    actorName: "\u0645\u062F\u064A\u0631 \u0627\u0644\u0645\u0646\u0635\u0629 \u0627\u0644\u0645\u0631\u0643\u0632\u064A",
+    action: "ISSUE_MERCHANT_CODE",
+    entity: "Tenant",
+    entityId: tenant.id,
+    details: `\u0625\u0635\u062F\u0627\u0631/\u062A\u062C\u062F\u064A\u062F \u0631\u0645\u0632 \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631 \u2014 \u0623\u064F\u0638\u0647\u0631 \u0645\u0631\u0629 \u0648\u0627\u062D\u062F\u0629 \u0648\u064A\u062C\u0628 \u0625\u0631\u0633\u0627\u0644\u0647 \u0644\u0644\u062A\u0627\u062C\u0631 \u0639\u0628\u0631 \u0642\u0646\u0627\u0629 \u0622\u0645\u0646\u0629`
+  });
+  res.json({ success: true, tenantId: tenant.id, code: newCode2, issuedAt: tenant.merchantCodeIssuedAt, message: "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u0631\u0645\u0632 \u2014 \u0627\u0646\u0633\u062E\u0647 \u0627\u0644\u0622\u0646 \u0648\u0623\u0631\u0633\u0644\u0647 \u0644\u0644\u062A\u0627\u062C\u0631 \u0639\u0628\u0631 \u0648\u0627\u062A\u0633\u0627\u0628 \u0622\u0645\u0646. \u0644\u0646 \u064A\u0638\u0647\u0631 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649." });
+});
+apiRouter.post("/admin/tenants/:id/merchant-code/clear", adminAuthMiddleware, (req, res) => {
+  const tenant = db.getTenant(req.params.id);
+  if (!tenant) return res.status(404).json({ error: "\u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
+  db.clearMerchantCode(tenant.id);
+  db.commit();
+  db.logAudit({
+    tenantId: tenant.id,
+    actorId: "saas_admin",
+    actorName: "\u0645\u062F\u064A\u0631 \u0627\u0644\u0645\u0646\u0635\u0629 \u0627\u0644\u0645\u0631\u0643\u0632\u064A",
+    action: "REVOKE_MERCHANT_CODE",
+    entity: "Tenant",
+    entityId: tenant.id,
+    details: "\u0625\u0644\u063A\u0627\u0621 \u0631\u0645\u0632 \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631"
+  });
+  res.json({ success: true });
+});
+apiRouter.get("/admin/payments", adminAuthMiddleware, (req, res) => {
   const payments = db.getSchema().subscriptionPayments.map((p) => {
     const tenant = db.getTenant(p.tenantId);
     const plan = db.getSchema().subscriptionPlans.find((pl) => pl.id === p.planId);
@@ -7486,7 +7883,7 @@ apiRouter.get("/admin/payments", (req, res) => {
   });
   res.json({ payments });
 });
-apiRouter.post("/admin/payments/:id/review", (req, res) => {
+apiRouter.post("/admin/payments/:id/review", adminAuthMiddleware, (req, res) => {
   const payment = db.getSchema().subscriptionPayments.find((p) => p.id === req.params.id);
   if (!payment) return res.status(404).json({ error: "\u0633\u062C\u0644 \u0627\u0644\u0633\u062F\u0627\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
   const { decision, reviewNote, reviewerName } = req.body;
@@ -7519,7 +7916,7 @@ apiRouter.post("/admin/payments/:id/review", (req, res) => {
   });
   res.json({ success: true, payment });
 });
-apiRouter.get("/admin/stats", (req, res) => {
+apiRouter.get("/admin/stats", adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   const totalTenants = schema.tenants.length;
   const activeTenants = schema.tenants.filter((t) => t.status === "active").length;
@@ -7538,7 +7935,7 @@ apiRouter.get("/admin/stats", (req, res) => {
     }
   });
 });
-apiRouter.get("/audit-logs", requireTenant, (req, res) => {
+apiRouter.get("/audit-logs", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const logs = db.getSchema().auditLogs.filter((l) => l.tenantId === authReq.tenantId);
   res.json({ logs });
@@ -7625,7 +8022,7 @@ apiRouter.get("/albandar/showrooms", (_req, res) => {
   const showrooms = db.getAlbandarShowrooms();
   res.json({ showrooms });
 });
-apiRouter.post("/albandar/publish-product", requireTenant, (req, res) => {
+apiRouter.post("/albandar/publish-product", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { productId, category, condition, locationDetails } = req.body;
   const product = db.getSchema().products.find((p) => p.id === productId && p.tenantId === authReq.tenantId && p.isActive !== false);
@@ -7689,14 +8086,14 @@ apiRouter.post("/albandar/listings/:id/view", (req, res) => {
   }
   res.json({ success: true, viewsCount: listing?.viewsCount || 0 });
 });
-apiRouter.get("/kitchen/tickets", requireTenant, (req, res) => {
+apiRouter.get("/kitchen/tickets", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const status = req.query.status;
   const tickets = db.getKitchenTickets(authReq.tenantId, branchId, status);
   res.json({ tickets });
 });
-apiRouter.put("/kitchen/tickets/:id/status", requireTenant, (req, res) => {
+apiRouter.put("/kitchen/tickets/:id/status", merchantAuthMiddleware, (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
   if (!status || !["pending", "preparing", "ready", "completed"].includes(status)) {
@@ -7708,7 +8105,7 @@ apiRouter.put("/kitchen/tickets/:id/status", requireTenant, (req, res) => {
   }
   res.json({ success: true, ticket: updated });
 });
-apiRouter.put("/kitchen/tickets/:id/items/:itemId/status", requireTenant, (req, res) => {
+apiRouter.put("/kitchen/tickets/:id/items/:itemId/status", merchantAuthMiddleware, (req, res) => {
   const { id, itemId } = req.params;
   const { status } = req.body;
   if (!status || !["pending", "preparing", "ready", "completed"].includes(status)) {
@@ -7720,13 +8117,13 @@ apiRouter.put("/kitchen/tickets/:id/items/:itemId/status", requireTenant, (req, 
   }
   res.json({ success: true, ticket: updated });
 });
-apiRouter.get("/recurring-expenses", requireTenant, (req, res) => {
+apiRouter.get("/recurring-expenses", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const branchId = req.query.branchId;
   const list2 = db.getRecurringExpenses(authReq.tenantId, branchId);
   res.json({ recurringExpenses: list2 });
 });
-apiRouter.post("/recurring-expenses", requireTenant, (req, res) => {
+apiRouter.post("/recurring-expenses", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const {
     branchId,
@@ -7773,7 +8170,7 @@ apiRouter.post("/recurring-expenses", requireTenant, (req, res) => {
   });
   res.status(201).json({ success: true, recurringExpense: newRecurring });
 });
-apiRouter.put("/recurring-expenses/:id", requireTenant, (req, res) => {
+apiRouter.put("/recurring-expenses/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { id } = req.params;
   const updated = db.updateRecurringExpense(authReq.tenantId, id, req.body);
@@ -7782,7 +8179,7 @@ apiRouter.put("/recurring-expenses/:id", requireTenant, (req, res) => {
   }
   res.json({ success: true, recurringExpense: updated });
 });
-apiRouter.delete("/recurring-expenses/:id", requireTenant, (req, res) => {
+apiRouter.delete("/recurring-expenses/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { id } = req.params;
   const deleted = db.deleteRecurringExpense(authReq.tenantId, id);
@@ -7791,7 +8188,7 @@ apiRouter.delete("/recurring-expenses/:id", requireTenant, (req, res) => {
   }
   res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u062C\u062F\u0648\u0644\u0629 \u0628\u0646\u062C\u0627\u062D" });
 });
-apiRouter.post("/recurring-expenses/:id/post-now", requireTenant, (req, res) => {
+apiRouter.post("/recurring-expenses/:id/post-now", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { id } = req.params;
   const result = db.postRecurringExpenseNow(authReq.tenantId, id, authReq.actorName);
@@ -7814,12 +8211,12 @@ apiRouter.post("/recurring-expenses/:id/post-now", requireTenant, (req, res) => 
     recurringExpense: result.recurring
   });
 });
-apiRouter.get("/promotions", requireTenant, (req, res) => {
+apiRouter.get("/promotions", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const promotions = db.getPromotions(authReq.tenantId);
   res.json({ promotions });
 });
-apiRouter.post("/promotions", requireTenant, (req, res) => {
+apiRouter.post("/promotions", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const {
     title,
@@ -7880,7 +8277,7 @@ apiRouter.post("/promotions", requireTenant, (req, res) => {
   });
   res.status(201).json({ success: true, promotion: newPromo });
 });
-apiRouter.put("/promotions/:id", requireTenant, (req, res) => {
+apiRouter.put("/promotions/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { id } = req.params;
   const updated = db.updatePromotion(authReq.tenantId, id, req.body);
@@ -7889,7 +8286,7 @@ apiRouter.put("/promotions/:id", requireTenant, (req, res) => {
   }
   res.json({ success: true, promotion: updated });
 });
-apiRouter.delete("/promotions/:id", requireTenant, (req, res) => {
+apiRouter.delete("/promotions/:id", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const { id } = req.params;
   const deleted = db.deletePromotion(authReq.tenantId, id);
@@ -8023,7 +8420,7 @@ async function geminiGenerate(opts) {
 }
 var SOURCE_ALIASES_PRIMARY = /alsoug|سوق\s*السودان|البديل/i;
 var SOURCE_ALIASES_BACKUP = /أخبار\s*السودان|اخبار\s*السودان|سودان\s*أخبار|sudanakhbar/i;
-apiRouter.post("/ai/parse-sale", requireTenant, async (req, res) => {
+apiRouter.post("/ai/parse-sale", merchantAuthMiddleware, async (req, res) => {
   const authReq = req;
   if (!allowParseSale(authReq.tenantId)) {
     return res.status(429).json({ error: "\u062A\u062C\u0627\u0648\u0632\u062A \u062D\u062F \u0637\u0644\u0628\u0627\u062A \u0627\u0644\u062A\u062D\u0644\u064A\u0644 \u2014 \u0627\u0646\u062A\u0638\u0631 \u062F\u0642\u064A\u0642\u0629 \u0648\u062C\u0631\u0651\u0628 \u062A\u0627\u0646\u064A." });
@@ -8464,12 +8861,23 @@ apiRouter.post("/market-ads", (req, res) => {
   if (!imageUrl && !videoUrl) {
     return res.status(400).json({ error: "MEDIA_REQUIRED", message: "\u0623\u0636\u0641 \u0635\u0648\u0631\u0629 \u0623\u0648 \u0641\u064A\u062F\u064A\u0648 \u0644\u0644\u0625\u0639\u0644\u0627\u0646." });
   }
-  const tenantId = String(req.headers["x-tenant-id"] || "");
-  const resolvedOwner = ownerToken && String(ownerToken).length >= 8 ? String(ownerToken) : tenantId.length >= 4 ? `tenant:${tenantId}` : "";
-  if (!resolvedOwner || resolvedOwner.length < 8) {
-    return res.status(400).json({ error: "OWNER_TOKEN_REQUIRED", message: "\u062A\u0639\u0630\u0631 \u0627\u0644\u062A\u0639\u0631\u0641 \u0639\u0644\u0649 \u062C\u0647\u0627\u0632\u0643\u060C \u0623\u0639\u062F \u0641\u062A\u062D \u0627\u0644\u062A\u0637\u0628\u064A\u0642." });
+  const authedTenantId = tryMerchantTenantId(req);
+  let resolvedOwner = "";
+  let merchantTenantId;
+  if (authedTenantId) {
+    resolvedOwner = `tenant:${authedTenantId}`;
+    merchantTenantId = authedTenantId;
+  } else {
+    const claimed = ownerToken ? String(ownerToken) : "";
+    if (claimed.startsWith("tenant:")) {
+      return res.status(401).json({ error: "AUTH_REQUIRED_FOR_STORE_AD", message: "\u0646\u0634\u0631 \u0628\u0627\u0633\u0645 \u0645\u062A\u062C\u0631 \u064A\u062A\u0637\u0644\u0628 \u062A\u0633\u062C\u064A\u0644 \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631." });
+    }
+    if (claimed && String(claimed).length >= 8) {
+      resolvedOwner = String(claimed);
+    } else {
+      resolvedOwner = `anon:${crypto.randomBytes(16).toString("hex")}`;
+    }
   }
-  const merchantTenantId = resolvedOwner.startsWith("tenant:") ? resolvedOwner.slice("tenant:".length) : tenantId;
   const merchantTenant = merchantTenantId ? db.getTenant(merchantTenantId) : void 0;
   const storeName = String(merchantTenant?.tradeName || merchantTenant?.name || "").trim();
   const ad = db.createMarketAd({
@@ -8509,7 +8917,9 @@ apiRouter.post("/market-ads", (req, res) => {
   });
 });
 apiRouter.put("/market-ads/:id", (req, res) => {
-  const ownerToken = String(req.headers["x-owner-token"] || "");
+  const authed = tryMerchantTenantId(req);
+  const headerToken = String(req.headers["x-owner-token"] || "");
+  const ownerToken = authed ? `tenant:${authed}` : headerToken;
   const {
     title,
     category,
@@ -8558,7 +8968,9 @@ apiRouter.put("/market-ads/:id", (req, res) => {
   res.json({ success: true, ad: result.ad, message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0625\u0639\u0644\u0627\u0646." });
 });
 apiRouter.delete("/market-ads/:id", (req, res) => {
-  const ownerToken = String(req.headers["x-owner-token"] || "");
+  const authed = tryMerchantTenantId(req);
+  const headerToken = String(req.headers["x-owner-token"] || "");
+  const ownerToken = authed ? `tenant:${authed}` : headerToken;
   const result = db.deleteMarketAd(req.params.id, { ownerToken });
   if (!result.ok) {
     return res.status(result.reason === "NOT_FOUND" ? 404 : 403).json({
@@ -8568,7 +8980,7 @@ apiRouter.delete("/market-ads/:id", (req, res) => {
   }
   res.json({ success: true });
 });
-apiRouter.get("/admin/market-ads", (req, res) => {
+apiRouter.get("/admin/market-ads", adminAuthMiddleware, (req, res) => {
   const status = String(req.query.status || "all");
   const ads = db.getMarketAds();
   const filtered = status === "all" ? ads : ads.filter((a) => a.status === status);
@@ -8584,7 +8996,7 @@ apiRouter.get("/admin/market-ads", (req, res) => {
     pricing: AD_PRICING
   });
 });
-apiRouter.post("/admin/market-ads/:id/review", (req, res) => {
+apiRouter.post("/admin/market-ads/:id/review", adminAuthMiddleware, (req, res) => {
   const { decision, note, reviewedBy, paymentConfirmed } = req.body || {};
   if (decision !== "approved" && decision !== "rejected") {
     return res.status(400).json({ error: "BAD_DECISION", message: "\u0627\u0644\u0642\u0631\u0627\u0631 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 approved \u0623\u0648 rejected." });
@@ -8609,7 +9021,7 @@ apiRouter.post("/admin/market-ads/:id/review", (req, res) => {
   });
   res.json({ success: true, ad });
 });
-apiRouter.delete("/admin/market-ads/:id", (req, res) => {
+apiRouter.delete("/admin/market-ads/:id", adminAuthMiddleware, (req, res) => {
   const result = db.deleteMarketAd(req.params.id, { admin: true });
   if (!result.ok) {
     return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
@@ -8856,7 +9268,7 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
   });
   res.json({ success: true, created: true, tenant });
 });
-apiRouter.get("/admin/tenant-applications", (req, res) => {
+apiRouter.get("/admin/tenant-applications", adminAuthMiddleware, (req, res) => {
   const status = String(req.query.status || "all");
   const all = db.getTenantApplications();
   const filtered = status === "all" ? all : all.filter((a) => a.status === status);
@@ -8873,7 +9285,7 @@ apiRouter.get("/admin/tenant-applications", (req, res) => {
     pricing: { registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG, currency: "SDG" }
   });
 });
-apiRouter.post("/admin/tenant-applications/:id/review", (req, res) => {
+apiRouter.post("/admin/tenant-applications/:id/review", adminAuthMiddleware, (req, res) => {
   const { decision, note, registrationFeeSdg, codeSentVia } = req.body || {};
   if (decision !== "approved" && decision !== "rejected") {
     return res.status(400).json({ error: "BAD_DECISION", message: "\u0627\u0644\u0642\u0631\u0627\u0631 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 approved \u0623\u0648 rejected." });
@@ -8905,7 +9317,7 @@ apiRouter.post("/admin/tenant-applications/:id/review", (req, res) => {
     message: decision === "approved" ? `\u062A\u0645\u062A \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629. \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644: ${application?.activationCode} \u2014 \u0642\u064A\u0645\u0629 \u0627\u0644\u062A\u0633\u062C\u064A\u0644 ${(application?.registrationFeeSdg || 0).toLocaleString("en-US")} \u062C.\u0633.` : "\u062A\u0645 \u0631\u0641\u0636 \u0627\u0644\u0637\u0644\u0628."
   });
 });
-apiRouter.post("/admin/tenant-applications/:id/mark-sent", (req, res) => {
+apiRouter.post("/admin/tenant-applications/:id/mark-sent", adminAuthMiddleware, (req, res) => {
   const via = req.body?.via;
   if (via !== "whatsapp" && via !== "sms" && via !== "email") {
     return res.status(400).json({ error: "BAD_CHANNEL", message: "\u0642\u0646\u0627\u0629 \u0627\u0644\u0625\u0631\u0633\u0627\u0644 \u063A\u064A\u0631 \u0645\u0639\u0631\u0648\u0641\u0629." });
@@ -8916,7 +9328,7 @@ apiRouter.post("/admin/tenant-applications/:id/mark-sent", (req, res) => {
   }
   res.json({ success: true, application });
 });
-apiRouter.delete("/admin/tenant-applications/:id", (req, res) => {
+apiRouter.delete("/admin/tenant-applications/:id", adminAuthMiddleware, (req, res) => {
   const removed = db.deleteTenantApplication(req.params.id);
   if (!removed) {
     return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
@@ -9057,10 +9469,10 @@ apiRouter.post("/market-banners/:id/impression", (req, res) => {
   if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, impressions: banner.impressions || 0 });
 });
-apiRouter.get("/admin/market-banners", (_req, res) => {
+apiRouter.get("/admin/market-banners", adminAuthMiddleware, (_req, res) => {
   res.json({ banners: db.getMarketBanners(false) });
 });
-apiRouter.post("/admin/market-banners", (req, res) => {
+apiRouter.post("/admin/market-banners", adminAuthMiddleware, (req, res) => {
   const { title, subtitle, badge, imageUrl, linkUrl, advertiserName, advertiserTenantId, sortOrder, active } = req.body || {};
   if (!title || String(title).trim().length < 3) {
     return res.status(400).json({ error: "TITLE_REQUIRED", message: "\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0628\u0627\u0646\u0631 \u0645\u0637\u0644\u0648\u0628." });
@@ -9081,7 +9493,7 @@ apiRouter.post("/admin/market-banners", (req, res) => {
   });
   res.json({ success: true, banner });
 });
-apiRouter.put("/admin/market-banners/:id", (req, res) => {
+apiRouter.put("/admin/market-banners/:id", adminAuthMiddleware, (req, res) => {
   const patch = {};
   for (const key of ["title", "subtitle", "badge", "imageUrl", "linkUrl", "advertiserName", "advertiserTenantId", "active", "sortOrder"]) {
     if (req.body?.[key] !== void 0) {
@@ -9092,11 +9504,14 @@ apiRouter.put("/admin/market-banners/:id", (req, res) => {
   if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, banner });
 });
-var bannersForRequestTenant = (req) => db.getMarketBannersForTenant(req.headers["x-tenant-id"] || "tenant_alrowad");
-apiRouter.get("/merchant/market-banners", (req, res) => {
+var bannersForRequestTenant = (req) => {
+  const auth = req;
+  return db.getMarketBannersForTenant(auth.tenantId);
+};
+apiRouter.get("/merchant/market-banners", merchantAuthMiddleware, (req, res) => {
   res.json({ banners: bannersForRequestTenant(req) });
 });
-apiRouter.get("/merchant/market-banners/:id/report", (req, res) => {
+apiRouter.get("/merchant/market-banners/:id/report", merchantAuthMiddleware, (req, res) => {
   const mine = bannersForRequestTenant(req).some((b) => b.id === req.params.id);
   if (!mine) {
     return res.status(404).json({ error: "NOT_FOUND", message: "\u0647\u0630\u0627 \u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0631\u062A\u0628\u0637 \u0628\u062D\u0633\u0627\u0628\u0643." });
@@ -9107,19 +9522,19 @@ apiRouter.get("/merchant/market-banners/:id/report", (req, res) => {
   if (!report) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, ...report });
 });
-apiRouter.get("/admin/market-banners/:id/report", (req, res) => {
+apiRouter.get("/admin/market-banners/:id/report", adminAuthMiddleware, (req, res) => {
   const from = typeof req.query.from === "string" ? req.query.from : void 0;
   const to = typeof req.query.to === "string" ? req.query.to : void 0;
   const report = db.getMarketBannerReport(req.params.id, from, to);
   if (!report) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, ...report });
 });
-apiRouter.post("/admin/market-banners/:id/reset-clicks", (req, res) => {
+apiRouter.post("/admin/market-banners/:id/reset-clicks", adminAuthMiddleware, (req, res) => {
   const banner = db.resetMarketBannerClicks(req.params.id);
   if (!banner) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true, banner });
 });
-apiRouter.delete("/admin/market-banners/:id", (req, res) => {
+apiRouter.delete("/admin/market-banners/:id", adminAuthMiddleware, (req, res) => {
   const removed = db.deleteMarketBanner(req.params.id);
   if (!removed) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0628\u0627\u0646\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true });

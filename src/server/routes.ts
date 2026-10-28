@@ -50,12 +50,25 @@ import type {
   InventoryAlert,
 } from '../types/index.ts';
 import { getPublicKey as getPushPublicKey, notify as notifyUser, notifyLowStock, runNotificationScan } from './notifications.ts';
+import {
+  adminAuthMiddleware,
+  merchantAuthMiddleware,
+  issueAdminSession,
+  destroyAdminSession,
+  issueMerchantSession,
+  destroyMerchantSession,
+  merchantCodeMatchesForLogin,
+  authSecretConfigured,
+} from './auth.ts';
+import { adminRevision, newMerchantCode, merchantCodeHash, validSigningSecret, verifySession } from './securitySessions.ts';
+import crypto from 'node:crypto';
 
 export const apiRouter = Router();
 
 apiRouter.get('/barcode-lookup/:barcode', barcodeLookupHandler);
 
-// Middleware: Extract & validate tenant context
+// Backwards-compatible header fallback (NOT security): kept only for unmigrated public helpers
+// New merchant routes MUST use merchantAuthMiddleware above.
 export interface AuthenticatedRequest extends Request {
   tenantId: string;
   actorName: string;
@@ -63,23 +76,18 @@ export interface AuthenticatedRequest extends Request {
   actorId: string;
 }
 
-const requireTenant = (req: Request, res: Response, next: NextFunction) => {
+// Legacy header-based tenant (INSECURE) — keep only for reference, not used for protected routes
+const legacyRequireTenant = (req: Request, res: Response, next: NextFunction) => {
   const tenantId = (req.headers['x-tenant-id'] as string) || 'tenant_alrowad';
   const tenant = db.getTenant(tenantId);
   if (!tenant) {
     return res.status(404).json({ error: 'المنشأة غير موجودة في النظام' });
   }
-
-  // Attach to request
   (req as AuthenticatedRequest).tenantId = tenantId;
   const rawActorName = (req.headers['x-actor-name'] as string) || '';
   let decodedActorName = 'أحمد الطيب الرواد';
   if (rawActorName) {
-    try {
-      decodedActorName = decodeURIComponent(rawActorName);
-    } catch {
-      decodedActorName = rawActorName;
-    }
+    try { decodedActorName = decodeURIComponent(rawActorName); } catch { decodedActorName = rawActorName; }
   }
   (req as AuthenticatedRequest).actorName = decodedActorName;
   (req as AuthenticatedRequest).actorRole = (req.headers['x-actor-role'] as string) || 'owner';
@@ -87,12 +95,117 @@ const requireTenant = (req: Request, res: Response, next: NextFunction) => {
   next();
 };
 
+function tryMerchantTenantId(req: Request): string | null {
+  const secret = process.env.SANAD_AUTH_SECRET;
+  if (!validSigningSecret(secret)) return null;
+  const cookieHeader = req.headers.cookie as string | undefined;
+  let token: string | undefined;
+  if (cookieHeader) {
+    for (const part of cookieHeader.split(';')) {
+      const eq = part.indexOf('=');
+      if (eq === -1) continue;
+      const k = part.slice(0, eq).trim();
+      if (k === 'sanad_merchant_token') token = decodeURIComponent(part.slice(eq + 1).trim());
+    }
+  }
+  if (!token) {
+    const h = (req.headers.authorization as string) || '';
+    if (h.toLowerCase().startsWith('bearer ')) token = h.slice(7).trim();
+  }
+  if (!token) token = (req.headers['x-merchant-token'] as string) || undefined;
+  if (!token) return null;
+  const claims = verifySession(token, secret, 'merchant');
+  if (!claims || !claims.tenantId) return null;
+  const tenant = db.getTenant(claims.tenantId);
+  if (!tenant) return null;
+  const stored = (tenant as any).merchantCodeHash as string | undefined;
+  if (!stored || claims.revision !== stored) return null;
+  return claims.tenantId;
+}
+
 /* =========================================================================
-   1. AUTH & TENANTS
+   0. AUTH — platform admin + merchant per-store codes
    ========================================================================= */
 
-// Switch/get active tenants for platform or demo switcher
-apiRouter.get('/tenants/list', (req, res) => {
+apiRouter.get('/auth/status', (req, res) => {
+  res.json({
+    authSecretConfigured: authSecretConfigured(),
+    adminPasswordConfigured: !!process.env.SANAD_ADMIN_PASSWORD,
+  });
+});
+
+apiRouter.post('/auth/admin/login', (req, res) => {
+  const { password } = req.body || {};
+  if (!validSigningSecret(process.env.SANAD_AUTH_SECRET)) {
+    return res.status(500).json({ error: 'AUTH_NOT_CONFIGURED', message: 'مفتاح الجلسات غير مُهيأ في الخادم.' });
+  }
+  if (!process.env.SANAD_ADMIN_PASSWORD) {
+    return res.status(500).json({ error: 'ADMIN_NOT_CONFIGURED', message: 'كلمة مرور الإدارة غير مُهيأة.' });
+  }
+  const token = issueAdminSession(String(password || ''), res);
+  if (!token) return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'كلمة المرور غير صحيحة.' });
+  res.json({ success: true, token });
+});
+
+apiRouter.post('/auth/admin/logout', (req, res) => {
+  destroyAdminSession(res);
+  res.json({ success: true });
+});
+
+apiRouter.get('/auth/admin/me', adminAuthMiddleware, (req, res) => {
+  res.json({ authenticated: true, role: 'admin' });
+});
+
+apiRouter.post('/auth/merchant/login', (req, res) => {
+  const { code, slug, tenantId } = req.body || {};
+  const rawCode = String(code || '').trim();
+  if (!validSigningSecret(process.env.SANAD_AUTH_SECRET)) {
+    return res.status(500).json({ error: 'AUTH_NOT_CONFIGURED', message: 'مفتاح الجلسات غير مُهيأ في الخادم.' });
+  }
+  const hash = merchantCodeHash(rawCode);
+  if (!hash) return res.status(401).json({ error: 'INVALID_CODE', message: 'رمز المتجر غير صالح — تأكد من النسخ الكامل.' });
+  // Prefer tenant lookup by hash (code itself identifies the store)
+  let tenant = db.findTenantByMerchantCodeHash(hash);
+  // If slug/tenantId supplied, enforce exact match (prevents cross-store confusion)
+  const hint = String(slug || tenantId || '').trim();
+  if (hint) {
+    const hinted = db.getTenant(hint) || db.getTenantBySlug(hint);
+    if (!hinted) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+    if (hinted.id !== tenant?.id) {
+      // Code does not belong to hinted tenant — reject
+      if (tenant) return res.status(401).json({ error: 'CODE_TENANT_MISMATCH', message: 'الرمز لا يطابق هذا المتجر.' });
+      // Try to validate code against hinted tenant directly
+      const stored = (hinted as any).merchantCodeHash as string | undefined;
+      if (stored !== hash) return res.status(401).json({ error: 'INVALID_CODE', message: 'الرمز غير صحيح لهذا المتجر.' });
+      tenant = hinted;
+    }
+  }
+  if (!tenant) return res.status(401).json({ error: 'INVALID_CODE', message: 'الرمز غير صالح.' });
+  if ((tenant as any).status === 'suspended') return res.status(403).json({ error: 'TENANT_SUSPENDED', message: 'المتجر موقوف.' });
+  const token = issueMerchantSession(tenant.id, hash, res);
+  if (!token) return res.status(500).json({ error: 'ISSUE_FAILED', message: 'تعذر إنشاء الجلسة.' });
+  res.json({ success: true, token, tenant: { id: tenant.id, name: tenant.name, tradeName: tenant.tradeName, slug: tenant.slug, city: tenant.city } });
+});
+
+apiRouter.post('/auth/merchant/logout', (req, res) => {
+  destroyMerchantSession(res);
+  res.json({ success: true });
+});
+
+apiRouter.get('/auth/merchant/me', merchantAuthMiddleware, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const tenant = db.getTenant(authReq.tenantId);
+  if (!tenant) return res.status(404).json({ error: 'المنشأة غير موجودة' });
+  const { merchantCodeHash: _h, ...safe } = tenant as any;
+  res.json({ authenticated: true, role: 'merchant', tenant: safe });
+});
+
+/* =========================================================================
+   1. AUTH & TENANTS (legacy / compatibility)
+   ========================================================================= */
+
+// Platform tenant registry — ADMIN ONLY. Merchant app must use /auth/merchant/me and /tenants/current (authenticated).
+apiRouter.get('/tenants/list', adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   res.json({
     tenants: schema.tenants
@@ -113,13 +226,15 @@ apiRouter.get('/tenants/list', (req, res) => {
 });
 
 // Current tenant profile
-apiRouter.get('/tenants/current', requireTenant, (req, res) => {
+apiRouter.get('/tenants/current', merchantAuthMiddleware, (req, res) => {
   const tenant = db.getTenant((req as AuthenticatedRequest).tenantId);
-  res.json({ tenant });
+  if (!tenant) return res.status(404).json({ error: 'المنشأة غير موجودة' });
+  const { merchantCodeHash: _h, ...safe } = tenant as any;
+  res.json({ tenant: safe });
 });
 
 // Update tenant profile & settings
-apiRouter.put('/tenants/current', requireTenant, (req, res) => {
+apiRouter.put('/tenants/current', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const tenant = db.getTenant(authReq.tenantId);
   if (!tenant) return res.status(404).json({ error: 'المنشأة غير موجودة' });
@@ -145,19 +260,20 @@ apiRouter.put('/tenants/current', requireTenant, (req, res) => {
     details: 'تحديث بيانات المنشأة وإعدادات الفواتير والطباعة',
   });
 
-  res.json({ success: true, tenant });
+  const { merchantCodeHash: _hm, ...safeUpd } = tenant as any;
+  res.json({ success: true, tenant: safeUpd });
 });
 
 /* =========================================================================
    2. BRANCHES
    ========================================================================= */
-apiRouter.get('/branches', requireTenant, (req, res) => {
+apiRouter.get('/branches', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branches = db.getBranches(authReq.tenantId);
   res.json({ branches });
 });
 
-apiRouter.post('/branches', requireTenant, (req, res) => {
+apiRouter.post('/branches', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const tenant = db.getTenant(authReq.tenantId);
   const plan = db.getSchema().subscriptionPlans.find((p) => p.id === tenant?.subscriptionPlanId);
@@ -206,13 +322,13 @@ apiRouter.post('/branches', requireTenant, (req, res) => {
 /* =========================================================================
    3. EMPLOYEES & RBAC
    ========================================================================= */
-apiRouter.get('/employees', requireTenant, (req, res) => {
+apiRouter.get('/employees', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const employees = db.getSchema().employees.filter((e) => e.tenantId === authReq.tenantId);
   res.json({ employees });
 });
 
-apiRouter.post('/employees', requireTenant, (req, res) => {
+apiRouter.post('/employees', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const tenant = db.getTenant(authReq.tenantId);
   const plan = db.getSchema().subscriptionPlans.find((p) => p.id === tenant?.subscriptionPlanId);
@@ -265,7 +381,7 @@ apiRouter.post('/employees', requireTenant, (req, res) => {
   res.json({ success: true, employee: newEmployee });
 });
 
-apiRouter.put('/employees/:id', requireTenant, (req, res) => {
+apiRouter.put('/employees/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const emp = db.getSchema().employees.find(
     (e) => e.id === req.params.id && e.tenantId === authReq.tenantId
@@ -298,7 +414,7 @@ apiRouter.put('/employees/:id', requireTenant, (req, res) => {
   res.json({ success: true, employee: emp });
 });
 
-apiRouter.delete('/employees/:id', requireTenant, (req, res) => {
+apiRouter.delete('/employees/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const list = db.getSchema().employees;
   const idx = list.findIndex((e) => e.id === req.params.id && e.tenantId === authReq.tenantId);
@@ -329,13 +445,13 @@ apiRouter.delete('/employees/:id', requireTenant, (req, res) => {
 /* =========================================================================
    4. PRODUCTS & INVENTORY
    ========================================================================= */
-apiRouter.get('/products', requireTenant, (req, res) => {
+apiRouter.get('/products', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const products = db.getProducts(authReq.tenantId).filter((p) => p.isActive !== false);
   res.json({ products });
 });
 
-apiRouter.post('/products', requireTenant, (req, res) => {
+apiRouter.post('/products', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const {
     name, sku, barcode, category, unit, purchaseCost, costCurrency, sellingPriceSdg,
@@ -396,7 +512,7 @@ const requireProductEditor = (req: Request, res: Response, next: NextFunction) =
   next();
 };
 
-apiRouter.put('/products/:id', requireTenant, requireProductEditor, (req, res) => {
+apiRouter.put('/products/:id', merchantAuthMiddleware, requireProductEditor, (req, res) => {
   const actor = req as AuthenticatedRequest;
   const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
   if (!product) return res.status(404).json({ error: 'الصنف غير موجود في متجرك.' });
@@ -446,7 +562,7 @@ apiRouter.put('/products/:id', requireTenant, requireProductEditor, (req, res) =
   res.json({ success: true, product });
 });
 
-apiRouter.delete('/products/:id', requireTenant, requireProductEditor, (req, res) => {
+apiRouter.delete('/products/:id', merchantAuthMiddleware, requireProductEditor, (req, res) => {
   const actor = req as AuthenticatedRequest;
   const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
   if (!product) return res.status(404).json({ error: 'الصنف غير موجود في متجرك.' });
@@ -460,14 +576,14 @@ apiRouter.delete('/products/:id', requireTenant, requireProductEditor, (req, res
   res.json({ success: true });
 });
 
-apiRouter.get('/inventory', requireTenant, (req, res) => {
+apiRouter.get('/inventory', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
   const inventory = db.getInventory(authReq.tenantId, branchId);
   res.json({ inventory });
 });
 
-apiRouter.post('/inventory/adjust', requireTenant, (req, res) => {
+apiRouter.post('/inventory/adjust', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { branchId, productId, delta, reason, type } = req.body;
 
@@ -502,7 +618,7 @@ apiRouter.post('/inventory/adjust', requireTenant, (req, res) => {
   res.json({ success: true, newBalance: result.newBalance });
 });
 
-apiRouter.get('/inventory/movements', requireTenant, (req, res) => {
+apiRouter.get('/inventory/movements', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
   const movements = db
@@ -512,7 +628,7 @@ apiRouter.get('/inventory/movements', requireTenant, (req, res) => {
 });
 
 // GET /inventory/alerts - Retrieve reorder point alerts
-apiRouter.get('/inventory/alerts', requireTenant, (req, res) => {
+apiRouter.get('/inventory/alerts', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
   const alerts = db.getInventoryAlerts(authReq.tenantId, branchId);
@@ -522,7 +638,7 @@ apiRouter.get('/inventory/alerts', requireTenant, (req, res) => {
 });
 
 // POST /inventory/alerts/sync - Force scan and synchronize alerts with current stock
-apiRouter.post('/inventory/alerts/sync', requireTenant, (req, res) => {
+apiRouter.post('/inventory/alerts/sync', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.body?.branchId as string | undefined;
   const alerts = db.syncInventoryAlerts(authReq.tenantId);
@@ -533,21 +649,21 @@ apiRouter.post('/inventory/alerts/sync', requireTenant, (req, res) => {
 });
 
 // POST /inventory/alerts/:id/read - Mark alert as read
-apiRouter.post('/inventory/alerts/:id/read', requireTenant, (req, res) => {
+apiRouter.post('/inventory/alerts/:id/read', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const success = db.markInventoryAlertRead(authReq.tenantId, req.params.id);
   res.json({ success });
 });
 
 // POST /inventory/alerts/:id/dismiss - Dismiss alert
-apiRouter.post('/inventory/alerts/:id/dismiss', requireTenant, (req, res) => {
+apiRouter.post('/inventory/alerts/:id/dismiss', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const success = db.dismissInventoryAlert(authReq.tenantId, req.params.id);
   res.json({ success });
 });
 
 // POST /inventory/import-csv - Bulk import products and opening stock from CSV
-apiRouter.post('/inventory/import-csv', requireTenant, (req, res) => {
+apiRouter.post('/inventory/import-csv', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { branchId, items } = req.body;
 
@@ -568,14 +684,14 @@ apiRouter.post('/inventory/import-csv', requireTenant, (req, res) => {
 /* =========================================================================
    4.5 SMART INVENTORY AUDIT (أداة تدقيق وجرد المخزون الذكي بالهاتف)
    ========================================================================= */
-apiRouter.get('/inventory/audits', requireTenant, (req, res) => {
+apiRouter.get('/inventory/audits', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
   const audits = db.getInventoryAudits(authReq.tenantId, branchId);
   res.json({ success: true, audits });
 });
 
-apiRouter.get('/inventory/audits/:id', requireTenant, (req, res) => {
+apiRouter.get('/inventory/audits/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const audit = db.getInventoryAudit(authReq.tenantId, req.params.id);
   if (!audit) {
@@ -584,7 +700,7 @@ apiRouter.get('/inventory/audits/:id', requireTenant, (req, res) => {
   res.json({ success: true, audit });
 });
 
-apiRouter.post('/inventory/audits', requireTenant, (req, res) => {
+apiRouter.post('/inventory/audits', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { branchId, title, scope, categoryFilter, deviceInfo, notes } = req.body;
   if (!branchId) {
@@ -605,7 +721,7 @@ apiRouter.post('/inventory/audits', requireTenant, (req, res) => {
   res.status(201).json({ success: true, audit });
 });
 
-apiRouter.put('/inventory/audits/:id', requireTenant, (req, res) => {
+apiRouter.put('/inventory/audits/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const updated = db.updateInventoryAudit(authReq.tenantId, req.params.id, req.body);
   if (!updated) {
@@ -614,7 +730,7 @@ apiRouter.put('/inventory/audits/:id', requireTenant, (req, res) => {
   res.json({ success: true, audit: updated });
 });
 
-apiRouter.post('/inventory/audits/:id/reconcile', requireTenant, (req, res) => {
+apiRouter.post('/inventory/audits/:id/reconcile', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const result = db.reconcileInventoryAudit({
     tenantId: authReq.tenantId,
@@ -628,7 +744,7 @@ apiRouter.post('/inventory/audits/:id/reconcile', requireTenant, (req, res) => {
   res.json({ success: true, audit: result.audit, adjustedCount: result.adjustedCount });
 });
 
-apiRouter.post('/inventory/audits/:id/cancel', requireTenant, (req, res) => {
+apiRouter.post('/inventory/audits/:id/cancel', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const result = db.cancelInventoryAudit(authReq.tenantId, req.params.id);
   if (!result.success) {
@@ -640,14 +756,14 @@ apiRouter.post('/inventory/audits/:id/cancel', requireTenant, (req, res) => {
 /* =========================================================================
    5. BRANCH TRANSFERS WORKFLOW
    ========================================================================= */
-apiRouter.get('/transfers', requireTenant, (req, res) => {
+apiRouter.get('/transfers', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const transfers = db.getSchema().branchTransfers.filter((t) => t.tenantId === authReq.tenantId);
   res.json({ transfers });
 });
 
 // Request transfer
-apiRouter.post('/transfers/request', requireTenant, (req, res) => {
+apiRouter.post('/transfers/request', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { sourceBranchId, targetBranchId, items, notes } = req.body;
 
@@ -701,7 +817,7 @@ apiRouter.post('/transfers/request', requireTenant, (req, res) => {
 });
 
 // Dispatch transfer (deduct from source branch)
-apiRouter.post('/transfers/:id/dispatch', requireTenant, (req, res) => {
+apiRouter.post('/transfers/:id/dispatch', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const transfer = db.getSchema().branchTransfers.find((t) => t.id === req.params.id && t.tenantId === authReq.tenantId);
   if (!transfer) return res.status(404).json({ error: 'طلب التحويل غير موجود' });
@@ -752,7 +868,7 @@ apiRouter.post('/transfers/:id/dispatch', requireTenant, (req, res) => {
 });
 
 // Receive transfer (add to target branch, check discrepancies)
-apiRouter.post('/transfers/:id/receive', requireTenant, (req, res) => {
+apiRouter.post('/transfers/:id/receive', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const transfer = db.getSchema().branchTransfers.find((t) => t.id === req.params.id && t.tenantId === authReq.tenantId);
   if (!transfer) return res.status(404).json({ error: 'طلب التحويل غير موجود' });
@@ -809,7 +925,7 @@ apiRouter.post('/transfers/:id/receive', requireTenant, (req, res) => {
 /* =========================================================================
    6. POS SHIFTS & RECONCILIATION
    ========================================================================= */
-apiRouter.get('/pos/shifts/current', requireTenant, (req, res) => {
+apiRouter.get('/pos/shifts/current', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const cashierId = (req.query.cashierId as string) || authReq.actorId;
   const branchId = req.query.branchId as string;
@@ -821,7 +937,7 @@ apiRouter.get('/pos/shifts/current', requireTenant, (req, res) => {
   res.json({ shift: openShift || null });
 });
 
-apiRouter.post('/pos/shifts/open', requireTenant, (req, res) => {
+apiRouter.post('/pos/shifts/open', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { branchId, openingCashSdg, cashierId, cashierName } = req.body;
 
@@ -871,7 +987,7 @@ apiRouter.post('/pos/shifts/open', requireTenant, (req, res) => {
   res.json({ success: true, shift: newShift });
 });
 
-apiRouter.post('/pos/shifts/close', requireTenant, (req, res) => {
+apiRouter.post('/pos/shifts/close', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { shiftId, actualCashSdg, closeNotes } = req.body;
 
@@ -903,7 +1019,7 @@ apiRouter.post('/pos/shifts/close', requireTenant, (req, res) => {
   res.json({ success: true, shift });
 });
 
-apiRouter.post('/pos/shifts/:id/review', requireTenant, (req, res) => {
+apiRouter.post('/pos/shifts/:id/review', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const shift = db.getSchema().cashierShifts.find((s) => s.id === req.params.id && s.tenantId === authReq.tenantId);
   if (!shift) return res.status(404).json({ error: 'الوردية غير موجودة' });
@@ -929,7 +1045,7 @@ apiRouter.post('/pos/shifts/:id/review', requireTenant, (req, res) => {
   res.json({ success: true, shift });
 });
 
-apiRouter.get('/pos/shifts', requireTenant, (req, res) => {
+apiRouter.get('/pos/shifts', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const shifts = db.getSchema().cashierShifts.filter((s) => s.tenantId === authReq.tenantId);
   res.json({ shifts });
@@ -938,7 +1054,7 @@ apiRouter.get('/pos/shifts', requireTenant, (req, res) => {
 /* =========================================================================
    7. POS SALES & INVOICING
    ========================================================================= */
-apiRouter.post('/pos/sales', requireTenant, (req, res) => {
+apiRouter.post('/pos/sales', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const {
     id, // client-generated UUID for idempotency & offline sync
@@ -972,10 +1088,27 @@ apiRouter.post('/pos/sales', requireTenant, (req, res) => {
 
   // A stale online cart must not sell a product archived in another session.
   // Keep accepting earlier offline-created sales so their history can sync.
+  // Strict tenant ownership checks
+  const branch = db.getSchema().branches.find((b) => b.id === branchId && b.tenantId === authReq.tenantId);
+  if (!branch) return res.status(400).json({ error: 'الفرع غير موجود في هذا المتجر.' });
+  for (const it of items) {
+    const prod = db.getSchema().products.find((p) => p.id === it.productId && p.tenantId === authReq.tenantId);
+    if (!prod) return res.status(400).json({ error: `الصنف ${it.productId} لا يتبع هذا المتجر.` });
+    if (prod.isActive === false && !isOfflineCreated) return res.status(409).json({ error: `الصنف «${prod.name}» أُزيل من المتجر.` });
+  }
+  if (shiftId) {
+    const shiftCheck = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
+    if (!shiftCheck) return res.status(400).json({ error: 'الوردية لا تتبع هذا المتجر.' });
+    if (shiftCheck.branchId !== branchId) return res.status(400).json({ error: 'الوردية لا تتبع نفس الفرع.' });
+  }
+  if (customerId) {
+    const custCheck = db.getSchema().customers.find((c) => c.id === customerId && c.tenantId === authReq.tenantId);
+    if (!custCheck) return res.status(400).json({ error: 'العميل لا يتبع هذا المتجر.' });
+  }
+
   if (!isOfflineCreated && items.some((item: any) => db.getSchema().products.some((p) => p.id === item.productId && p.tenantId === authReq.tenantId && p.isActive === false))) {
     return res.status(409).json({ error: 'أحد الأصناف أُزيل من المتجر. حدّث قائمة الأصناف وأعد مراجعة الفاتورة.' });
   }
-  const branch = db.getSchema().branches.find((b) => b.id === branchId);
   const tenant = db.getTenant(authReq.tenantId);
 
   // VAT settings resolution
@@ -989,7 +1122,7 @@ apiRouter.post('/pos/sales', requireTenant, (req, res) => {
   const processedItems: SaleItem[] = [];
 
   for (const item of items) {
-    const product = db.getSchema().products.find((p) => p.id === item.productId);
+    const product = db.getSchema().products.find((p) => p.id === item.productId && p.tenantId === authReq.tenantId);
     const qty = Number(item.quantity);
     const unitPrice = Number(item.unitPriceSdg || product?.sellingPriceSdg || 0);
     const discount = Number(item.discountSdg || 0);
@@ -1121,7 +1254,7 @@ apiRouter.post('/pos/sales', requireTenant, (req, res) => {
 
   // Update active shift if specified
   if (shiftId) {
-    const shift = db.getSchema().cashierShifts.find((s) => s.id === shiftId);
+    const shift = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
     if (shift && shift.status === 'open') {
       shift.salesCount += 1;
       shift.totalSalesSdg += grandTotal;
@@ -1149,7 +1282,7 @@ apiRouter.post('/pos/sales', requireTenant, (req, res) => {
   res.json({ success: true, sale, earnedPoints, customer: updatedCustomer });
 });
 
-apiRouter.get('/pos/sales', requireTenant, (req, res) => {
+apiRouter.get('/pos/sales', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
   const sales = db
@@ -1159,7 +1292,7 @@ apiRouter.get('/pos/sales', requireTenant, (req, res) => {
 });
 
 // Refunds / Returns & Credit Notes
-apiRouter.post('/pos/sales/:id/refund', requireTenant, (req, res) => {
+apiRouter.post('/pos/sales/:id/refund', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const sale = db.getSchema().sales.find((s) => s.id === req.params.id && s.tenantId === authReq.tenantId);
   if (!sale) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
@@ -1307,7 +1440,7 @@ apiRouter.post('/pos/sales/:id/refund', requireTenant, (req, res) => {
   res.json({ success: true, returnRecord: returnRec, sale });
 });
 
-apiRouter.get('/pos/returns', requireTenant, (req, res) => {
+apiRouter.get('/pos/returns', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
   const returns = db
@@ -1321,7 +1454,7 @@ apiRouter.get('/pos/returns', requireTenant, (req, res) => {
    ========================================================================= */
 
 // Get customers list with optional search query
-apiRouter.get('/pos/customers', requireTenant, (req, res) => {
+apiRouter.get('/pos/customers', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const search = (req.query.search as string) || (req.query.q as string) || undefined;
   const customers = db.getCustomers(authReq.tenantId, search);
@@ -1329,7 +1462,7 @@ apiRouter.get('/pos/customers', requireTenant, (req, res) => {
 });
 
 // Register new customer
-apiRouter.post('/pos/customers', requireTenant, (req, res) => {
+apiRouter.post('/pos/customers', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { name, phone, email, city, address, taxNumber, notes } = req.body;
 
@@ -1378,7 +1511,7 @@ apiRouter.post('/pos/customers', requireTenant, (req, res) => {
 });
 
 // Update customer details
-apiRouter.put('/pos/customers/:id', requireTenant, (req, res) => {
+apiRouter.put('/pos/customers/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { id } = req.params;
   const { name, phone, email, city, address, taxNumber, notes, loyaltyPoints } = req.body;
@@ -1402,7 +1535,7 @@ apiRouter.put('/pos/customers/:id', requireTenant, (req, res) => {
 });
 
 // Get customer profile and full purchase history
-apiRouter.get('/pos/customers/:id/history', requireTenant, (req, res) => {
+apiRouter.get('/pos/customers/:id/history', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { id } = req.params;
 
@@ -1440,7 +1573,7 @@ apiRouter.get('/pos/customers/:id/history', requireTenant, (req, res) => {
 /* =========================================================================
    8. OFFLINE SYNC BATCH QUEUE
    ========================================================================= */
-apiRouter.post('/sync/batch', requireTenant, (req, res) => {
+apiRouter.post('/sync/batch', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { sales } = req.body;
 
@@ -1458,6 +1591,14 @@ apiRouter.post('/sync/batch', requireTenant, (req, res) => {
       if (existing) {
         syncedIds.push(saleData.id);
         continue;
+      }
+
+      // Validate ownership before syncing
+      const syncBranch = db.getSchema().branches.find((b) => b.id === saleData.branchId && b.tenantId === authReq.tenantId);
+      if (!syncBranch) throw new Error(`الفرع ${saleData.branchId} لا يتبع هذا المتجر`);
+      for (const it of (saleData.items || [])) {
+        const prod = db.getSchema().products.find((p) => p.id === it.productId && p.tenantId === authReq.tenantId);
+        if (!prod) throw new Error(`الصنف ${it.productId} لا يتبع هذا المتجر`);
       }
 
       // Record offline sale
@@ -1630,13 +1771,13 @@ apiRouter.post('/storefront/:slug/order', (req, res) => {
 });
 
 // Merchant Storefront Orders Management
-apiRouter.get('/storefront-orders', requireTenant, (req, res) => {
+apiRouter.get('/storefront-orders', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const orders = db.getSchema().storefrontOrders.filter((o) => o.tenantId === authReq.tenantId);
   res.json({ orders });
 });
 
-apiRouter.put('/storefront-orders/:id/status', requireTenant, (req, res) => {
+apiRouter.put('/storefront-orders/:id/status', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const order = db.getSchema().storefrontOrders.find((o) => o.id === req.params.id && o.tenantId === authReq.tenantId);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
@@ -1765,7 +1906,7 @@ apiRouter.get('/currency/parallel-rates', async (_req, res) => {
 });
 
 /** "تحديث الآن" button. */
-apiRouter.post('/admin/currency/refresh', async (req, res) => {
+apiRouter.post('/admin/currency/refresh', adminAuthMiddleware, async (req, res) => {
   const result = await refreshLiveRates('تحديث يدوي من لوحة الإدارة');
   if (!result.refreshed) {
     return res.status(502).json({
@@ -1887,13 +2028,13 @@ apiRouter.get('/integrations/telegram/status', (_req, res) => {
 });
 
 /** Reads the bot's getUpdates so the owner can copy their chat id. */
-apiRouter.get('/admin/telegram/discover', async (_req, res) => {
+apiRouter.get('/admin/telegram/discover', adminAuthMiddleware, async (_req, res) => {
   const result = await discoverChats();
   res.json({ success: result.ok, ...result, configured: telegramConfigured() });
 });
 
 /** Sends one real test message; surfaces the exact Telegram error when any. */
-apiRouter.post('/admin/telegram/test', async (_req, res) => {
+apiRouter.post('/admin/telegram/test', adminAuthMiddleware, async (_req, res) => {
   if (!telegramConfigured()) {
     return res.status(400).json({
       success: false,
@@ -1908,7 +2049,7 @@ apiRouter.post('/admin/telegram/test', async (_req, res) => {
 });
 
 /** Run the check on demand (used after a manual refresh / for testing). */
-apiRouter.post('/admin/currency/alerts/run', async (_req, res) => {
+apiRouter.post('/admin/currency/alerts/run', adminAuthMiddleware, async (_req, res) => {
   const refresh = await refreshLiveRates('فحص يدوي للتحركات');
   await db.flush({ lock: false }).catch(() => {});
 
@@ -1958,7 +2099,7 @@ apiRouter.get('/cron/currency-rates', async (_req, res) => {
   });
 });
 
-apiRouter.get('/currencies', requireTenant, async (_req, res) => {
+apiRouter.get('/currencies', merchantAuthMiddleware, async (_req, res) => {
   if (needsRefresh()) {
     try {
       await refreshLiveRates();
@@ -1978,7 +2119,7 @@ apiRouter.get('/currencies', requireTenant, async (_req, res) => {
   });
 });
 
-apiRouter.put('/currencies/:code', requireTenant, (req, res) => {
+apiRouter.put('/currencies/:code', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { rateToSdg, isActive } = req.body;
   const currency = db.getSchema().currencies.find((c) => c.code === req.params.code.toUpperCase());
@@ -2020,7 +2161,7 @@ apiRouter.put('/currencies/:code', requireTenant, (req, res) => {
   res.json({ success: true, currency });
 });
 
-apiRouter.get('/currencies/history', requireTenant, (req, res) => {
+apiRouter.get('/currencies/history', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const history = db.getSchema().currencyRateHistory.filter((h) => h.tenantId === authReq.tenantId);
   res.json({ history });
@@ -2029,7 +2170,7 @@ apiRouter.get('/currencies/history', requireTenant, (req, res) => {
 /* =========================================================================
    11. ACCOUNTING & BUSINESS REPORTS
    ========================================================================= */
-apiRouter.get('/reports/summary', requireTenant, (req, res) => {
+apiRouter.get('/reports/summary', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
 
@@ -2242,13 +2383,13 @@ apiRouter.get('/reports/summary', requireTenant, (req, res) => {
 /* =========================================================================
    12. PURCHASES & EXPENSES
    ========================================================================= */
-apiRouter.get('/expenses', requireTenant, (req, res) => {
+apiRouter.get('/expenses', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const expenses = db.getSchema().expenses.filter((e) => e.tenantId === authReq.tenantId);
   res.json({ expenses });
 });
 
-apiRouter.post('/expenses', requireTenant, (req, res) => {
+apiRouter.post('/expenses', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { branchId, category, amountSdg, description, receiptNumber } = req.body;
 
@@ -2287,14 +2428,14 @@ apiRouter.post('/expenses', requireTenant, (req, res) => {
   res.json({ success: true, expense: newExpense });
 });
 
-apiRouter.get('/purchases', requireTenant, (req, res) => {
+apiRouter.get('/purchases', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const purchases = db.getSchema().purchases.filter((p) => p.tenantId === authReq.tenantId);
   res.json({ purchases });
 });
 
 // Direct Purchase Order creation with automatic inventory receiving
-apiRouter.post('/purchases', requireTenant, (req, res) => {
+apiRouter.post('/purchases', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { branchId, supplierName, invoiceNumber, currency, exchangeRate, items, paymentStatus, notes } = req.body;
 
@@ -2375,7 +2516,7 @@ apiRouter.get('/subscriptions/plans', (req, res) => {
   res.json({ plans: db.getSchema().subscriptionPlans });
 });
 
-apiRouter.get('/subscriptions/current', requireTenant, (req, res) => {
+apiRouter.get('/subscriptions/current', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const tenant = db.getTenant(authReq.tenantId);
   const plan = db.getSchema().subscriptionPlans.find((p) => p.id === tenant?.subscriptionPlanId);
@@ -2389,7 +2530,7 @@ apiRouter.get('/subscriptions/current', requireTenant, (req, res) => {
 });
 
 // Merchant submits payment for approval (e.g. Bankak transfer slip)
-apiRouter.post('/subscriptions/submit-payment', requireTenant, (req, res) => {
+apiRouter.post('/subscriptions/submit-payment', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { planId, amountSdg, paymentMethod, paymentRef, bankTransferSlipUrl } = req.body;
 
@@ -2428,14 +2569,16 @@ apiRouter.post('/subscriptions/submit-payment', requireTenant, (req, res) => {
 /* =========================================================================
    14. CENTRAL SAAS SUPER ADMIN
    ========================================================================= */
-apiRouter.get('/admin/tenants', (req, res) => {
+apiRouter.get('/admin/tenants', adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   const summary = schema.tenants.map((t) => {
     const branches = schema.branches.filter((b) => b.tenantId === t.id);
     const employees = schema.employees.filter((e) => e.tenantId === t.id);
     const plan = schema.subscriptionPlans.find((p) => p.id === t.subscriptionPlanId);
+    const { merchantCodeHash, ...safe } = t as any;
     return {
-      ...t,
+      ...safe,
+      hasMerchantCode: !!merchantCodeHash,
       branchCount: branches.length,
       employeeCount: employees.length,
       planName: plan?.name,
@@ -2444,7 +2587,7 @@ apiRouter.get('/admin/tenants', (req, res) => {
   res.json({ tenants: summary });
 });
 
-apiRouter.post('/admin/tenants/:id/status', (req, res) => {
+apiRouter.post('/admin/tenants/:id/status', adminAuthMiddleware, (req, res) => {
   const { status, reason } = req.body;
   const tenant = db.getTenant(req.params.id);
   if (!tenant) return res.status(404).json({ error: 'المنشأة غير موجودة' });
@@ -2462,10 +2605,49 @@ apiRouter.post('/admin/tenants/:id/status', (req, res) => {
     details: `تغيير حالة المنشأة إلى: ${status}. السبب: ${reason || 'إجراء إداري'}`,
   });
 
-  res.json({ success: true, tenant });
+  const { merchantCodeHash: _h, ...safeTenant } = tenant as any;
+  res.json({ success: true, tenant: { ...safeTenant, hasMerchantCode: !!_h } });
 });
 
-apiRouter.get('/admin/payments', (req, res) => {
+// Admin issue/rotate per-store access code (plaintext shown once)
+apiRouter.post('/admin/tenants/:id/merchant-code', adminAuthMiddleware, (req, res) => {
+  const tenant = db.getTenant(req.params.id);
+  if (!tenant) return res.status(404).json({ error: 'المنشأة غير موجودة' });
+  const newCode = newMerchantCode();
+  const hash = merchantCodeHash(newCode);
+  if (!hash) return res.status(500).json({ error: 'CODE_GEN_FAILED' });
+  db.setMerchantCode(tenant.id, hash, 'saas_admin');
+  db.commit();
+  db.logAudit({
+    tenantId: tenant.id,
+    actorId: 'saas_admin',
+    actorName: 'مدير المنصة المركزي',
+    action: 'ISSUE_MERCHANT_CODE',
+    entity: 'Tenant',
+    entityId: tenant.id,
+    details: `إصدار/تجديد رمز دخول المتجر — أُظهر مرة واحدة ويجب إرساله للتاجر عبر قناة آمنة`,
+  });
+  res.json({ success: true, tenantId: tenant.id, code: newCode, issuedAt: (tenant as any).merchantCodeIssuedAt, message: 'تم إنشاء الرمز — انسخه الآن وأرسله للتاجر عبر واتساب آمن. لن يظهر مرة أخرى.' });
+});
+
+apiRouter.post('/admin/tenants/:id/merchant-code/clear', adminAuthMiddleware, (req, res) => {
+  const tenant = db.getTenant(req.params.id);
+  if (!tenant) return res.status(404).json({ error: 'المنشأة غير موجودة' });
+  db.clearMerchantCode(tenant.id);
+  db.commit();
+  db.logAudit({
+    tenantId: tenant.id,
+    actorId: 'saas_admin',
+    actorName: 'مدير المنصة المركزي',
+    action: 'REVOKE_MERCHANT_CODE',
+    entity: 'Tenant',
+    entityId: tenant.id,
+    details: 'إلغاء رمز دخول المتجر',
+  });
+  res.json({ success: true });
+});
+
+apiRouter.get('/admin/payments', adminAuthMiddleware, (req, res) => {
   const payments = db.getSchema().subscriptionPayments.map((p) => {
     const tenant = db.getTenant(p.tenantId);
     const plan = db.getSchema().subscriptionPlans.find((pl) => pl.id === p.planId);
@@ -2479,7 +2661,7 @@ apiRouter.get('/admin/payments', (req, res) => {
 });
 
 // Admin approves or rejects manual subscription payment
-apiRouter.post('/admin/payments/:id/review', (req, res) => {
+apiRouter.post('/admin/payments/:id/review', adminAuthMiddleware, (req, res) => {
   const payment = db.getSchema().subscriptionPayments.find((p) => p.id === req.params.id);
   if (!payment) return res.status(404).json({ error: 'سجل السداد غير موجود' });
 
@@ -2520,7 +2702,7 @@ apiRouter.post('/admin/payments/:id/review', (req, res) => {
   res.json({ success: true, payment });
 });
 
-apiRouter.get('/admin/stats', (req, res) => {
+apiRouter.get('/admin/stats', adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   const totalTenants = schema.tenants.length;
   const activeTenants = schema.tenants.filter((t) => t.status === 'active').length;
@@ -2543,7 +2725,7 @@ apiRouter.get('/admin/stats', (req, res) => {
   });
 });
 
-apiRouter.get('/audit-logs', requireTenant, (req, res) => {
+apiRouter.get('/audit-logs', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const logs = db.getSchema().auditLogs.filter((l) => l.tenantId === authReq.tenantId);
   res.json({ logs });
@@ -2658,7 +2840,7 @@ apiRouter.get('/albandar/showrooms', (_req, res) => {
 });
 
 // Merchant action: Publish product directly from POS/Inventory into Al-Bandar Marketplace
-apiRouter.post('/albandar/publish-product', requireTenant, (req, res) => {
+apiRouter.post('/albandar/publish-product', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { productId, category, condition, locationDetails } = req.body;
 
@@ -2739,7 +2921,7 @@ apiRouter.post('/albandar/listings/:id/view', (req, res) => {
    12. KITCHEN DISPLAY SYSTEM (KDS)
    ========================================================================= */
 // Get kitchen tickets
-apiRouter.get('/kitchen/tickets', requireTenant, (req, res) => {
+apiRouter.get('/kitchen/tickets', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
   const status = req.query.status as string | undefined;
@@ -2749,7 +2931,7 @@ apiRouter.get('/kitchen/tickets', requireTenant, (req, res) => {
 });
 
 // Update overall kitchen ticket status
-apiRouter.put('/kitchen/tickets/:id/status', requireTenant, (req, res) => {
+apiRouter.put('/kitchen/tickets/:id/status', merchantAuthMiddleware, (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
@@ -2766,7 +2948,7 @@ apiRouter.put('/kitchen/tickets/:id/status', requireTenant, (req, res) => {
 });
 
 // Update single item status in kitchen ticket
-apiRouter.put('/kitchen/tickets/:id/items/:itemId/status', requireTenant, (req, res) => {
+apiRouter.put('/kitchen/tickets/:id/items/:itemId/status', merchantAuthMiddleware, (req, res) => {
   const { id, itemId } = req.params;
   const { status } = req.body;
 
@@ -2786,7 +2968,7 @@ apiRouter.put('/kitchen/tickets/:id/items/:itemId/status', requireTenant, (req, 
    13. RECURRING EXPENSES (المصروفات الدورية المجدولة)
    ========================================================================= */
 // List recurring expenses
-apiRouter.get('/recurring-expenses', requireTenant, (req, res) => {
+apiRouter.get('/recurring-expenses', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const branchId = req.query.branchId as string | undefined;
 
@@ -2795,7 +2977,7 @@ apiRouter.get('/recurring-expenses', requireTenant, (req, res) => {
 });
 
 // Create recurring expense
-apiRouter.post('/recurring-expenses', requireTenant, (req, res) => {
+apiRouter.post('/recurring-expenses', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const {
     branchId,
@@ -2850,7 +3032,7 @@ apiRouter.post('/recurring-expenses', requireTenant, (req, res) => {
 });
 
 // Update recurring expense
-apiRouter.put('/recurring-expenses/:id', requireTenant, (req, res) => {
+apiRouter.put('/recurring-expenses/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { id } = req.params;
 
@@ -2863,7 +3045,7 @@ apiRouter.put('/recurring-expenses/:id', requireTenant, (req, res) => {
 });
 
 // Delete recurring expense
-apiRouter.delete('/recurring-expenses/:id', requireTenant, (req, res) => {
+apiRouter.delete('/recurring-expenses/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { id } = req.params;
 
@@ -2876,7 +3058,7 @@ apiRouter.delete('/recurring-expenses/:id', requireTenant, (req, res) => {
 });
 
 // Post recurring expense now (تسجيل فوري في المصروفات)
-apiRouter.post('/recurring-expenses/:id/post-now', requireTenant, (req, res) => {
+apiRouter.post('/recurring-expenses/:id/post-now', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { id } = req.params;
 
@@ -2907,14 +3089,14 @@ apiRouter.post('/recurring-expenses/:id/post-now', requireTenant, (req, res) => 
    14. PROMOTIONAL OFFERS MANAGEMENT (إدارة العروض الترويجية)
    ========================================================================= */
 // List promotional offers
-apiRouter.get('/promotions', requireTenant, (req, res) => {
+apiRouter.get('/promotions', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const promotions = db.getPromotions(authReq.tenantId);
   res.json({ promotions });
 });
 
 // Create promotion offer
-apiRouter.post('/promotions', requireTenant, (req, res) => {
+apiRouter.post('/promotions', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const {
     title,
@@ -2983,7 +3165,7 @@ apiRouter.post('/promotions', requireTenant, (req, res) => {
 });
 
 // Update promotion
-apiRouter.put('/promotions/:id', requireTenant, (req, res) => {
+apiRouter.put('/promotions/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { id } = req.params;
 
@@ -2996,7 +3178,7 @@ apiRouter.put('/promotions/:id', requireTenant, (req, res) => {
 });
 
 // Delete promotion
-apiRouter.delete('/promotions/:id', requireTenant, (req, res) => {
+apiRouter.delete('/promotions/:id', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const { id } = req.params;
 
@@ -3193,7 +3375,7 @@ async function geminiGenerate(opts: {
 const SOURCE_ALIASES_PRIMARY = /alsoug|سوق\s*السودان|البديل/i;
 const SOURCE_ALIASES_BACKUP = /أخبار\s*السودان|اخبار\s*السودان|سودان\s*أخبار|sudanakhbar/i;
 
-apiRouter.post('/ai/parse-sale', requireTenant, async (req, res) => {
+apiRouter.post('/ai/parse-sale', merchantAuthMiddleware, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
   if (!allowParseSale(authReq.tenantId)) {
     return res.status(429).json({ error: 'تجاوزت حد طلبات التحليل — انتظر دقيقة وجرّب تاني.' });
@@ -3761,21 +3943,27 @@ apiRouter.post('/market-ads', (req, res) => {
   if (!imageUrl && !videoUrl) {
     return res.status(400).json({ error: 'MEDIA_REQUIRED', message: 'أضف صورة أو فيديو للإعلان.' });
   }
-  const tenantId = String(req.headers['x-tenant-id'] || '');
-  const resolvedOwner =
-    ownerToken && String(ownerToken).length >= 8
-      ? String(ownerToken)
-      : tenantId.length >= 4
-        ? `tenant:${tenantId}`
-        : '';
-
-  if (!resolvedOwner || resolvedOwner.length < 8) {
-    return res.status(400).json({ error: 'OWNER_TOKEN_REQUIRED', message: 'تعذر التعرف على جهازك، أعد فتح التطبيق.' });
+  // Secure owner resolution: authenticated merchants publish as tenant:<id>; anon uses random device token
+  const authedTenantId = tryMerchantTenantId(req);
+  let resolvedOwner = '';
+  let merchantTenantId: string | undefined;
+  if (authedTenantId) {
+    resolvedOwner = `tenant:${authedTenantId}`;
+    merchantTenantId = authedTenantId;
+  } else {
+    // If client claims a tenant: prefix without authentication, reject — prevents spoofing
+    const claimed = ownerToken ? String(ownerToken) : '';
+    if (claimed.startsWith('tenant:')) {
+      return res.status(401).json({ error: 'AUTH_REQUIRED_FOR_STORE_AD', message: 'نشر باسم متجر يتطلب تسجيل دخول المتجر.' });
+    }
+    if (claimed && String(claimed).length >= 8) {
+      resolvedOwner = String(claimed);
+    } else {
+      // Generate an unguessable anonymous owner token so the publisher can later edit/delete
+      resolvedOwner = `anon:${crypto.randomBytes(16).toString('hex')}`;
+    }
   }
 
-  const merchantTenantId = resolvedOwner.startsWith('tenant:')
-    ? resolvedOwner.slice('tenant:'.length)
-    : tenantId;
   const merchantTenant = merchantTenantId ? db.getTenant(merchantTenantId) : undefined;
   const storeName = String(merchantTenant?.tradeName || merchantTenant?.name || '').trim();
 
@@ -3825,7 +4013,9 @@ apiRouter.post('/market-ads', (req, res) => {
  * يصحّح إعلانه بنفس الجهاز الذي نشره منه.
  */
 apiRouter.put('/market-ads/:id', (req, res) => {
-  const ownerToken = String(req.headers['x-owner-token'] || '');
+  const authed = tryMerchantTenantId(req);
+  const headerToken = String(req.headers['x-owner-token'] || '');
+  const ownerToken = authed ? `tenant:${authed}` : headerToken;
   const {
     title, category, priceSdg, location, phone, whatsapp, description, imageUrl, videoUrl,
   } = req.body || {};
@@ -3872,7 +4062,9 @@ apiRouter.put('/market-ads/:id', (req, res) => {
 
 /** Publisher deletes their own ad — the owner token must match. */
 apiRouter.delete('/market-ads/:id', (req, res) => {
-  const ownerToken = String(req.headers['x-owner-token'] || '');
+  const authed = tryMerchantTenantId(req);
+  const headerToken = String(req.headers['x-owner-token'] || '');
+  const ownerToken = authed ? `tenant:${authed}` : headerToken;
   const result = db.deleteMarketAd(req.params.id, { ownerToken });
 
   if (!result.ok) {
@@ -3886,7 +4078,7 @@ apiRouter.delete('/market-ads/:id', (req, res) => {
 
 /* ---------------------------- Admin side ---------------------------- */
 
-apiRouter.get('/admin/market-ads', (req, res) => {
+apiRouter.get('/admin/market-ads', adminAuthMiddleware, (req, res) => {
   const status = String(req.query.status || 'all');
   const ads = db.getMarketAds();
   const filtered = status === 'all' ? ads : ads.filter((a) => a.status === status);
@@ -3908,7 +4100,7 @@ apiRouter.get('/admin/market-ads', (req, res) => {
   });
 });
 
-apiRouter.post('/admin/market-ads/:id/review', (req, res) => {
+apiRouter.post('/admin/market-ads/:id/review', adminAuthMiddleware, (req, res) => {
   const { decision, note, reviewedBy, paymentConfirmed } = req.body || {};
 
   if (decision !== 'approved' && decision !== 'rejected') {
@@ -3941,7 +4133,7 @@ apiRouter.post('/admin/market-ads/:id/review', (req, res) => {
   res.json({ success: true, ad });
 });
 
-apiRouter.delete('/admin/market-ads/:id', (req, res) => {
+apiRouter.delete('/admin/market-ads/:id', adminAuthMiddleware, (req, res) => {
   const result = db.deleteMarketAd(req.params.id, { admin: true });
   if (!result.ok) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'الإعلان غير موجود.' });
@@ -4217,7 +4409,7 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
 });
 
 /** Admin: the review queue. */
-apiRouter.get('/admin/tenant-applications', (req, res) => {
+apiRouter.get('/admin/tenant-applications', adminAuthMiddleware, (req, res) => {
   const status = String(req.query.status || 'all');
   const all = db.getTenantApplications();
   const filtered = status === 'all' ? all : all.filter((a) => a.status === status);
@@ -4241,7 +4433,7 @@ apiRouter.get('/admin/tenant-applications', (req, res) => {
 });
 
 /** Admin: approve (issues the login code) or reject. */
-apiRouter.post('/admin/tenant-applications/:id/review', (req, res) => {
+apiRouter.post('/admin/tenant-applications/:id/review', adminAuthMiddleware, (req, res) => {
   const { decision, note, registrationFeeSdg, codeSentVia } = req.body || {};
 
   if (decision !== 'approved' && decision !== 'rejected') {
@@ -4289,7 +4481,7 @@ apiRouter.post('/admin/tenant-applications/:id/review', (req, res) => {
 });
 
 /** Admin: log that the code was delivered to the applicant. */
-apiRouter.post('/admin/tenant-applications/:id/mark-sent', (req, res) => {
+apiRouter.post('/admin/tenant-applications/:id/mark-sent', adminAuthMiddleware, (req, res) => {
   const via = req.body?.via;
   if (via !== 'whatsapp' && via !== 'sms' && via !== 'email') {
     return res.status(400).json({ error: 'BAD_CHANNEL', message: 'قناة الإرسال غير معروفة.' });
@@ -4301,7 +4493,7 @@ apiRouter.post('/admin/tenant-applications/:id/mark-sent', (req, res) => {
   res.json({ success: true, application });
 });
 
-apiRouter.delete('/admin/tenant-applications/:id', (req, res) => {
+apiRouter.delete('/admin/tenant-applications/:id', adminAuthMiddleware, (req, res) => {
   const removed = db.deleteTenantApplication(req.params.id);
   if (!removed) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'الطلب غير موجود.' });
@@ -4505,11 +4697,11 @@ apiRouter.post('/market-banners/:id/impression', (req, res) => {
   res.json({ success: true, impressions: banner.impressions || 0 });
 });
 
-apiRouter.get('/admin/market-banners', (_req, res) => {
+apiRouter.get('/admin/market-banners', adminAuthMiddleware, (_req, res) => {
   res.json({ banners: db.getMarketBanners(false) });
 });
 
-apiRouter.post('/admin/market-banners', (req, res) => {
+apiRouter.post('/admin/market-banners', adminAuthMiddleware, (req, res) => {
   const { title, subtitle, badge, imageUrl, linkUrl, advertiserName, advertiserTenantId, sortOrder, active } =
     req.body || {};
 
@@ -4538,7 +4730,7 @@ apiRouter.post('/admin/market-banners', (req, res) => {
   res.json({ success: true, banner });
 });
 
-apiRouter.put('/admin/market-banners/:id', (req, res) => {
+apiRouter.put('/admin/market-banners/:id', adminAuthMiddleware, (req, res) => {
   const patch: any = {};
   for (const key of ['title', 'subtitle', 'badge', 'imageUrl', 'linkUrl', 'advertiserName', 'advertiserTenantId', 'active', 'sortOrder'] as const) {
     if (req.body?.[key] !== undefined) {
@@ -4553,14 +4745,16 @@ apiRouter.put('/admin/market-banners/:id', (req, res) => {
 
 /*  Merchant side: «إعلاناتي» — a merchant only ever sees its own banners  */
 
-const bannersForRequestTenant = (req: Request) =>
-  db.getMarketBannersForTenant((req.headers['x-tenant-id'] as string) || 'tenant_alrowad');
+const bannersForRequestTenant = (req: Request) => {
+  const auth = req as AuthenticatedRequest;
+  return db.getMarketBannersForTenant(auth.tenantId);
+};
 
-apiRouter.get('/merchant/market-banners', (req, res) => {
+apiRouter.get('/merchant/market-banners', merchantAuthMiddleware, (req, res) => {
   res.json({ banners: bannersForRequestTenant(req) });
 });
 
-apiRouter.get('/merchant/market-banners/:id/report', (req, res) => {
+apiRouter.get('/merchant/market-banners/:id/report', merchantAuthMiddleware, (req, res) => {
   const mine = bannersForRequestTenant(req).some((b) => b.id === req.params.id);
   if (!mine) {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'هذا البانر غير مرتبط بحسابك.' });
@@ -4573,7 +4767,7 @@ apiRouter.get('/merchant/market-banners/:id/report', (req, res) => {
 });
 
 /** Advertiser report: day-by-day views, taps and CTR (defaults to this month). */
-apiRouter.get('/admin/market-banners/:id/report', (req, res) => {
+apiRouter.get('/admin/market-banners/:id/report', adminAuthMiddleware, (req, res) => {
   const from = typeof req.query.from === 'string' ? req.query.from : undefined;
   const to = typeof req.query.to === 'string' ? req.query.to : undefined;
   const report = db.getMarketBannerReport(req.params.id, from, to);
@@ -4581,13 +4775,13 @@ apiRouter.get('/admin/market-banners/:id/report', (req, res) => {
   res.json({ success: true, ...report });
 });
 
-apiRouter.post('/admin/market-banners/:id/reset-clicks', (req, res) => {
+apiRouter.post('/admin/market-banners/:id/reset-clicks', adminAuthMiddleware, (req, res) => {
   const banner = db.resetMarketBannerClicks(req.params.id);
   if (!banner) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
   res.json({ success: true, banner });
 });
 
-apiRouter.delete('/admin/market-banners/:id', (req, res) => {
+apiRouter.delete('/admin/market-banners/:id', adminAuthMiddleware, (req, res) => {
   const removed = db.deleteMarketBanner(req.params.id);
   if (!removed) return res.status(404).json({ error: 'NOT_FOUND', message: 'البانر غير موجود.' });
   res.json({ success: true });

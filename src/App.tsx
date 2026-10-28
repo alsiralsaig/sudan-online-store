@@ -16,6 +16,7 @@ import { SanadContactSection } from './components/Common/SanadContactSection.tsx
 import { SanadWhatsAppFab } from './components/Common/SanadWhatsAppFab.tsx';
 import { SanadErrorBoundary } from './components/Common/SanadErrorBoundary.tsx';
 import { CentralAdminView } from './components/Admin/CentralAdminView.tsx';
+import { MerchantLogin, AdminLogin } from './components/MerchantLogin.tsx';
 import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx';
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
 import { SanadClientApp } from './SanadClientApp/SanadClientApp.tsx';
@@ -123,7 +124,12 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'warning' | 'info'; text: string } | null>(null);
 
-  // Available tenants for demo switching
+  // Auth gates
+  const [merchantAuthed, setMerchantAuthed] = useState<boolean | null>(null);
+  const [adminAuthed, setAdminAuthed] = useState<boolean | null>(null);
+  const [authChecking, setAuthChecking] = useState(false);
+
+  // Available tenants for demo switching — admin only (merchant sees only own store)
   const [tenantsList, setTenantsList] = useState<any[]>([]);
 
   /* تفعيل متجر بكود الدخول — لم يكن له أي مكان في الواجهة من قبل */
@@ -215,12 +221,21 @@ export default function App() {
   // Shift Modal Open Trigger
   const [isShiftModalRequested, setIsShiftModalRequested] = useState(false);
 
+  // Auth checks
+  const checkMerchantAuth = async () => {
+    setAuthChecking(true);
+    try { await api.merchantMe(); setMerchantAuthed(true); return true; } catch { setMerchantAuthed(false); return false; } finally { setAuthChecking(false); }
+  };
+  const checkAdminAuth = async () => {
+    setAuthChecking(true);
+    try { await api.adminMe(); setAdminAuthed(true); return true; } catch { setAdminAuthed(false); return false; } finally { setAuthChecking(false); }
+  };
+
   // Load primary data
   const loadPrimaryData = async () => {
     try {
-      const [tListRes, curTenantRes, brRes, empRes, prodRes, shiftsRes, currRes, salesRes, trfRes] =
+      const [curTenantRes, brRes, empRes, prodRes, shiftsRes, currRes, salesRes, trfRes] =
         await Promise.allSettled([
-          api.getTenantsList(),
           api.getCurrentTenant(),
           api.getBranches(),
           api.getEmployees(),
@@ -231,7 +246,6 @@ export default function App() {
           api.getTransfers(),
         ]);
 
-      if (tListRes.status === 'fulfilled') setTenantsList(tListRes.value.tenants);
       if (curTenantRes.status === 'fulfilled') setTenant(curTenantRes.value.tenant);
 
       if (brRes.status === 'fulfilled') {
@@ -278,7 +292,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    loadPrimaryData();
+    // Auth-gated data load
+    if (appMode === 'merchant') {
+      checkMerchantAuth().then((ok) => { if (ok) loadPrimaryData(); });
+    } else if (appMode === 'super_admin') {
+      checkAdminAuth().then((ok) => { if (ok) { /* admin loads its own data via CentralAdminView */ } });
+    } else {
+      // client/public: no auth needed
+    }
 
     // Listen to network status changes
     const unsub = api.onNetworkStatusChange((offline) => {
@@ -292,7 +313,7 @@ export default function App() {
     });
 
     return () => unsub();
-  }, []);
+  }, [appMode]);
 
   // Background Sync Trigger
   const handleSyncOffline = async () => {
@@ -456,6 +477,8 @@ export default function App() {
   }
 
   if (appMode === 'super_admin') {
+    if (authChecking) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-400 text-sm">جارٍ التحقق...</div>;
+    if (!adminAuthed) return <AdminLogin onSuccess={() => { setAdminAuthed(true); }} />;
     return (
       <PullToRefresh theme="dark">
       <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans antialiased select-none" dir="rtl">
@@ -480,12 +503,7 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => switchAppMode('merchant')}
-                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
-                >
-                  فتح لوحة التاجر ونقطة البيع (POS)
-                </button>
+                <button onClick={async()=>{ await api.adminLogout(); setAdminAuthed(false); }} className="px-3 py-2 bg-slate-800 text-slate-200 rounded-xl text-xs border border-slate-700">خروج الإدارة</button>
                 <button
                   onClick={() => switchAppMode('client')}
                   className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
@@ -514,6 +532,9 @@ export default function App() {
   }
 
   // Merchant Mode (Store POS & Management)
+  if (authChecking) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">جارٍ التحقق من جلسة المتجر...</div>;
+  if (!merchantAuthed) return <MerchantLogin onSuccess={async()=>{ setMerchantAuthed(true); await loadPrimaryData(); }} />;
+
   return (
     <PullToRefresh theme="dark">
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none antialiased merchant-shell">
@@ -738,24 +759,13 @@ export default function App() {
         onRefreshFromServer={() => { loadPrimaryData(); setIsCloudOpen(false); }}
       />
 
-      {/* Quick Testing Context Bar (Tenant, Branch & Role Switcher for Review) */}
+      {/* Context Bar — merchant sees only his store + branch & role switcher (no tenant list) */}
       <div className="bg-slate-800 text-slate-300 text-[11px] px-6 py-1.5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700">
         <div className="flex flex-wrap items-center gap-4">
-          {/* Tenant Switcher */}
           <div className="flex items-center gap-1.5">
             <Building className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="font-semibold text-white">المنشأة المستأجرة:</span>
-            <select
-              value={tenant?.id || ''}
-              onChange={(e) => handleTenantSwitch(e.target.value)}
-              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-0.5 text-[11px] focus:outline-none"
-            >
-              {tenantsList.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.city})
-                </option>
-              ))}
-            </select>
+            <span className="font-semibold text-white">{tenant?.tradeName || tenant?.name || 'متجرك'}</span>
+            <span className="text-slate-500">• {tenant?.city || ''}</span>
           </div>
 
           {/* Branch Switcher */}
@@ -797,7 +807,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Client App Quick Switcher Button */}
+        <div className="flex items-center gap-2">
+          <button onClick={async()=>{ await api.merchantLogout(); setMerchantAuthed(false); }} className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px]">خروج المتجر</button>
           <button
             onClick={() => switchAppMode('client')}
             className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-lg text-[11px] flex items-center gap-1 transition-all shadow-xs"
@@ -806,6 +817,7 @@ export default function App() {
             <Globe className="w-3.5 h-3.5" />
             <span>عرض تطبيق الجمهور (SanadClientApp)</span>
           </button>
+        </div>
 
         {/* Offline indicator quick status */}
         <div className="flex items-center gap-3 font-mono text-[10px]">
@@ -963,7 +975,7 @@ export default function App() {
             />
           </div>
         )}
-        {currentTab === 'admin' && <CentralAdminView />}
+        {currentTab === 'admin' && <div className="p-6 text-center text-slate-400 text-xs">إدارة المنصة متاحة فقط عبر تطبيق الإدارة (?app=super_admin) بعد تسجيل دخول الإدارة.</div>}
       </main>
       </SanadErrorBoundary>
 

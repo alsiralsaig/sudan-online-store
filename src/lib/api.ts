@@ -155,6 +155,7 @@ class ApiClient {
     }
 
     const res = await fetch(`/api${endpoint}`, {
+      credentials: 'include',
       ...options,
       headers: {
         ...this.getHeaders(),
@@ -174,6 +175,32 @@ class ApiClient {
     }
 
     return res.json();
+  }
+
+  /* Auth — merchant per-store code + platform admin */
+  public async getAuthStatus(): Promise<{ authSecretConfigured: boolean; adminPasswordConfigured: boolean }> {
+    return this.request('/auth/status');
+  }
+  public async merchantLogin(code: string, hint?: string): Promise<{ success: boolean; token: string; tenant: any }> {
+    return this.request('/auth/merchant/login', { method: 'POST', body: JSON.stringify({ code, slug: hint, tenantId: hint }) });
+  }
+  public async merchantMe(): Promise<{ authenticated: boolean; tenant: Tenant }> {
+    return this.request('/auth/merchant/me');
+  }
+  public async merchantLogout(): Promise<{ success: boolean }> {
+    return this.request('/auth/merchant/logout', { method: 'POST', body: '{}' });
+  }
+  public async adminLogin(password: string): Promise<{ success: boolean; token: string }> {
+    return this.request('/auth/admin/login', { method: 'POST', body: JSON.stringify({ password }) });
+  }
+  public async adminMe(): Promise<{ authenticated: boolean }> {
+    return this.request('/auth/admin/me');
+  }
+  public async adminLogout(): Promise<{ success: boolean }> {
+    return this.request('/auth/admin/logout', { method: 'POST', body: '{}' });
+  }
+  public async issueMerchantCode(tenantId: string): Promise<{ success: boolean; code: string; tenantId: string }> {
+    return this.request(`/admin/tenants/${encodeURIComponent(tenantId)}/merchant-code`, { method: 'POST', body: '{}' });
   }
 
   /* Tenant endpoints */

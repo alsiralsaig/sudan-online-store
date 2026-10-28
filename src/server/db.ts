@@ -2315,6 +2315,32 @@ class Database {
     return this.data.tenants.find((t) => t.slug === slug);
   }
 
+  public findTenantByMerchantCodeHash(hash: string): Tenant | undefined {
+    if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return undefined;
+    return this.data.tenants.find((t: any) => (t as any).merchantCodeHash === hash);
+  }
+
+  public setMerchantCode(tenantId: string, hash: string, issuedBy?: string): Tenant | null {
+    const tenant = this.getTenant(tenantId);
+    if (!tenant) return null;
+    if (!/^[0-9a-f]{64}$/.test(hash)) return null;
+    (tenant as any).merchantCodeHash = hash;
+    (tenant as any).merchantCodeIssuedAt = new Date().toISOString();
+    if (issuedBy) (tenant as any).merchantCodeIssuedBy = issuedBy;
+    this.save();
+    return tenant;
+  }
+
+  public clearMerchantCode(tenantId: string): boolean {
+    const tenant = this.getTenant(tenantId);
+    if (!tenant) return false;
+    delete (tenant as any).merchantCodeHash;
+    delete (tenant as any).merchantCodeIssuedAt;
+    delete (tenant as any).merchantCodeIssuedBy;
+    this.save();
+    return true;
+  }
+
   // Branch helper
   public getBranches(tenantId: string): Branch[] {
     return this.data.branches.filter((b) => b.tenantId === tenantId);
