@@ -43,6 +43,7 @@ import type {
   InventoryAuditItem,
   InventoryDiscrepancyStatus,
 } from '../../types/index.ts';
+import { CameraBarcodeScanner } from '../POS/CameraBarcodeScanner.tsx';
 import { api } from '../../lib/api.ts';
 import { barcodesMatch, findByBarcodeOrSku, normalizeBarcode } from '../../lib/barcodeMatch.ts';
 
@@ -180,30 +181,9 @@ export const InventoryAuditModal: React.FC<InventoryAuditModalProps> = ({
     }
   }, [isOpen, branch?.id]);
 
-  // Start Camera Stream
+  // When CameraBarcodeScanner modal handles scanning directly, no dummy stream needed here
   useEffect(() => {
-    let stream: MediaStream | null = null;
-    if (isCameraActive && videoRef.current) {
-      navigator.mediaDevices
-        ?.getUserMedia({ video: { facingMode: 'environment' } })
-        .then((s) => {
-          stream = s;
-          if (videoRef.current) {
-            videoRef.current.srcObject = s;
-            videoRef.current.play();
-          }
-        })
-        .catch((err) => {
-          console.warn('Camera access error:', err);
-          setCameraPermissionError(true);
-        });
-    }
-
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
+    setCameraPermissionError(false);
   }, [isCameraActive]);
 
   // Create new audit session
@@ -1007,37 +987,17 @@ export const InventoryAuditModal: React.FC<InventoryAuditModalProps> = ({
                   </button>
                 </div>
 
-                {/* Camera Viewfinder if active */}
-                {isCameraActive && (
-                  <div className="relative bg-slate-950 rounded-xl overflow-hidden p-4 text-center border-2 border-emerald-500 animate-in fade-in">
-                    <div className="max-w-xs mx-auto relative rounded-lg overflow-hidden border border-emerald-400/50 shadow-inner">
-                      <video ref={videoRef} autoPlay playsInline muted className="w-full h-48 object-cover" />
-                      {/* Viewfinder crosshairs */}
-                      <div className="absolute inset-0 border-2 border-dashed border-emerald-400 pointer-events-none opacity-70 m-4 rounded" />
-                      <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-500 shadow-sm animate-pulse pointer-events-none" />
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                      <p className="text-[11px] text-slate-300">
-                        وجّه الكاميرا نحو باركود السلعة، أو اضغط زر التجربة السريعة:
-                      </p>
-                      {/* Barcode Simulator Quick Buttons */}
-                      <div className="flex flex-wrap items-center justify-center gap-1.5 mt-1">
-                        {activeAudit.items.slice(0, 4).map((it) => (
-                          <button
-                            key={it.productId}
-                            onClick={() => {
-                              handleBarcodeSubmit(it.barcode || it.sku);
-                            }}
-                            className="px-2 py-1 bg-slate-800 hover:bg-emerald-800 text-emerald-300 rounded text-[10px] font-mono border border-slate-700"
-                          >
-                            مسح: {it.productName.slice(0, 14)} ({it.barcode || it.sku})
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {/* Real Camera Barcode Scanner Modal */}
+                <CameraBarcodeScanner
+                  isOpen={isCameraActive}
+                  onClose={() => setIsCameraActive(false)}
+                  onScanSuccess={(code) => {
+                    handleBarcodeSubmit(code);
+                  }}
+                  soundEnabled={soundEnabled}
+                  defaultContinuous={true}
+                  submitLabel="تسجيل بالجرد"
+                />
 
                 {/* Filter and Category Pills */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">

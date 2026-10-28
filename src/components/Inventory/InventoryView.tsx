@@ -31,6 +31,7 @@ import { api } from '../../lib/api.ts';
 import { InventoryAuditModal } from './InventoryAuditModal.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
 import { LiveCameraSheet } from '../Common/LiveCameraSheet.tsx';
+import { CameraBarcodeScanner } from '../POS/CameraBarcodeScanner.tsx';
 import { looksLikeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
 import { uploadProductImage, uploadProductVideo, PRODUCT_VIDEO_MAX_SECONDS } from '../../lib/uploadProductMedia.ts';
 
@@ -89,6 +90,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   // Add Product Modal
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [barcodeScannerTarget, setBarcodeScannerTarget] = useState<'search' | 'new' | null>(null);
   const [newProductName, setNewProductName] = useState('');
   const [newSku, setNewSku] = useState('');
   const [newBarcode, setNewBarcode] = useState('');
@@ -575,28 +577,39 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
 
         {/* Search */}
-        <div className="relative w-full md:w-80">
-          <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            inputMode="search"
-            enterKeyHint="search"
-            autoCapitalize="off"
-            autoCorrect="off"
-            autoComplete="off"
-            placeholder="الصق الباركود أو ابحث بالاسم"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onPaste={(e) => {
-              const text = e.clipboardData.getData('text');
-              const cleaned = pastedBarcode(text) || text.trim();
-              if (!cleaned) return;
-              e.preventDefault();
-              setSearchQuery(cleaned);
-            }}
-            dir={looksLikeBarcode(searchQuery) ? 'ltr' : 'rtl'}
-            className="w-full pr-9 pl-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-          />
+        <div className="flex items-center gap-2 w-full md:w-96">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              inputMode="search"
+              enterKeyHint="search"
+              autoCapitalize="off"
+              autoCorrect="off"
+              autoComplete="off"
+              placeholder="الصق الباركود أو ابحث بالاسم"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onPaste={(e) => {
+                const text = e.clipboardData.getData('text');
+                const cleaned = pastedBarcode(text) || text.trim();
+                if (!cleaned) return;
+                e.preventDefault();
+                setSearchQuery(cleaned);
+              }}
+              dir={looksLikeBarcode(searchQuery) ? 'ltr' : 'rtl'}
+              className="w-full pr-9 pl-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setBarcodeScannerTarget('search')}
+            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 transition-colors"
+            title="مسح باركود بالكاميرا"
+          >
+            <Camera className="w-4 h-4" />
+            <span>مسح</span>
+          </button>
         </div>
       </div>
 
@@ -957,24 +970,34 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">الباركود:</label>
-                  <input
-                    type="text"
-                    value={newBarcode}
-                    onChange={(e) => setNewBarcode(e.target.value)}
-                    onPaste={(e) => {
-                      const text = e.clipboardData.getData('text');
-                      const cleaned = pastedBarcode(text);
-                      if (!cleaned) return;
-                      e.preventDefault();
-                      setNewBarcode(cleaned);
-                    }}
-                    inputMode="numeric"
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    dir="ltr"
-                    placeholder="الصق أو امسح الباركود"
-                    className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newBarcode}
+                      onChange={(e) => setNewBarcode(e.target.value)}
+                      onPaste={(e) => {
+                        const text = e.clipboardData.getData('text');
+                        const cleaned = pastedBarcode(text);
+                        if (!cleaned) return;
+                        e.preventDefault();
+                        setNewBarcode(cleaned);
+                      }}
+                      inputMode="numeric"
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      dir="ltr"
+                      placeholder="الصق أو امسح الباركود"
+                      className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setBarcodeScannerTarget('new')}
+                      className="p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shrink-0 transition-colors"
+                      title="مسح باركود الصنف بالكاميرا"
+                    >
+                      <Camera className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">رمز SKU:</label>
@@ -1659,6 +1682,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           }}
         />
       )}
+      <CameraBarcodeScanner
+        isOpen={barcodeScannerTarget !== null}
+        onClose={() => setBarcodeScannerTarget(null)}
+        onScanSuccess={(code) => {
+          if (barcodeScannerTarget === 'new') {
+            setNewBarcode(code);
+          } else if (barcodeScannerTarget === 'search') {
+            setSearchQuery(code);
+          }
+          setBarcodeScannerTarget(null);
+        }}
+        submitLabel="اعتماد الكود"
+      />
     </div>
   );
 };

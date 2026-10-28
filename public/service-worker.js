@@ -1,5 +1,5 @@
 // Sanad POS & Commerce Service Worker (PWA)
-const CACHE_NAME = 'sanad-pwa-v7.0';
+const CACHE_NAME = 'sanad-pwa-v7.2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -54,7 +54,7 @@ self.addEventListener('fetch', (event) => {
   // Only handle same-origin requests
   if (url.origin !== self.location.origin) return;
 
-  const isAsset = /\/assets\/|\.(png|jpe?g|gif|svg|ico|webp|css|js|woff2?|ttf|otf)$/i.test(url.pathname);
+  const isAsset = /\/assets\/|\/wasm\/|\.(png|jpe?g|gif|svg|ico|webp|css|js|wasm|woff2?|ttf|otf)$/i.test(url.pathname);
   const isDocument =
     event.request.mode === 'navigate' ||
     url.pathname === '/' ||
