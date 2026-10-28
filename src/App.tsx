@@ -463,8 +463,6 @@ export default function App() {
         <SanadAppModeBar
           currentApp="super_admin"
           onSwitchApp={(app) => switchAppMode(app)}
-          tenantName={tenant?.tradeName || tenant?.name}
-          branchName={currentBranch?.name}
         />
         <div className="flex-1 p-4 sm:p-6 overflow-auto">
           <div className="max-w-7xl mx-auto space-y-6">

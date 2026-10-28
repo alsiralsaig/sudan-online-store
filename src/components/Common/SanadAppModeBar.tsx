@@ -32,11 +32,28 @@ export const SanadAppModeBar: React.FC<SanadAppModeBarProps> = ({
           <div className="flex items-center gap-3">
             <SanadLogo size="xs" theme="dark" variant="compact" />
             <span className="text-slate-600 hidden sm:inline">|</span>
-            <div className="text-[11px] text-slate-300 flex items-center gap-1.5">
-              <span className="text-slate-400">المنظومة السحابية الموحدة:</span>
-              <span className="font-bold text-emerald-400">{tenantName}</span>
-              <span className="text-slate-500">•</span>
-              <span className="text-slate-300">{branchName}</span>
+            <div className="text-[11px] text-slate-300 flex items-center gap-1.5 min-w-0">
+              {currentApp === "super_admin" ? (
+                <>
+                  <span className="text-slate-400">المنظومة السحابية الموحدة:</span>
+                  <span className="font-bold text-amber-400">منصة سند</span>
+                  <span className="text-slate-500">•</span>
+                  <span className="text-slate-200">الإدارة المركزية</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-slate-400 hidden sm:inline">المنظومة السحابية الموحدة:</span>
+                  <span className="font-bold text-emerald-400 break-words">
+                    {tenantName || "منصة سند"}
+                  </span>
+                  {branchName ? (
+                    <>
+                      <span className="text-slate-500">•</span>
+                      <span className="text-slate-300">{branchName}</span>
+                    </>
+                  ) : null}
+                </>
+              )}
             </div>
           </div>
 
