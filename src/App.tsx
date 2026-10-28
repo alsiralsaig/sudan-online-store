@@ -93,13 +93,40 @@ export default function App() {
     return 'client';
   });
 
-  const switchAppMode = (mode: PlatformAppMode) => {
+  const switchAppMode = (mode: PlatformAppMode, opts?: { replace?: boolean }) => {
     setAppMode(mode);
     localStorage.setItem('sanad_app_mode', mode);
     if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', `?app=${mode}`);
+      const url = `?app=${mode}`;
+      if (opts?.replace) window.history.replaceState({ app: mode }, '', url);
+      else window.history.pushState({ app: mode }, '', url);
     }
   };
+
+  // زر الرجوع في أندرويد → يرجع للمنصة السابقة بدل الخروج
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const stateApp = (e.state as any)?.app as PlatformAppMode | undefined;
+      if (stateApp && ['client','merchant','super_admin'].includes(stateApp)) {
+        setAppMode(stateApp);
+        localStorage.setItem('sanad_app_mode', stateApp);
+        return;
+      }
+      const params = new URLSearchParams(window.location.search);
+      const appParam = params.get('app') as PlatformAppMode | null;
+      if (appParam && ['client','merchant','super_admin'].includes(appParam)) {
+        setAppMode(appParam);
+        localStorage.setItem('sanad_app_mode', appParam);
+      }
+    };
+    // سجل الحالة الأولى
+    if (typeof window !== 'undefined') {
+      const cur = `?app=${appMode}`;
+      if (!window.history.state?.app) window.history.replaceState({ app: appMode }, '', cur);
+      window.addEventListener('popstate', onPop);
+      return () => window.removeEventListener('popstate', onPop);
+    }
+  }, []);
 
   // Application Data States
   const [tenant, setTenant] = useState<Tenant | null>(null);
