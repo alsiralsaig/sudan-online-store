@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { SanadLogo } from '../../components/Common/SanadLogo.tsx';
 import { TenantApplicationModal } from '../../components/Common/TenantApplicationModal.tsx';
+import { ThemeSwitcher } from '../../components/Common/ThemeSwitcher.tsx';
 import type { ClientActiveTab } from '../types.ts';
 import type { Branch, Tenant, Product } from '../../types/index.ts';
 import { ClientAutocompleteSearch } from './ClientAutocompleteSearch.tsx';
@@ -198,6 +199,7 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
             <Store className="w-4 h-4 text-emerald-700" />
             <span>طلب متجر</span>
           </button>
+          <ThemeSwitcher compact />
 
           {/* Cart Trigger */}
           <button

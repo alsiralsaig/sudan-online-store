@@ -1,6 +1,7 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { ThemeProvider } from './lib/theme.tsx';
 
 // Register PWA Service Worker
 if ('serviceWorker' in navigator) {
@@ -100,4 +101,4 @@ if (launchQueue && typeof launchQueue.setConsumer === 'function') {
   });
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(<ThemeProvider><App /></ThemeProvider>);

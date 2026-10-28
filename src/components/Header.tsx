@@ -34,6 +34,7 @@ import type { InventoryAlert } from '../types/index.ts';
 import { SanadLogo } from './Common/SanadLogo.tsx';
 import { TenantApplicationModal } from './Common/TenantApplicationModal.tsx';
 import { NotificationBell } from './Common/NotificationBell.tsx';
+import { ThemeSwitcher } from './Common/ThemeSwitcher.tsx';
 
 interface HeaderProps {
   currentTab: string;
@@ -239,6 +240,7 @@ export const Header: React.FC<HeaderProps> = ({
               <span>تفعيل بالكود</span>
             </button>
           )}
+          <ThemeSwitcher compact />
           {/* Offline indicator & simulation button */}
           <button
             onClick={onToggleSimulateOffline}

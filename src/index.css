@@ -1,17 +1,40 @@
 @import "tailwindcss";
 
 @layer base {
-  :root {
+  :root, [data-theme="light"] {
     --font-sans: 'Cairo', 'Tajawal', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --sanad-emerald: #059669;
+    --sanad-emerald: #0ea5e9;
+    --sanad-sky: #0ea5e9;
+    --sanad-sky-light: #38bdf8;
+    --sanad-primary: #0ea5e9;
+    --sanad-primary-hover: #0284c7;
     --sanad-ink: #0f172a;
-    --sanad-card: #0b1220;
+    --sanad-card: #ffffff;
+    --sanad-bg: #f8fafc;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  [data-theme="dark"] {
+    --sanad-primary: #38bdf8;
+    --sanad-primary-hover: #0ea5e9;
+    --sanad-sky: #38bdf8;
+    --sanad-ink: #f8fafc;
+    --sanad-card: #0f172a;
+    --sanad-bg: #020617;
+  }
+  [data-theme="medium"] {
+    --sanad-primary: #0284c7;
+    --sanad-primary-hover: #0369a1;
+    --sanad-sky: #0284c7;
+    --sanad-ink: #0c2a3e;
+    --sanad-card: #f0f9ff;
+    --sanad-bg: #e0f2fe;
   }
 
   body {
     font-family: var(--font-sans);
     direction: rtl;
+    background: var(--sanad-bg);
+    color: var(--sanad-ink);
   }
 
   /**
@@ -81,73 +104,85 @@
   display: none;
 }
 
-/* تطبيق التاجر — ثيم غامق زي حساباتي */
-.merchant-shell {
+/* ألوان أساسية سماوية لكل التطبيقات */
+.bg-emerald-700, .bg-emerald-600, .bg-emerald-500 { background-color: var(--sanad-primary) !important; border-color: var(--sanad-primary) !important; }
+.hover\:bg-emerald-700:hover, .hover\:bg-emerald-600:hover { background-color: var(--sanad-primary-hover) !important; }
+.text-emerald-700, .text-emerald-600, .text-emerald-800 { color: var(--sanad-primary) !important; }
+.border-emerald-300, .border-emerald-600 { border-color: var(--sanad-primary) !important; }
+.ring-emerald-500 { --tw-ring-color: var(--sanad-primary) !important; }
+.focus\:ring-emerald-500:focus { --tw-ring-color: var(--sanad-primary) !important; }
+
+/* تطبيق التاجر — ثيم حسب الوضع */
+[data-theme="dark"] .merchant-shell {
   background: #020617;
   color: #e2e8f0;
 }
-.merchant-shell main .bg-white {
+[data-theme="light"] .merchant-shell, [data-theme="medium"] .merchant-shell {
+  background: var(--sanad-bg);
+  color: var(--sanad-ink);
+}
+[data-theme="dark"] .merchant-shell main .bg-white {
   background-color: #0f172a;
   border-color: #1e293b;
   color: #e2e8f0;
 }
-.merchant-shell main .text-slate-900,
-.merchant-shell main .text-slate-800 {
+[data-theme="dark"] .merchant-shell main .text-slate-900,
+[data-theme="dark"] .merchant-shell main .text-slate-800 {
   color: #f1f5f9;
 }
-.merchant-shell main .border-slate-200,
-.merchant-shell main .border-slate-100 {
+[data-theme="dark"] .merchant-shell main .border-slate-200,
+[data-theme="dark"] .merchant-shell main .border-slate-100 {
   border-color: #1e293b;
 }
-.merchant-shell main .bg-slate-50,
-.merchant-shell main .bg-slate-100 {
+[data-theme="dark"] .merchant-shell main .bg-slate-50,
+[data-theme="dark"] .merchant-shell main .bg-slate-100 {
   background-color: #0b1220;
 }
-.merchant-shell main input,
-.merchant-shell main select,
-.merchant-shell main textarea {
+[data-theme="dark"] .merchant-shell main input,
+[data-theme="dark"] .merchant-shell main select,
+[data-theme="dark"] .merchant-shell main textarea {
   background-color: #020617;
   color: #f8fafc;
   border-color: #334155;
 }
-.merchant-shell .text-slate-700,
-.merchant-shell .text-slate-600,
-.merchant-shell main .text-slate-700,
-.merchant-shell main .text-slate-600 {
+[data-theme="dark"] .merchant-shell .text-slate-700,
+[data-theme="dark"] .merchant-shell .text-slate-600,
+[data-theme="dark"] .merchant-shell main .text-slate-700,
+[data-theme="dark"] .merchant-shell main .text-slate-600 {
   color: #e2e8f0;
 }
-.merchant-shell .text-slate-500,
-.merchant-shell main .text-slate-500 {
+[data-theme="dark"] .merchant-shell .text-slate-500,
+[data-theme="dark"] .merchant-shell main .text-slate-500 {
   color: #cbd5e1;
 }
-.merchant-shell .text-slate-400,
-.merchant-shell main .text-slate-400 {
+[data-theme="dark"] .merchant-shell .text-slate-400,
+[data-theme="dark"] .merchant-shell main .text-slate-400 {
   color: #94a3b8;
 }
-.merchant-shell .text-emerald-800,
-.merchant-shell .text-emerald-700,
-.merchant-shell .text-emerald-600 {
-  color: #34d399;
+[data-theme="dark"] .merchant-shell .text-emerald-800,
+[data-theme="dark"] .merchant-shell .text-emerald-700,
+[data-theme="dark"] .merchant-shell .text-emerald-600 {
+  color: #7dd3fc;
 }
-.merchant-shell .text-amber-800,
-.merchant-shell .text-amber-700 {
+[data-theme="dark"] .merchant-shell .text-amber-800,
+[data-theme="dark"] .merchant-shell .text-amber-700 {
   color: #fbbf24;
 }
-.merchant-shell .text-rose-700,
-.merchant-shell .text-rose-600 {
+[data-theme="dark"] .merchant-shell .text-rose-700,
+[data-theme="dark"] .merchant-shell .text-rose-600 {
   color: #fb7185;
 }
-.merchant-shell input::placeholder,
-.merchant-shell textarea::placeholder {
+[data-theme="dark"] .merchant-shell input::placeholder,
+[data-theme="dark"] .merchant-shell textarea::placeholder {
   color: #94a3b8;
   opacity: 1;
 }
-.merchant-shell main button.bg-slate-100 {
+[data-theme="dark"] .merchant-shell main button.bg-slate-100 {
   background-color: #334155;
   color: #f8fafc;
   border: 1px solid #475569;
 }
-.merchant-shell main thead,
-.merchant-shell main th {
+[data-theme="dark"] .merchant-shell main thead,
+[data-theme="dark"] .merchant-shell main th {
   color: #e2e8f0;
 }

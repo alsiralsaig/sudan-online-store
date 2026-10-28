@@ -17,6 +17,7 @@ import { SanadWhatsAppFab } from './components/Common/SanadWhatsAppFab.tsx';
 import { SanadErrorBoundary } from './components/Common/SanadErrorBoundary.tsx';
 import { CentralAdminView } from './components/Admin/CentralAdminView.tsx';
 import { MerchantLogin, AdminLogin } from './components/MerchantLogin.tsx';
+import { ThemeSwitcher } from './components/Common/ThemeSwitcher.tsx';
 import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx';
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
 import { SanadClientApp } from './SanadClientApp/SanadClientApp.tsx';
@@ -503,6 +504,7 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2">
+                <ThemeSwitcher compact />
                 <button onClick={async()=>{ await api.adminLogout(); setAdminAuthed(false); }} className="px-3 py-2 bg-slate-800 text-slate-200 rounded-xl text-xs border border-slate-700">خروج الإدارة</button>
                 <button
                   onClick={() => switchAppMode('client')}
