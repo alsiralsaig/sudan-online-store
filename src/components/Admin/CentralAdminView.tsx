@@ -571,7 +571,7 @@ export const CentralAdminView: React.FC = () => {
               <div className="rounded-xl bg-slate-950 text-emerald-300 font-mono text-sm tracking-widest px-4 py-4 text-center select-all border border-slate-800">{codeFor.code}</div>
               <div className="flex gap-2">
                 <button onClick={async()=>{ await navigator.clipboard.writeText(codeFor.code); alert('تم النسخ'); }} className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-black">نسخ الرمز</button>
-                <a href={`https://wa.me/?text=${encodeURIComponent(`رمز متجرك في منصة سند: ${codeFor.code} — احتفظ به ولا تشاركه إلا مع موظفيك`)}`} target="_blank" rel="noreferrer" className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black text-center">إرسال واتساب</a>
+                <a href={`https://wa.me/?text=${encodeURIComponent(codeFor.code)}`} target="_blank" rel="noreferrer" className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black text-center">إرسال واتساب</a>
               </div>
               <button onClick={()=>setCodeFor(null)} className="w-full py-2 text-xs text-slate-600">إغلاق — لن يظهر مرة أخرى</button>
             </div>
