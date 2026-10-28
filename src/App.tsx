@@ -25,6 +25,7 @@ import { SanadAIAssistant } from './components/Common/SanadAIAssistant.tsx';
 import { SanadAppModeBar, type PlatformAppMode } from './components/Common/SanadAppModeBar.tsx';
 import { AdminWelcomeBanner } from './components/Admin/AdminWelcomeBanner.tsx';
 import { MerchantCloudModal } from './components/Common/MerchantCloudModal.tsx';
+import { PullToRefresh } from './components/Common/PullToRefresh.tsx';
 
 import type {
   Tenant,
@@ -439,6 +440,7 @@ export default function App() {
 
   if (appMode === 'client') {
     return (
+      <PullToRefresh theme="light">
       <div className="min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900">
         {/* The app-switcher bar is a platform-admin tool: shoppers and
             merchants must never see links into the other apps. */}
@@ -449,11 +451,13 @@ export default function App() {
         </SanadErrorBoundary>
         <SanadWhatsAppFab offset="above-nav" app="client" />
       </div>
+      </PullToRefresh>
     );
   }
 
   if (appMode === 'super_admin') {
     return (
+      <PullToRefresh theme="dark">
       <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans antialiased select-none" dir="rtl">
         <InAppAlertBanner app="admin" />
         <SanadAppModeBar
@@ -507,11 +511,13 @@ export default function App() {
           branchName={currentBranch?.name}
         />
       </div>
+      </PullToRefresh>
     );
   }
 
   // Merchant Mode (Store POS & Management)
   return (
+    <PullToRefresh theme="dark">
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none antialiased merchant-shell">
       {/* Phone-style alert that drops from the top for any new notification */}
       <InAppAlertBanner
@@ -981,5 +987,6 @@ export default function App() {
         branchName={currentBranch?.name}
       />
     </div>
+    </PullToRefresh>
   );
 }
