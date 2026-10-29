@@ -176,6 +176,8 @@ export default function App() {
   const [activateCode, setActivateCode] = useState('');
   const [activateState, setActivateState] = useState<'idle' | 'working' | 'ok' | 'fail'>('idle');
   const [activateMsg, setActivateMsg] = useState('');
+  /* كود دخول المتجر الصادر من الخادم بعد التفعيل — يُعرض مرة واحدة */
+  const [issuedMerchantCode, setIssuedMerchantCode] = useState('');
 
   const handleActivateStore = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,8 +190,9 @@ export default function App() {
     setActivateState('working');
     setActivateMsg('');
     try {
-      const res = await api.activateTenantStore(code);
+      const res: any = await api.activateTenantStore(code);
       setActivateState('ok');
+      if (res.merchantCode) setIssuedMerchantCode(res.merchantCode);
       setActivateMsg(
         res.created
           ? `تم تفعيل متجر «${res.tenant?.name}». صار بإمكانك العمل عليه الآن.`
@@ -232,16 +235,19 @@ export default function App() {
         }
         await loadPrimaryData();
       }
-      setTimeout(
-        () => {
-          setIsActivateOpen(false);
-          setActivateCode('');
-          setActivateState('idle');
-          setNewStoreEmployees([]);
-          setActivateMsg('');
-        },
-        newStoreEmployees.filter((r) => r.name.trim()).length ? 4500 : 2200
-      );
+      /* لو صدر كود دخول نُبقي الشاشة مفتوحة ليقرأه ويكوپيهه */
+      if (!res.merchantCode) {
+        setTimeout(
+          () => {
+            setIsActivateOpen(false);
+            setActivateCode('');
+            setActivateState('idle');
+            setNewStoreEmployees([]);
+            setActivateMsg('');
+          },
+          newStoreEmployees.filter((r) => r.name.trim()).length ? 4500 : 2200
+        );
+      }
     } catch (err) {
       setActivateState('fail');
       setActivateMsg((err as Error).message || 'تعذّر التفعيل — تحقق من الكود والاتصال.');
@@ -647,7 +653,7 @@ export default function App() {
               <h3 className="text-sm font-black text-slate-900">تفعيل متجر بكود الدخول</h3>
               <button
                 type="button"
-                onClick={() => setIsActivateOpen(false)}
+                onClick={() => { setIsActivateOpen(false); setIssuedMerchantCode(''); }}
                 className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"
               >
                 إغلاق
@@ -680,6 +686,35 @@ export default function App() {
               >
                 {activateMsg}
               </p>
+            )}
+
+            {/* كود دخول المتجر — أهم شيء بعد التفعيل، يُعرض بارزاً مع زر نسخ */}
+            {issuedMerchantCode && (
+              <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-3 space-y-2">
+                <p className="text-[11px] font-black text-emerald-900 text-center">
+                  ✅ كود دخول متجرك — احفظه الآن (لن يظهر مرة أخرى)
+                </p>
+                <div className="flex items-center gap-2">
+                  <code
+                    dir="ltr"
+                    className="flex-1 rounded-xl bg-white border border-emerald-200 px-3 py-2.5 text-center font-mono text-[13px] font-bold text-slate-900 break-all"
+                  >
+                    {issuedMerchantCode}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(issuedMerchantCode).catch(() => {});
+                    }}
+                    className="shrink-0 rounded-xl bg-emerald-700 px-3 py-2.5 text-[11px] font-bold text-white"
+                  >
+                    نسخ
+                  </button>
+                </div>
+                <p className="text-[10.5px] leading-relaxed text-emerald-800">
+                  استخدم هذا الكود في شاشة «دخول المتجر» (وليس كود الطلب). بعد الدخول تختار اسمك وتُدخل رمزك السري.
+                </p>
+              </div>
             )}
 
             {/* موظفو المتجر — تُضاف أثناء الإنشاء بدل الرجوع لتبويب الموظفين */}

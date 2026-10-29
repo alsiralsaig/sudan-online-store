@@ -4620,18 +4620,47 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
 
   (application as any).tenantId = tenantId;
   (application as any).activatedAt = now.toISOString();
+
+  /*
+   * كود دخول المتجر (SND-…) يُصدر هنا فور التفعيل.
+   * ليه: التاجر كان يستلم كود «الطلب» (SND-XXXX-XXXX) من شاشة الموافقة،
+   * فيحاول الدخول به فيرفضه الخادم لأنه كود تفعيل لا كود متجر — ولا يوجد
+   * أي مكان يريه الكود الصحيح. الآن الكود الصحيح يظهر مع نتيجة التفعيل
+   * ويُرسل له في الإشعار، ويُسجَّل أن التفعيل جرى.
+   */
+  let storeAccessCode: string | null = null;
+  try {
+    const fresh = newMerchantCode();
+    const hash = merchantCodeHash(fresh);
+    if (hash) {
+      db.setMerchantCode(tenantId, hash, 'self_activation');
+      storeAccessCode = fresh;
+      (application as any).merchantCodeIssuedAt = new Date().toISOString();
+    }
+  } catch {
+    storeAccessCode = null;
+  }
+
   db.commit();
 
   notifyUser({
     app: 'admin',
     kind: 'new_store_request',
     title: 'متجر جديد فعّل حسابه',
-    body: `${tenant.name} — ${tenant.city} • ${branches} فرع • بدأ الاشتراك 30 يوماً`,
+    body: `${tenant.name} — ${tenant.city} • ${branches} فرع • بدأ الاشتراك 30 يوماً${storeAccessCode ? ` • كود دخول المتجر ${storeAccessCode}` : ''}`,
     linkTab: 'merchants',
     tenantId,
   }).catch(() => {});
 
-  res.json({ success: true, created: true, tenant });
+  res.json({
+    success: true,
+    created: true,
+    tenant,
+    merchantCode: storeAccessCode,
+    merchantCodeMessage: storeAccessCode
+      ? 'هذا كود دخول متجرك — احفظه، ستحتاجه في كل مرة تدخل فيها التطبيق.'
+      : 'تعذّر إصدار كود الدخول تلقائياً — تواصل مع إدارة سند عبر واتساب.',
+  });
 });
 
 /** Admin: the review queue. */

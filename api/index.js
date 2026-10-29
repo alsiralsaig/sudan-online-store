@@ -9601,17 +9601,35 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
   ensureOwnerEmployee(tenantId, application.ownerName, application.phone);
   application.tenantId = tenantId;
   application.activatedAt = now.toISOString();
+  let storeAccessCode = null;
+  try {
+    const fresh = newMerchantCode();
+    const hash = merchantCodeHash(fresh);
+    if (hash) {
+      db.setMerchantCode(tenantId, hash, "self_activation");
+      storeAccessCode = fresh;
+      application.merchantCodeIssuedAt = (/* @__PURE__ */ new Date()).toISOString();
+    }
+  } catch {
+    storeAccessCode = null;
+  }
   db.commit();
   notify({
     app: "admin",
     kind: "new_store_request",
     title: "\u0645\u062A\u062C\u0631 \u062C\u062F\u064A\u062F \u0641\u0639\u0651\u0644 \u062D\u0633\u0627\u0628\u0647",
-    body: `${tenant.name} \u2014 ${tenant.city} \u2022 ${branches} \u0641\u0631\u0639 \u2022 \u0628\u062F\u0623 \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643 30 \u064A\u0648\u0645\u0627\u064B`,
+    body: `${tenant.name} \u2014 ${tenant.city} \u2022 ${branches} \u0641\u0631\u0639 \u2022 \u0628\u062F\u0623 \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643 30 \u064A\u0648\u0645\u0627\u064B${storeAccessCode ? ` \u2022 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631 ${storeAccessCode}` : ""}`,
     linkTab: "merchants",
     tenantId
   }).catch(() => {
   });
-  res.json({ success: true, created: true, tenant });
+  res.json({
+    success: true,
+    created: true,
+    tenant,
+    merchantCode: storeAccessCode,
+    merchantCodeMessage: storeAccessCode ? "\u0647\u0630\u0627 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0645\u062A\u062C\u0631\u0643 \u2014 \u0627\u062D\u0641\u0638\u0647\u060C \u0633\u062A\u062D\u062A\u0627\u062C\u0647 \u0641\u064A \u0643\u0644 \u0645\u0631\u0629 \u062A\u062F\u062E\u0644 \u0641\u064A\u0647\u0627 \u0627\u0644\u062A\u0637\u0628\u064A\u0642." : "\u062A\u0639\u0630\u0651\u0631 \u0625\u0635\u062F\u0627\u0631 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B \u2014 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F \u0639\u0628\u0631 \u0648\u0627\u062A\u0633\u0627\u0628."
+  });
 });
 apiRouter.get("/admin/tenant-applications", adminAuthMiddleware, (req, res) => {
   const status = String(req.query.status || "all");

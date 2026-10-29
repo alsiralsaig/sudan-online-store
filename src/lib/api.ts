@@ -36,6 +36,18 @@ import {
   clearSyncedSales,
 } from './indexedDb.ts';
 
+/** ترجمة رموز الأخطاء الشائعة إلى عربية واضحة (تُستخدم عندما لا يرسل الخادم رسالة). */
+const ARABIC_ERRORS: Record<string, string> = {
+  INVALID_CODE: 'الكود غير صحيح أو ليس كود دخول متجر — تأكد أنك نسخت كود المتجر (SND-…) كاملاً.',
+  CODE_NOT_ISSUED: 'هذا المتجر لم يُصدر له كود دخول بعد — تواصل مع إدارة سند.',
+  CODE_TENANT_MISMATCH: 'هذا الكود يخص متجراً آخر.',
+  TENANT_SUSPENDED: 'هذا المتجر موقوف — تواصل مع إدارة سند.',
+  INVALID_PIN: 'الرمز السري غير صحيح.',
+  EMPLOYEE_NOT_FOUND: 'الموظف غير موجود في هذا المتجر.',
+  OFFLINE_MODE: 'لا يوجد اتصال بالإنترنت.',
+  UNAUTHORIZED: 'يلزم تسجيل الدخول أولاً.',
+};
+
 class ApiClient {
   private tenantId: string = 'tenant_alrowad';
   /**
@@ -167,7 +179,12 @@ class ApiClient {
       let msg = 'حدث خطأ في استجابة الخادم';
       try {
         const data = await res.json();
-        if (data.error) msg = data.error;
+        /*
+         * نُفضّل الرسالة العربية (message) على الرمز الإنجليزي (error).
+         * ليه: التاجر كان يرى «INVALID_CODE» وحدها فلا يفهم إن كان الكود
+         * خطأ أم أن المتجر لم يُفعّل بعد.
+         */
+        msg = data.message || ARABIC_ERRORS[data.error] || data.error || msg;
       } catch {
         // ignore
       }
