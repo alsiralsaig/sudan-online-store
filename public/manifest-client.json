@@ -1,16 +1,28 @@
 {
   "id": "/?app=client",
-  "name": "متجر سند وسوق البندر | Sanad Store & Market",
+  "name": "سند — متجر وسوق البندر",
   "short_name": "متجر سند",
-  "description": "تطبيق المتسوقين والجمهور لتصفح المنتجات والطلب المسبق والمزادات في السودان",
+  "description": "تطبيق المتسوقين: تصفح المتاجر والمنتجات، الطلب، التتبع، ونقاط الولاء.",
   "start_url": "/?app=client",
   "scope": "/",
   "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui",
+    "browser"
+  ],
   "orientation": "portrait-primary",
-  "theme_color": "#052e1a",
+  "theme_color": "#0ea5e9",
   "background_color": "#f8fafc",
   "lang": "ar",
   "dir": "rtl",
+  "prefer_related_applications": false,
+  "categories": [
+    "business",
+    "shopping",
+    "finance",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "/icons/sanad-icon-192.png",
@@ -30,5 +42,6 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "related_applications": []
 }

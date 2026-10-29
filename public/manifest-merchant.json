@@ -1,16 +1,28 @@
 {
   "id": "/?app=merchant",
-  "name": "سند كاشير ونقاط البيع السحابية | Sanad POS Merchant",
+  "name": "سند كاشير — نقاط البيع",
   "short_name": "كاشير سند",
-  "description": "تطبيق التاجر ونقاط البيع السحابية لإدارة المبيعات والمخزون أوفلاين وتعدد العملات",
+  "description": "تطبيق التاجر: الكاشير، المخزون، التقارير، الفروع والموظفون — يعمل أوفلاين.",
   "start_url": "/?app=merchant",
   "scope": "/",
   "display": "standalone",
-  "orientation": "landscape-primary",
-  "theme_color": "#052e1a",
-  "background_color": "#052e1a",
+  "display_override": [
+    "standalone",
+    "minimal-ui",
+    "browser"
+  ],
+  "orientation": "portrait-primary",
+  "theme_color": "#0ea5e9",
+  "background_color": "#020617",
   "lang": "ar",
   "dir": "rtl",
+  "prefer_related_applications": false,
+  "categories": [
+    "business",
+    "shopping",
+    "finance",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "/icons/sanad-icon-192.png",
@@ -30,5 +42,6 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "related_applications": []
 }

@@ -13,7 +13,25 @@
     <meta name="twitter:image" content="/sanad-banner.png" />
 
     <!-- PWA Configuration for Android, iOS and Modern Desktop -->
-    <link rel="manifest" href="/manifest.json" />
+    <!--
+      كل تطبيق له manifest خاص ببدء تشغيل مختلف (?app=…)، وإلا يرى أندرويد
+      الثلاثة كتطبيق واحد ويجعلها اختصاراً واحداً على الشاشة الرئيسية.
+      السكربت يختار المانيفست حسب ?app في الرابط.
+    -->
+    <script>
+      (function () {
+        var app = new URLSearchParams(location.search).get('app') || '';
+        var file =
+          app === 'merchant' ? '/manifest-merchant.json' :
+          app === 'super_admin' || app === 'saas' ? '/manifest-admin.json' :
+          '/manifest-client.json';
+        var link = document.createElement('link');
+        link.rel = 'manifest';
+        link.href = file;
+        document.head.appendChild(link);
+        document.documentElement.setAttribute('data-app', app || 'client');
+      })();
+    </script>
     <meta name="theme-color" content="#052e1a" />
     <meta name="description" content="سند - المنصة السحابية للتجارة ونقاط البيع الذكية في السودان" />
     <meta name="mobile-web-app-capable" content="yes" />

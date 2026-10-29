@@ -8,7 +8,7 @@
       "destination": "/api"
     },
     {
-      "source": "/((?!.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|bmp|woff2?|ttf|otf|eot|txt|xml|json|js|css|map|wasm)$).*)",
+      "source": "/((?!.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|bmp|woff2?|ttf|otf|eot|txt|xml|json|js|css|map|wasm|apk|html|keystore|aab)$).*)",
       "destination": "/index.html"
     }
   ],
@@ -99,6 +99,36 @@
     {
       "source": "/index.html",
       "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/downloads/apk/(.*)",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/vnd.android.package-archive"
+        },
+        {
+          "key": "Content-Disposition",
+          "value": "attachment"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/manifest-(.*).json",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/manifest+json; charset=utf-8"
+        },
         {
           "key": "Cache-Control",
           "value": "public, max-age=0, must-revalidate"

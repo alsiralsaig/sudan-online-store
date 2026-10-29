@@ -1,0 +1,47 @@
+{
+  "id": "/?app=super_admin",
+  "name": "إدارة سند المركزية",
+  "short_name": "إدارة سند",
+  "description": "لوحة المنصة: المتاجر، طابور السداد، الاشتراكات، الأكواد والإعلانات.",
+  "start_url": "/?app=super_admin",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui",
+    "browser"
+  ],
+  "orientation": "portrait-primary",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a",
+  "lang": "ar",
+  "dir": "rtl",
+  "prefer_related_applications": false,
+  "categories": [
+    "business",
+    "shopping",
+    "finance",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/icons/sanad-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/sanad-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/sanad-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "related_applications": []
+}
