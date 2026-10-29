@@ -69,27 +69,20 @@ export const ClientHeader: React.FC<ClientHeaderProps> = ({
   return (
     <>
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
-      {/* Top Banner Notice for Dual App System */}
-      <div className="bg-slate-900 text-white px-4 py-1.5 text-xs flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-semibold text-emerald-300">
-              تطبيق المتسوقين والجمهور (SanadClientApp)
-            </span>
-          </div>
-
-          {/* Quick Loyalty Points pill */}
-          <button
-            onClick={() => onTabChange('loyalty')}
-            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 font-bold hover:bg-amber-400/30 transition-colors"
-            title="فتح لوحة مكافآت ونقاط الولاء"
-          >
-            <Gift className="w-3 h-3 text-amber-400" />
-            <span>نقاطي: {loyaltyPoints.toLocaleString()} نقطة</span>
-          </button>
-        </div>
-
+      {/*
+        شريط التسمية الداخلي «تطبيق المتسوقين والجمهور (SanadClientApp)» أُزيل:
+        كان نصاً تقنياً يظهر للمتسوّق في أعلى الشاشة بلا فائدة. بقيت شارة
+        نقاط الولاء فقط، وتظهر على الشاشات المتوسطة وما فوق.
+      */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-2 flex justify-start">
+        <button
+          onClick={() => onTabChange('loyalty')}
+          className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold hover:bg-amber-200 transition-colors text-[11px]"
+          title="فتح لوحة مكافآت ونقاط الولاء"
+        >
+          <Gift className="w-3 h-3 text-amber-600" />
+          <span>نقاطي: {loyaltyPoints.toLocaleString()} نقطة</span>
+        </button>
       </div>
 
       {/* Main Header Row */}

@@ -37,14 +37,14 @@
       #sanad-boot .sb-ring {
         width: 42px; height: 42px; border-radius: 50%;
         border: 3px solid rgba(110,231,183,.22); border-top-color: #34d399;
-        animation: sb-spin .8s linear infinite;
+        animation: sb-spin 1.45s cubic-bezier(.45,.05,.55,.95) infinite;
       }
       @keyframes sb-spin { to { transform: rotate(360deg); } }
       #sanad-boot .sb-hint { color: rgba(236,253,245,.55); font-size: 11px; }
       /* شريط تقدّم رقيق أسفل الشاشة */
       #sanad-boot .sb-bar { position: absolute; inset-inline: 0; bottom: 0; height: 3px; overflow: hidden; background: rgba(52,211,153,.15); }
       #sanad-boot .sb-bar span { display: block; height: 100%; width: 40%; background: linear-gradient(90deg,#34d399,#0ea5e9);
-        animation: sb-slide 1.1s ease-in-out infinite; }
+        animation: sb-slide 2.2s ease-in-out infinite; }
       @keyframes sb-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
       @media (prefers-reduced-motion: reduce) {
         #sanad-boot .sb-ring, #sanad-boot .sb-bar span { animation-duration: 3s; }

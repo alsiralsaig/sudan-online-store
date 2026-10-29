@@ -40,6 +40,47 @@ import { useImpressionTracker } from '../../lib/useImpressionTracker.ts';
 import { SanadContactSection } from '../../components/Common/SanadContactSection.tsx';
 import type { ClientMarketAd, ClientPurchaseRequest } from '../types.ts';
 
+/**
+ * صورة بانر بانتظار جهوزها: هيكل عظمي بدل الفراغ، ولا يظهر النص فوقها
+ * إلا بعد اكتمال التحميل (كان النص يظهر فوق صورة نصف محمّلة فيبدو مشوّشاً).
+ */
+const BannerImage: React.FC<{
+  src?: string;
+  alt: string;
+  className?: string;
+  eager?: boolean;
+  onClick?: () => void;
+}> = ({ src, alt, className = '', eager = false, onClick }) => {
+  const [ready, setReady] = useState(false);
+  return (
+    <>
+      {!ready && (
+        <div className="absolute inset-0 bg-slate-900">
+          <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-slate-800 via-slate-700 to-slate-800" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="w-9 h-9 rounded-full border-2 border-emerald-400/30 border-t-emerald-400 animate-spin" />
+          </div>
+        </div>
+      )}
+      {src ? (
+        <img
+          src={src}
+          alt={alt}
+          loading={eager ? 'eager' : 'lazy'}
+          decoding="async"
+          draggable={false}
+          referrerPolicy="no-referrer"
+          onClick={onClick}
+          onLoad={() => setReady(true)}
+          onError={() => setReady(true)}
+          style={{ opacity: ready ? 1 : 0 }}
+          className={`${className} transition-opacity duration-500`}
+        />
+      ) : null}
+    </>
+  );
+};
+
 interface ClientMarketHomeViewProps {
   onOpenSections?: () => void;
   onSelectSection?: (sectionKey: string) => void;
@@ -423,22 +464,16 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
                 if (shown?.linkUrl) window.open(shown.linkUrl, '_blank');
               }}
             >
-              <img
+              <BannerImage
                 src={banner.image}
                 alt={banner.title}
-                loading={idx === 0 ? 'eager' : 'lazy'}
-                decoding="async"
-                draggable={false}
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.opacity = '0';
-                }}
+                eager={idx === 0}
                 className="absolute inset-0 w-full h-full object-cover pointer-events-none"
               />
               <div className="absolute inset-0 bg-gradient-to-l from-slate-950/95 via-slate-950/45 to-transparent pointer-events-none" />
               <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-slate-950/70 to-transparent pointer-events-none" />
 
-              <div className="relative h-full flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5">
+              <div className="relative h-full flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5 animate-in fade-in duration-500">
                 <div className="min-w-0 max-w-[64%] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
                   {banner.badge && (
                     <span className="text-[9px] sm:text-[10px] font-mono tracking-widest text-amber-300 block leading-none mb-0.5">
@@ -482,16 +517,10 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
           {vipSlides.map((slide) => (
             <div key={slide.id} className="relative w-full shrink-0 h-full overflow-hidden bg-slate-100">
               {slide.imageUrl ? (
-                <img
+                <BannerImage
                   src={slide.imageUrl}
                   alt={slide.title}
-                  loading="lazy"
-                  decoding="async"
-                  draggable={false}
                   onClick={() => onSelectAd(slide)}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.opacity = '0';
-                  }}
                   className="w-full h-full object-cover cursor-pointer"
                 />
               ) : slide.videoUrl ? (

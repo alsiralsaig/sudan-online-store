@@ -111,15 +111,19 @@ if (launchQueue && typeof launchQueue.setConsumer === 'function') {
  * ننتظر إطارين (requestAnimationFrame) ثم خطوة قصيرة، مع سقف زمني (~8 ثوانٍ)
  * حتى لا تعلق الشاشة لو تعطّل شيء في التحميل.
  */
+const BOOT_MIN_MS = 2200;   // أقل مدة تظهر فيها شاشة التحميل (لا تختفي بسرعة)
+const BOOT_START = Date.now();
+
 function hideBootSplash() {
   const el = document.getElementById('sanad-boot');
   if (!el) return;
+  const wait = Math.max(0, BOOT_MIN_MS - (Date.now() - BOOT_START));
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       setTimeout(() => {
         el.classList.add('sanad-boot--hide');
-        setTimeout(() => el.remove(), 450);
-      }, 160);
+        setTimeout(() => el.remove(), 600);
+      }, wait + 200);
     });
   });
 }
@@ -132,4 +136,4 @@ setTimeout(() => {
     el.classList.add('sanad-boot--hide');
     setTimeout(() => el.remove(), 450);
   }
-}, 8000);
+}, 12000);
