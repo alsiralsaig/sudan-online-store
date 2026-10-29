@@ -189,14 +189,14 @@ export const CentralAdminView: React.FC = () => {
           {navOpen && (
             <>
               <div
-                className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-[2px] sm:hidden"
+                className="fixed inset-0 z-[90] bg-slate-950/60 backdrop-blur-[2px] sm:hidden"
                 onClick={() => setNavOpen(false)}
               />
-              <div className="fixed inset-0 z-[60] hidden sm:block" onClick={() => setNavOpen(false)} />
+              <div className="fixed inset-0 z-[90] hidden sm:block" onClick={() => setNavOpen(false)} />
 
               <div
                 role="menu"
-                className="fixed bottom-0 inset-x-0 z-[61] sm:absolute sm:top-full sm:start-0 sm:inset-x-auto sm:bottom-auto sm:mt-1 sm:w-[min(92vw,22rem)] bg-white border-t sm:border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[78vh] sm:max-h-[70vh] overflow-y-auto"
+                className="fixed bottom-0 inset-x-0 z-[91] sm:absolute sm:top-full sm:start-0 sm:inset-x-auto sm:bottom-auto sm:mt-1 sm:w-[min(92vw,22rem)] bg-white border-t sm:border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[78vh] sm:max-h-[70vh] overflow-y-auto"
               >
                 <div className="sm:hidden sticky top-0 bg-white pt-2 pb-1 px-3 flex items-center justify-between border-b border-slate-100">
                   <span className="text-[11px] font-bold text-slate-500 mt-2">أقسام المنصة</span>

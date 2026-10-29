@@ -107,6 +107,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [isTenantModalOpen, setIsTenantModalOpen] = React.useState(false);
 
   return (
+    <>
     <header className="border-b border-slate-800 bg-slate-950 sticky top-0 z-40 text-slate-100">
       {/* Top Bar Contract: 3 Zones */}
       <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-6 px-4 sm:px-6 py-3.5 min-w-0 overflow-visible">
@@ -466,18 +467,26 @@ export const Header: React.FC<HeaderProps> = ({
           <span>الكاشير</span>
         </button>
 
-        {isNavOpen && (
+      </div>
+
+      <TenantApplicationModal
+        isOpen={isTenantModalOpen}
+        onClose={() => setIsTenantModalOpen(false)}
+        source="merchant"
+      />
+    </header>
+      {isNavOpen && (
           <>
             {/* Bottom Sheet على الجوال (أسهل للوصول بالإبهام) — وقائمة منسدلة على الديسكتوب */}
             <div
-              className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-[2px] sm:hidden"
+              className="fixed inset-0 z-[90] bg-slate-950/60 backdrop-blur-[2px] sm:hidden"
               onClick={() => setIsNavOpen(false)}
             />
-            <div className="fixed inset-0 z-[60] hidden sm:block" onClick={() => setIsNavOpen(false)} />
+            <div className="fixed inset-0 z-[90] hidden sm:block" onClick={() => setIsNavOpen(false)} />
 
             <div
               role="menu"
-              className="fixed bottom-0 inset-x-0 z-[61] sm:absolute sm:top-full sm:start-0 sm:inset-x-auto sm:bottom-auto sm:mt-1 sm:w-[min(92vw,20rem)] bg-slate-900 border-t sm:border border-slate-700 rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[78vh] sm:max-h-[70vh] overflow-y-auto"
+              className="fixed bottom-0 inset-x-0 z-[91] sm:absolute sm:top-full sm:start-0 sm:inset-x-auto sm:bottom-auto sm:mt-1 sm:w-[min(92vw,20rem)] bg-slate-900 border-t sm:border border-slate-700 rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[78vh] sm:max-h-[70vh] overflow-y-auto"
             >
               <div className="sm:hidden sticky top-0 bg-slate-900 pt-2 pb-1 px-3 flex items-center justify-between border-b border-slate-800">
                 <span className="w-10 h-1.5 rounded-full bg-slate-600 mx-auto absolute start-1/2 -translate-x-1/2 top-2" />
@@ -514,13 +523,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </>
         )}
-      </div>
 
-      <TenantApplicationModal
-        isOpen={isTenantModalOpen}
-        onClose={() => setIsTenantModalOpen(false)}
-        source="merchant"
-      />
-    </header>
+    </>
   );
 };
