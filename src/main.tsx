@@ -4,7 +4,12 @@ import './index.css';
 import { ThemeProvider } from './lib/theme.tsx';
 
 // Register PWA Service Worker
-if ('serviceWorker' in navigator) {
+/*
+ * داخل التطبيق الأصلي (APK) الملفات محلية أصلًا، وتسجيل عامل الخدمة على أصل
+ * `https://localhost` قد يحجب التحديثات — لذلك لا نسجّله هناك.
+ */
+const IS_NATIVE_SHELL = /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+if ('serviceWorker' in navigator && !IS_NATIVE_SHELL) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' })
       .then(async (reg) => {

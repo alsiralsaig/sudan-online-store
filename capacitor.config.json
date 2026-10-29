@@ -1,0 +1,12 @@
+{
+  "appId": "sd.sanad.app",
+  "appName": "سند",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

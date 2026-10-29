@@ -1,3 +1,4 @@
+import { apiUrl } from '../../lib/api';
 import React, { useRef, useState } from 'react';
 import { Camera, Video, X, Loader2, ImageOff } from 'lucide-react';
 
@@ -124,7 +125,7 @@ async function extractPoster(file: File): Promise<string | null> {
 /** Upload a small poster image and return its public URL. */
 async function uploadPoster(dataUrl: string): Promise<string | null> {
   try {
-    const res = await fetch('/api/media', {
+    const res = await fetch(apiUrl('/api/media'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dataUrl, kind: 'image' }),
@@ -164,7 +165,7 @@ async function uploadInChunks(
     let done = false;
     for (let attempt = 0; attempt < CHUNK_RETRIES && !done; attempt++) {
       try {
-        const res = await fetch('/api/media/chunk', {
+        const res = await fetch(apiUrl('/api/media/chunk'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ uploadId, index: i, dataUrl, mime: file.type || 'video/mp4', kind }),
@@ -182,7 +183,7 @@ async function uploadInChunks(
     onProgress(Math.round(((i + 1) / (totalChunks + 1)) * 100));
   }
 
-  const res = await fetch('/api/media/complete', {
+  const res = await fetch(apiUrl('/api/media/complete'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ uploadId, totalChunks, kind }),
@@ -242,7 +243,7 @@ export const MediaUploader: React.FC<MediaUploaderProps> = ({
         const dataUrl = kind === 'image' ? await compressImage(file) : await readAsDataUrl(file);
         setProgress(45);
 
-        const res = await fetch('/api/media', {
+        const res = await fetch(apiUrl('/api/media'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dataUrl, kind }),

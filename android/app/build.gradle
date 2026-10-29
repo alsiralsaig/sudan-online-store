@@ -1,0 +1,91 @@
+apply plugin: 'com.android.application'
+
+// خصائص البناء لكل تطبيق تُقرأ من ملف (كاشير/متجر/إدارة)
+def sanadPropsFile = project.findProperty("sanadProps")
+if (sanadPropsFile) {
+    def p = new Properties()
+    file(sanadPropsFile).withInputStream { p.load(it) }
+    p.each { k, v -> project.ext.set(k.toString(), v) }
+}
+def sanadProp = { String name, String fallback ->
+    (project.ext.has(name) && project.ext.get(name)) ? project.ext.get(name).toString() : fallback
+}
+
+android {
+    // كل تطبيق (كاشير / متجر / إدارة) يُبنى من نفس المشروع بمعرّفات مختلفة
+    namespace "sd.sanad.app"
+    compileSdkVersion rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId sanadProp("sanadAppId", "sd.sanad.merchant")
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 2
+        versionName "1.1"
+        // اسم التطبيق يختلف بين الثلاثة (كاشير سند / متجر سند / إدارة سند)
+        resValue "string", "app_name", sanadProp("sanadAppLabel", "سند")
+        resValue "string", "title_activity_main", sanadProp("sanadAppLabel", "سند")
+        manifestPlaceholders = [sanadAppLabel: sanadProp("sanadAppLabel", "سند")]
+        // لون خلفية أيقونة التكيّف + شاشة البداية لكل تطبيق
+        resValue "color", "ic_launcher_background", sanadProp("sanadIconBg", "#0ea5e9")
+        resValue "color", "splashBackground", sanadProp("sanadSplashBg", "#f8fafc")
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "sanad-${sanadProp('sanadAppKey', 'merchant')}.apk"
+        }
+    }
+}
+
+def sanadKeystore = sanadProp("sanadKeystore", "")
+if (sanadKeystore) {
+    android.signingConfigs {
+        create("sanad") {
+            storeFile file(sanadKeystore)
+            storePassword sanadProp("sanadStorePassword", "")
+            keyAlias sanadProp("sanadKeyAlias", "")
+            keyPassword sanadProp("sanadKeyPassword", "")
+        }
+    }
+    android.buildTypes.release.signingConfig = android.signingConfigs.sanad
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

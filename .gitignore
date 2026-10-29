@@ -21,3 +21,10 @@ dist/
 *.jks
 *.aab
 signing-key-info.txt
+
+# مشروع أندرويد المولّد (يُعاد بناؤه بالأمر: npx cap add android)
+android/app/build/
+android/build/
+android/.gradle/
+android/app/src/main/assets/public/
+android/sanad-build.properties

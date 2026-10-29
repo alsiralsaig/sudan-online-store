@@ -48,6 +48,71 @@ const ARABIC_ERRORS: Record<string, string> = {
   UNAUTHORIZED: 'يلزم تسجيل الدخول أولاً.',
 };
 
+/**
+ * عنوان الـAPI كما يراه التطبيق الأصلي (APK).
+ * ---------------------------------------------------------------------------
+ * داخل المتصفح كل الطلبات نسبية (`/api/...`) وتعمل لأن الصفحة والـAPI على نفس
+ * النطاق. لكن داخل تطبيق أندرويد الأصلي تُقدَّم الواجهة من أصل `https://localhost`
+ * (WebView محلي، ليعمل بدون إنترنت)، فلا بد من عنوان مطلق لخادم سند.
+ * يُحدَّد عبر VITE_API_BASE وقت البناء، ويرجع لسلوك المتصفح تلقائياً لو غير موجود.
+ */
+const NATIVE_SHELL_ORIGIN =
+  typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+const API_BASE = String((import.meta as any)?.env?.VITE_API_BASE || '').replace(/\/$/, '');
+
+/**
+ * رمز جلسة المتجر محفوظ أيضاً في localStorage.
+ * ---------------------------------------------------------------------------
+ * ملف تعريف الارتباط (Cookie) لا يُحفظ داخل تطبيق أندرويد لأن الطلبات تعبر
+ * أصولاً مختلفة (localhost ← خادم سند)، لذلك نحفظ الرمز ونرسله كـBearer —
+ * الخادم يقبل الاثنين (extractToken) فلم نحتج لتغيير الخادم.
+ */
+const MERCHANT_TOKEN_KEY = 'sanad_merchant_token';
+const ADMIN_TOKEN_KEY = 'sanad_admin_token';
+
+function readStoredToken(key: string): string {
+  try {
+    return localStorage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredToken(key: string, value: string) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    /* التخزين غير متاح (وضع خاص) — نكمل بالكوكي فقط */
+  }
+}
+
+/**
+ * يحوّل أي مسار داخلي (`/api/...`) إلى عنوان مطلق عند العمل داخل التطبيق الأصلي.
+ * الروابط المُخزّنة في قاعدة البيانات للصور والفيديو نسبية، فتصبح مطلقة تلقائياً.
+ */
+export function apiUrl(pathOrUrl: string): string {
+  if (!pathOrUrl || !API_BASE) return pathOrUrl;
+  if (/^(https?:|data:|blob:)/i.test(pathOrUrl)) return pathOrUrl;
+  return pathOrUrl.startsWith('/') ? `${API_BASE}${pathOrUrl}` : `${API_BASE}/${pathOrUrl}`;
+}
+
+function absolutizeDeep<T>(value: T, depth = 0): T {
+  if (!API_BASE || depth > 8 || value == null) return value;
+  if (typeof value === 'string') {
+    return (value.startsWith('/api/') ? `${API_BASE}${value}` : value) as unknown as T;
+  }
+  if (Array.isArray(value)) return value.map((v) => absolutizeDeep(v, depth + 1)) as unknown as T;
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = absolutizeDeep(v, depth + 1);
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
 class ApiClient {
   private tenantId: string = 'tenant_alrowad';
   /**
@@ -178,6 +243,13 @@ class ApiClient {
        */
       'x-actor-name': encodeURIComponent(this.currentActor.name || ''),
       'x-actor-role': this.currentActor.role,
+      /*
+       * داخل التطبيق الأصلي لا تُحفظ الكوكيز عبر الأصول، فنرسل رمز الجلسة
+       * كـBearer. في المتصفح لا يوجد رمز محفوظ عادةً فالكوكي يتولى الأمر.
+       */
+      ...(readStoredToken(MERCHANT_TOKEN_KEY) || readStoredToken(ADMIN_TOKEN_KEY)
+        ? { authorization: `Bearer ${readStoredToken(MERCHANT_TOKEN_KEY) || readStoredToken(ADMIN_TOKEN_KEY)}` }
+        : {}),
     };
   }
 
@@ -186,7 +258,7 @@ class ApiClient {
       throw new Error('OFFLINE_MODE');
     }
 
-    const res = await fetch(`/api${endpoint}`, {
+    const res = await fetch(`${API_BASE}/api${endpoint}`, {
       credentials: 'include',
       ...options,
       headers: {
@@ -211,7 +283,8 @@ class ApiClient {
       throw new Error(msg);
     }
 
-    return res.json();
+    const data = await res.json();
+    return absolutizeDeep(data);
   }
 
   /* Auth — merchant per-store code + platform admin */
@@ -219,7 +292,12 @@ class ApiClient {
     return this.request('/auth/status');
   }
   public async merchantLogin(code: string, hint?: string): Promise<{ success: boolean; token: string; tenant: any }> {
-    return this.request('/auth/merchant/login', { method: 'POST', body: JSON.stringify({ code, slug: hint, tenantId: hint }) });
+    const res = await this.request<{ success: boolean; token: string; tenant: any }>(
+      '/auth/merchant/login',
+      { method: 'POST', body: JSON.stringify({ code, slug: hint, tenantId: hint }) }
+    );
+    if (res?.token) writeStoredToken(MERCHANT_TOKEN_KEY, res.token);
+    return res;
   }
   /** يسترجع/يصدر كود دخول المتجر لتاجر يملك كود الطلب المعتمد. */
   public async getStoreAccessCode(applicationCode: string, rotate = false): Promise<{ success: boolean; issued?: boolean; tenant?: any; merchantCode: string | null; merchantCodeMessage?: string; canRotate?: boolean }> {
@@ -233,7 +311,9 @@ class ApiClient {
     return this.request('/auth/merchant/me');
   }
   public async merchantLogout(): Promise<{ success: boolean }> {
-    return this.request('/auth/merchant/logout', { method: 'POST', body: '{}' });
+    const res = await this.request<{ success: boolean }>('/auth/merchant/logout', { method: 'POST', body: '{}' });
+    writeStoredToken(MERCHANT_TOKEN_KEY, '');
+    return res;
   }
 
   /* ---- دخول الموظف برمزه السري ---- */
@@ -247,20 +327,32 @@ class ApiClient {
   }
 
   public async staffLogin(employeeId: string, pin: string): Promise<{ success: boolean; employee: { id: string; name: string; role: string } }> {
-    return this.request('/auth/staff/login', { method: 'POST', body: JSON.stringify({ employeeId, pin }) });
+    const res = await this.request<{ success: boolean; token?: string; employee: { id: string; name: string; role: string } }>(
+      '/auth/staff/login',
+      { method: 'POST', body: JSON.stringify({ employeeId, pin }) }
+    );
+    if (res?.token) writeStoredToken(MERCHANT_TOKEN_KEY, res.token);
+    return res;
   }
 
   public async staffLogout(): Promise<{ success: boolean }> {
     return this.request('/auth/staff/logout', { method: 'POST', body: '{}' });
   }
   public async adminLogin(password: string): Promise<{ success: boolean; token: string }> {
-    return this.request('/auth/admin/login', { method: 'POST', body: JSON.stringify({ password }) });
+    const res = await this.request<{ success: boolean; token: string }>(
+      '/auth/admin/login',
+      { method: 'POST', body: JSON.stringify({ password }) }
+    );
+    if (res?.token) writeStoredToken(ADMIN_TOKEN_KEY, res.token);
+    return res;
   }
   public async adminMe(): Promise<{ authenticated: boolean }> {
     return this.request('/auth/admin/me');
   }
   public async adminLogout(): Promise<{ success: boolean }> {
-    return this.request('/auth/admin/logout', { method: 'POST', body: '{}' });
+    const res = await this.request<{ success: boolean }>('/auth/admin/logout', { method: 'POST', body: '{}' });
+    writeStoredToken(ADMIN_TOKEN_KEY, '');
+    return res;
   }
   /** إصلاح شامل: إصدار كود دخول لكل متجر نشط بلا كود (بعد النشر). */
   public async repairMerchantCodes(rotateAll = false): Promise<{ success: boolean; count: number; repaired: { tenantId: string; name: string; code: string }[]; message: string }> {

@@ -1,3 +1,4 @@
+import { apiUrl } from './api';
 /** رفع صورة أو فيديو قصير لصنف المخزون — نفس مسار /api/media. */
 
 const SINGLE_SHOT = 2.8 * 1024 * 1024;
@@ -48,7 +49,7 @@ export function readVideoDuration(file: File): Promise<number> {
 }
 
 async function postMedia(dataUrl: string, kind: 'image' | 'video'): Promise<string> {
-  const res = await fetch('/api/media', {
+  const res = await fetch(apiUrl('/api/media'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dataUrl, kind }),
@@ -64,7 +65,7 @@ async function uploadChunked(file: File, kind: 'image' | 'video'): Promise<strin
   for (let i = 0; i < totalChunks; i++) {
     const slice = file.slice(i * CHUNK, Math.min(file.size, (i + 1) * CHUNK));
     const dataUrl = await readAsDataUrl(slice);
-    const res = await fetch('/api/media/chunk', {
+    const res = await fetch(apiUrl('/api/media/chunk'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uploadId, index: i, dataUrl, mime: file.type || 'video/mp4', kind }),
@@ -72,7 +73,7 @@ async function uploadChunked(file: File, kind: 'image' | 'video'): Promise<strin
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.message || 'تعذر رفع جزء من الفيديو');
   }
-  const done = await fetch('/api/media/complete', {
+  const done = await fetch(apiUrl('/api/media/complete'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ uploadId, totalChunks, kind }),
