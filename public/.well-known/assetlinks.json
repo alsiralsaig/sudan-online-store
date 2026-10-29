@@ -5,9 +5,33 @@
     ],
     "target": {
       "namespace": "android_app",
-      "package_name": "com.sanadpos.app",
+      "package_name": "sd.sanad.merchant",
       "sha256_cert_fingerprints": [
-        "14:6D:E9:01:F8:85:7E:0E:12:F6:07:6E:6E:71:08:58:AB:5F:85:5B:09:A9:35:1A:57:4A:25:24:A8:15:B4:42"
+        "74:DA:1A:08:ED:A0:8C:6C:C9:46:94:86:39:35:88:87:36:99:AB:28:4F:83:4C:5F:D8:69:F9:80:27:BA:13:D2"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "sd.sanad.client",
+      "sha256_cert_fingerprints": [
+        "19:A2:D4:E1:CD:73:17:70:27:55:E6:79:20:2A:02:24:B1:F3:F5:F0:4B:9F:55:1D:33:DF:CB:DF:D3:B7:C1:0A"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "sd.sanad.admin",
+      "sha256_cert_fingerprints": [
+        "D1:9B:DE:87:49:6E:A5:9B:17:5F:21:E3:10:15:09:71:DB:9C:E6:B8:53:A6:D4:72:90:0B:09:71:03:36:49:D3"
       ]
     }
   }

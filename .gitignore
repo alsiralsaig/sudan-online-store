@@ -15,3 +15,9 @@ package-lock.json
 
 # build output
 dist/
+
+# signing keys & build artifacts that must never be public
+*.keystore
+*.jks
+*.aab
+signing-key-info.txt
