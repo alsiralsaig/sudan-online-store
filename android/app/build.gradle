@@ -19,12 +19,13 @@ android {
         applicationId sanadProp("sanadAppId", "sd.sanad.merchant")
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.1"
-        // اسم التطبيق يختلف بين الثلاثة (كاشير سند / متجر سند / إدارة سند)
-        resValue "string", "app_name", sanadProp("sanadAppLabel", "سند")
-        resValue "string", "title_activity_main", sanadProp("sanadAppLabel", "سند")
-        manifestPlaceholders = [sanadAppLabel: sanadProp("sanadAppLabel", "سند")]
+        versionCode 3
+        versionName "1.2"
+        /*
+         * اسم التطبيق يُكتب في res/values/strings.xml بترميز UTF-8 عبر سكربت البناء
+         * (resValue كان يفسد العربية لأن القيمة تمرّ عبر سطر أوامر بترميز غير UTF-8
+         * فتظهر «ÙØ§Ø´ÙŠØ± Ø³Ù†Ø¯» على الشاشة الرئيسية).
+         */
         // لون خلفية أيقونة التكيّف + شاشة البداية لكل تطبيق
         resValue "color", "ic_launcher_background", sanadProp("sanadIconBg", "#0ea5e9")
         resValue "color", "splashBackground", sanadProp("sanadSplashBg", "#f8fafc")

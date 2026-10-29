@@ -30,7 +30,6 @@ build_app () {
   cat > "$ANDROID/sanad-build.properties" <<EOF
 sanadAppId=$appid
 sanadAppKey=$key
-sanadAppLabel=$label
 sanadIconBg=$iconbg
 sanadSplashBg=$splashbg
 sanadKeystore=$kdir/signing.keystore
@@ -39,11 +38,14 @@ sanadKeyAlias=$alias
 sanadKeyPassword=$keypass
 EOF
 
+  # اسم التطبيق (عربي) يُكتب بترميز UTF-8 مباشرة في ملف الموارد
+  python3 "$(dirname "$0")/write_app_strings.py" "$label" "$appid"
+
   # الأيقونة: نستبدل صور mipmap الخاصة بهذا التطبيق
-  python3 "/home/user/prepare_icons.py" "$key"
+  python3 "$(dirname "$0")/make_icons.py" "$key"
 
   # إعدادات Capacitor لهذا التطبيق: يفتح وضعه مباشرة (كاشير/متجر/إدارة)
-  python3 "/home/user/set_native_config.py" "$key" "$ANDROID/app/src/main/assets/capacitor.config.json"
+  python3 "$(dirname "$0")/set_native_config.py" "$key" "$ANDROID/app/src/main/assets/capacitor.config.json"
 
   echo "=== building $key ($appid) ==="
   ( cd "$ANDROID" && bash ./gradlew --project-cache-dir="$TMPDIR/pc" -q --no-daemon assembleRelease -PsanadProps=$ANDROID/sanad-build.properties ) || {
@@ -52,7 +54,7 @@ EOF
   ls -l "$OUT/sanad-$key.apk"
 }
 
-build_app merchant sd.sanad.merchant "كاشير سند" "#0ea5e9" "#020617"
-build_app client   sd.sanad.client   "متجر سند"  "#38bdf8" "#f8fafc"
-build_app admin    sd.sanad.admin    "إدارة سند" "#0f172a" "#0f172a"
+build_app merchant sd.sanad.merchant "كاشير سند" "#0b3d91" "#0b1220"
+build_app client   sd.sanad.client   "متجر سند"  "#0284c7" "#0b1220"
+build_app admin    sd.sanad.admin    "إدارة سند" "#0f172a" "#0b1220"
 echo "ALL BUILT"
