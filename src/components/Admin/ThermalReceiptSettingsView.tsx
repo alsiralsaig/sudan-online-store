@@ -543,6 +543,7 @@ export const ThermalReceiptSettingsView: React.FC = () => {
                     src={settings.logoUrl}
                     alt="Logo"
                     className="max-h-12 object-contain"
+                    referrerPolicy="no-referrer"
                     onError={(e) => ((e.target as HTMLElement).style.display = 'none')}
                   />
                 </div>

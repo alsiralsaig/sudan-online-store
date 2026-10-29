@@ -291,7 +291,7 @@ export const MediaUploader: React.FC<MediaUploaderProps> = ({
           {value?.kind === 'video' ? (
             <video src={preview} className="w-full h-full object-cover" controls playsInline />
           ) : (
-            <img src={preview} alt="معاينة الإعلان" className="w-full h-full object-cover" />
+            <img src={preview} alt="معاينة الإعلان" className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
           )}
 
           <button

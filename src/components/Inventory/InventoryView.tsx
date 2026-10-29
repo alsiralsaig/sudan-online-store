@@ -1134,7 +1134,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">صورة الصنف:</label>
                   {newImageUrl ? (
-                    <img src={newImageUrl} alt="" className="max-h-24 w-full object-contain rounded-lg border border-slate-700 mb-1.5" />
+                    <img src={newImageUrl} alt="" className="max-h-24 w-full object-contain rounded-lg border border-slate-700 mb-1.5"  referrerPolicy="no-referrer" />
                   ) : mediaBusy === 'image' ? (
                     <div className="flex items-center justify-center min-h-[5rem]">
                       <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
@@ -1439,7 +1439,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       <div className="flex items-start gap-3">
                         <div className="w-12 h-12 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200 relative">
                           {prod.imageUrl ? (
-                            <img src={prod.imageUrl} alt={prod.name} className="w-full h-full object-cover" />
+                            <img src={prod.imageUrl} alt={prod.name} className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center font-bold text-slate-400">
                               {prod.name.slice(0, 1)}

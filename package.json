@@ -26,7 +26,11 @@
     "test:media-range": "tsx scripts/test-media-range.ts",
     "test:storage": "tsx scripts/test-storage.ts",
     "test:watchdog": "tsx scripts/test-watchdog.ts",
-    "test:alerts": "tsx scripts/test-alerts.ts"
+    "test:alerts": "tsx scripts/test-alerts.ts",
+    "native:setup": "bash android-scripts/setup_android_toolchain.sh",
+    "native:web": "SANAD_NATIVE=true VITE_API_BASE=${VITE_API_BASE:-https://sudan-online-store-eta.vercel.app} vite build",
+    "native:copy": "npx cap copy android",
+    "native:build": "bash android-scripts/build_native_apks.sh"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

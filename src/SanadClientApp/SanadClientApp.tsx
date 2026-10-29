@@ -919,7 +919,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                 <div key={ad.id} className="flex items-center gap-2 bg-white rounded-xl p-2 border border-amber-100">
                   <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 shrink-0">
                     {ad.imageUrl ? (
-                      <img src={ad.imageUrl} alt="" className="w-full h-full object-cover" />
+                      <img src={ad.imageUrl} alt="" className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
                     ) : (
                       <div className="w-full h-full bg-slate-200" />
                     )}

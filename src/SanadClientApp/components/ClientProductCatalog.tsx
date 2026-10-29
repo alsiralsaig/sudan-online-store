@@ -267,7 +267,7 @@ export const ClientProductCatalog: React.FC<ClientProductCatalogProps> = ({
                       src={img}
                       alt={product.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
+                     referrerPolicy="no-referrer" />
 
                     {/* Recommendation reason tag */}
                     <div className="absolute top-2 right-2 left-2 flex items-center justify-between gap-1">
@@ -443,7 +443,7 @@ export const ClientProductCatalog: React.FC<ClientProductCatalogProps> = ({
                     alt={p.name}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     loading="lazy"
-                  />
+                   referrerPolicy="no-referrer" />
 
                   {/* Top Overlay: Badges and Wishlist Heart Button */}
                   <div className="absolute top-2.5 right-2.5 left-2.5 flex items-start justify-between gap-1 pointer-events-none">
@@ -591,7 +591,7 @@ export const ClientProductCatalog: React.FC<ClientProductCatalogProps> = ({
                 src={getProductImage(quickViewProduct)}
                 alt={quickViewProduct.name}
                 className="w-full h-full object-cover"
-              />
+               referrerPolicy="no-referrer" />
               <button
                 onClick={() => setQuickViewProduct(null)}
                 className="absolute top-3 left-3 p-1.5 rounded-full bg-slate-900/70 text-white hover:bg-slate-900 transition-colors"

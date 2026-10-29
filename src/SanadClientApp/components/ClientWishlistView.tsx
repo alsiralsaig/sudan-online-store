@@ -173,7 +173,7 @@ export const ClientWishlistView: React.FC<ClientWishlistViewProps> = ({
                     src={img}
                     alt={product.name}
                     className="w-full h-full object-cover"
-                  />
+                   referrerPolicy="no-referrer" />
 
                   {/* Price drop badge */}
                   {isPriceDrop && (

@@ -119,7 +119,7 @@ export const ClientMerchantStoreView: React.FC<Props> = ({ slug, fallbackName, o
                 <div key={p.id} className="rounded-2xl bg-white border border-slate-200 overflow-hidden flex flex-col">
                   <div className="aspect-[4/3] bg-slate-100 overflow-hidden">
                     {p.imageUrl ? (
-                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-slate-300">
                         <Package className="w-8 h-8" />

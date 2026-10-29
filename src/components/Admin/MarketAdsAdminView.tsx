@@ -209,7 +209,7 @@ export const MarketAdsAdminView: React.FC = () => {
               >
                 <div className="w-20 h-20 rounded-xl overflow-hidden bg-slate-800 shrink-0">
                   {ad.imageUrl ? (
-                    <img src={ad.imageUrl} alt="" className="w-full h-full object-cover" />
+                    <img src={ad.imageUrl} alt="" className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-600">
                       فيديو
@@ -331,7 +331,7 @@ export const MarketAdsAdminView: React.FC = () => {
               {preview.videoUrl ? (
                 <video src={preview.videoUrl} controls className="w-full h-full object-cover" />
               ) : (
-                <img src={preview.imageUrl} alt="" className="w-full h-full object-cover" />
+                <img src={preview.imageUrl} alt="" className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
               )}
             </div>
             <div className="p-4 space-y-2">

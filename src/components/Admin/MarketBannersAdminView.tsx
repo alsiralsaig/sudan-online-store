@@ -386,7 +386,7 @@ export const MarketBannersAdminView: React.FC = () => {
 
             {form.imageUrl && (
               <div className="flex items-center gap-2">
-                <img src={form.imageUrl} alt="" className="w-20 h-12 object-cover rounded-lg border border-slate-700" />
+                <img src={form.imageUrl} alt="" className="w-20 h-12 object-cover rounded-lg border border-slate-700"  referrerPolicy="no-referrer" />
                 <button onClick={() => setForm({ ...form, imageUrl: '' })} className="text-[10px] text-red-400 hover:text-red-300">
                   إزالة
                 </button>
@@ -419,7 +419,7 @@ export const MarketBannersAdminView: React.FC = () => {
           {sorted.map((banner) => (
             <div key={banner.id} className="bg-slate-900 rounded-2xl border border-slate-800 p-3 flex gap-3">
               <div className="w-28 h-20 rounded-xl overflow-hidden bg-slate-800 shrink-0">
-                <img src={banner.imageUrl} alt="" className="w-full h-full object-cover" />
+                <img src={banner.imageUrl} alt="" className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
               </div>
 
               <div className="flex-1 min-w-0">

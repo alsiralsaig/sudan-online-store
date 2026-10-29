@@ -51,7 +51,7 @@ export const SanadAppIcon: React.FC<SanadAppIconProps> = ({
         height={px}
         className="w-full h-full object-cover"
         draggable={false}
-      />
+       referrerPolicy="no-referrer" />
     </span>
   );
 

@@ -429,6 +429,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
                 loading={idx === 0 ? 'eager' : 'lazy'}
                 decoding="async"
                 draggable={false}
+                referrerPolicy="no-referrer"
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.opacity = '0';
                 }}
@@ -585,7 +586,7 @@ export const ClientMarketHomeView: React.FC<ClientMarketHomeViewProps> = ({
                 >
                   <div className="relative aspect-[4/3] w-full bg-slate-100 overflow-hidden">
                     {ad.imageUrl ? (
-                      <img src={ad.imageUrl} alt={ad.title} className="w-full h-full object-cover" />
+                      <img src={ad.imageUrl} alt={ad.title} className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
                     ) : ad.videoUrl ? (
                       // No cover photo: show the clip's own first frame.
                       <video

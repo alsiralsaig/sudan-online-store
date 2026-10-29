@@ -417,7 +417,7 @@ export const ClientCreateAdOrRequestModal: React.FC<ClientCreateAdOrRequestModal
                         : 'border-slate-200 opacity-70 hover:opacity-100'
                     }`}
                   >
-                    <img src={img.url} alt={img.label} className="w-full h-full object-cover" />
+                    <img src={img.url} alt={img.label} className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
                     <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-[9px] py-0.5 text-center truncate px-1">
                       {img.label}
                     </span>

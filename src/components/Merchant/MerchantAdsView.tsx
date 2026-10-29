@@ -160,7 +160,7 @@ export const MerchantAdsView: React.FC<Props> = ({ storeName: storeNameProp, sto
           {myAds.map((ad) => (
             <div key={ad.id} className="flex gap-3 items-center border border-slate-100 rounded-xl p-2">
               <div className="w-16 h-14 rounded-lg overflow-hidden bg-slate-100 shrink-0">
-                {ad.imageUrl ? <img src={ad.imageUrl} alt="" className="w-full h-full object-cover" /> : null}
+                {ad.imageUrl ? <img src={ad.imageUrl} alt="" className="w-full h-full object-cover"  referrerPolicy="no-referrer" /> : null}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold text-slate-900 truncate">{ad.title}</p>
@@ -224,7 +224,7 @@ export const MerchantAdsView: React.FC<Props> = ({ storeName: storeNameProp, sto
               className="bg-white border border-slate-200 rounded-2xl p-3 flex flex-col sm:flex-row gap-3"
             >
               <div className="w-full sm:w-40 h-24 rounded-xl overflow-hidden bg-slate-100 shrink-0">
-                <img src={banner.imageUrl} alt="" className="w-full h-full object-cover" />
+                <img src={banner.imageUrl} alt="" className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
               </div>
 
               <div className="flex-1 min-w-0">

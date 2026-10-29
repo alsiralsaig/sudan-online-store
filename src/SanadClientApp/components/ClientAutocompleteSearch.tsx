@@ -262,7 +262,7 @@ export const ClientAutocompleteSearch: React.FC<ClientAutocompleteSearchProps> =
                             src={p.imageUrl || "/assets/images/product_sugar_kenana_1792173270044.jpg"}
                             alt={p.name}
                             className="w-full h-full object-cover"
-                          />
+                           referrerPolicy="no-referrer" />
                         </div>
 
                         <div className="flex-1 min-w-0">

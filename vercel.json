@@ -26,7 +26,11 @@
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type,Authorization"
+          "value": "Content-Type,Authorization,x-tenant-id,x-actor-name,x-actor-role,x-actor-id,x-merchant-token,x-admin-token,x-owner-token"
+        },
+        {
+          "key": "Access-Control-Max-Age",
+          "value": "86400"
         }
       ]
     },

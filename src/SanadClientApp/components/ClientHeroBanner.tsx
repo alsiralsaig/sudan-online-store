@@ -34,7 +34,7 @@ export const ClientHeroBanner: React.FC<ClientHeroBannerProps> = ({
           src={heroImage}
           alt="سند للتسوق الإلكتروني"
           className="w-full h-full object-cover object-center opacity-35"
-        />
+         referrerPolicy="no-referrer" />
         <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/80 to-transparent" />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent" />
       </div>

@@ -99,7 +99,7 @@ export const ClientAdDetailModal: React.FC<ClientAdDetailModalProps> = ({ ad, on
               </a>
             </div>
           ) : ad.imageUrl ? (
-            <img src={ad.imageUrl} alt={ad.title} className="w-full h-full object-cover" />
+            <img src={ad.imageUrl} alt={ad.title} className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-emerald-900 to-slate-900">
               <span className="text-white/70 text-sm font-bold">إعلان سند</span>

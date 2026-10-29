@@ -1705,6 +1705,7 @@ export const PosView: React.FC<PosViewProps> = ({
                     src={receiptSettings.logoUrl}
                     alt="Logo"
                     className="max-h-12 object-contain"
+                    referrerPolicy="no-referrer"
                     onError={(e) => ((e.target as HTMLElement).style.display = 'none')}
                   />
                 </div>

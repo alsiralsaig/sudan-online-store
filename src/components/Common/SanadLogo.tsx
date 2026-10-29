@@ -60,7 +60,7 @@ export const SanadLogo: React.FC<SanadLogoProps> = ({
           alt="شعار سند"
           className="w-full h-full object-cover"
           draggable={false}
-        />
+         referrerPolicy="no-referrer" />
       </div>
 
       {/* Brand Text Block */}

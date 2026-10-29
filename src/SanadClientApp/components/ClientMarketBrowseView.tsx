@@ -281,7 +281,7 @@ export const ClientMarketBrowseView: React.FC<Props> = ({
                   <div key={st.id} className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                     <div className="h-24 bg-emerald-50 overflow-hidden flex items-center justify-center">
                       {st.logo ? (
-                        <img src={st.logo} alt={label} className="w-full h-full object-cover" />
+                        <img src={st.logo} alt={label} className="w-full h-full object-cover"  referrerPolicy="no-referrer" />
                       ) : (
                         <Store className="w-10 h-10 text-emerald-700" />
                       )}
@@ -335,7 +335,7 @@ export const ClientMarketBrowseView: React.FC<Props> = ({
                 <div key={s.id} className="rounded-2xl border border-dashed border-amber-200 bg-amber-50/40 overflow-hidden">
                   <div className="h-20 bg-slate-100 overflow-hidden">
                     {s.bannerImage || s.logo ? (
-                      <img src={s.bannerImage || s.logo} alt="" className="w-full h-full object-cover opacity-80" />
+                      <img src={s.bannerImage || s.logo} alt="" className="w-full h-full object-cover opacity-80"  referrerPolicy="no-referrer" />
                     ) : null}
                   </div>
                   <div className="p-3 space-y-1">
@@ -409,7 +409,7 @@ export const ClientMarketBrowseView: React.FC<Props> = ({
                   <div key={l.id} className="rounded-2xl border border-slate-200 bg-white overflow-hidden flex flex-col">
                     <div className="h-28 bg-slate-100 overflow-hidden">
                       {l.imageUrl ? (
-                        <img src={l.imageUrl} alt={l.title} className="w-full h-full object-cover" loading="lazy" />
+                        <img src={l.imageUrl} alt={l.title} className="w-full h-full object-cover" loading="lazy"  referrerPolicy="no-referrer" />
                       ) : null}
                     </div>
                     <div className="p-2.5 flex-1 flex flex-col gap-1">
