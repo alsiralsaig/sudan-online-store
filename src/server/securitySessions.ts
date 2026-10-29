@@ -54,8 +54,12 @@ export function newMerchantCode(): string {
 export function merchantCodeHash(input: unknown): string | null {
   if (typeof input !== 'string' || input.length > 80) return null;
   const normalized = input.toUpperCase().replace(/[\s-]/g, '');
-  /* جديد: SND + 12 خانة (٣٢ حرفاً بلا I/O/0/1) */
-  if (/^SND[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
+  /*
+   * جديد: SND + ٨ إلى ١٦ خانة من أبجدية بلا I/O/0/1.
+   * المدى يسمح بأن يكون كود الطلب (٤+٤ = ٨ خانات) هو نفسه كود الدخول —
+   * كود واحد لكل متجر — وكذلك الكود القصير الجديد (٤+٤+٤ = ١٢ خانة).
+   */
+  if (/^SND[A-HJ-NP-Z2-9]{8,16}$/.test(normalized)) {
     return createHash('sha256').update(`sanad-merchant-code-v2:${normalized}`, 'utf8').digest('hex');
   }
   /* قديم: SND + 40 خانة hex */

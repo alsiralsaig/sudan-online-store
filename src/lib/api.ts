@@ -90,6 +90,22 @@ class ApiClient {
     return this.tenantId;
   }
 
+  /**
+   * يمسح أي أثر لمتجر/موظف سابق على هذا الجهاز.
+   * ليه: التاجر دخل بكود متجر جديد فظهر له متجره القديم «برادايس»، لأن
+   * معرّف المتجر والموظف محفوظان في localStorage من جلسة سابقة.
+   */
+  public clearLocalSession() {
+    this.tenantId = null;
+    this.currentActor = { id: 'owner_default', name: 'مالك المتجر', role: 'owner' };
+    this.currentBranchId = '';
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('sanad_tenant_id');
+      localStorage.removeItem('sanad_actor');
+      localStorage.removeItem('sanad_branch_id');
+    }
+  }
+
   public setTenantId(id: string) {
     this.tenantId = id;
     if (typeof window !== 'undefined') {
@@ -155,7 +171,11 @@ class ApiClient {
     return {
       'Content-Type': 'application/json',
       'x-tenant-id': this.tenantId,
-      'x-actor-id': this.currentActor.id,
+      /*
+       * لا نرسل x-actor-id: هوية الموظف تُستخرج من الجلسة على الخادم، وإرسالها
+       * من المتصفح كان يخلق خلطاً (طالب تصريح يُرى كأنه المالك). أُبقي الرأس
+       * محذوفاً عمداً.
+       */
       'x-actor-name': encodeURIComponent(this.currentActor.name || ''),
       'x-actor-role': this.currentActor.role,
     };

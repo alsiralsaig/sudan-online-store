@@ -28,7 +28,14 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
     setBusy(true);
     setErr('');
     try {
-      await api.merchantLogin(value);
+      /*
+       * نمسح جلسة الجهاز القديمة قبل الدخول.
+       * ليه: التاجر دخل بكود متجر «الأناقة» فتح له «برادايس» — لأن معرّف
+       * المتجر/الموظف كان محفوظاً من جلسة سابقة على نفس المتصفح.
+       */
+      api.clearLocalSession();
+      const res: any = await api.merchantLogin(value);
+      if (res?.tenant?.id) api.setTenantId(res.tenant.id);
       onSuccess();
     } catch (e: any) {
       setErr(e.message || 'فشل تسجيل الدخول');
@@ -37,37 +44,32 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
     }
   };
 
+  /**
+   * تفعيل + دخول بخطوة واحدة بكود واحد.
+   * المستخدم يكتب الكود الذي وصله من المنصة → يُنشأ المتجر (إن لم يكن) →
+   * يدخل فوراً. لا كود ثانٍ ولا شاشات وسيطة.
+   */
   const activate = async (e: React.FormEvent) => {
     e.preventDefault();
     const value = appCode.trim().toUpperCase();
     if (value.length < 6) {
-      setActErr('اكتب كود الطلب كما وصلك من سند (مثال: SND-XXXX-XXXX).');
+      setActErr('اكتب الكود كما وصلك من سند (مثال: SND-XXXX-XXXX-XXXX).');
       return;
     }
     setActivating(true);
     setActErr('');
-    setIssued(null);
     try {
-      let storeCode: string | null = null;
-      let storeName = '';
+      api.clearLocalSession();
       try {
         const res: any = await api.activateTenantStore(value);
-        storeCode = res?.merchantCode || null;
-        storeName = res?.tenant?.name || '';
+        if (res?.tenant?.id) api.setTenantId(res.tenant.id);
+        setIssued({ code: value, storeName: res?.tenant?.name || '' });
       } catch {
-        /* المتجر مفعّل من قبل بلا كود → نسترجع الكود */
+        /* مفعّل من قبل أو الكود كود دخول — ندخله مباشرة */
       }
-      if (!storeCode) {
-        const rec: any = await api.getStoreAccessCode(value);
-        storeCode = rec?.merchantCode || null;
-        storeName = rec?.tenant?.name || storeName;
-      }
-      if (!storeCode) {
-        setActErr('المتجر مفعّل لكن له كود دخول مُصدر من قبل — اطلبه من إدارة سند عبر واتساب، أو أعد إصداره من المنصة.');
-        return;
-      }
-      setIssued({ code: storeCode, storeName });
-      setCode(storeCode);
+      const login: any = await api.merchantLogin(value);
+      if (login?.tenant?.id) api.setTenantId(login.tenant.id);
+      onSuccess();
     } catch (e: any) {
       setActErr(e.message || 'تعذّر التفعيل — تحقق من الكود والاتصال.');
     } finally {
@@ -105,14 +107,13 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
             <input
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="SND-XXXX-XXXX-XXXX"
+              placeholder="SND-XXXX-XXXX"
               dir="ltr"
               className="w-full rounded-2xl border border-slate-300 px-4 py-3.5 font-mono text-center tracking-widest focus:outline-none focus:border-sky-500"
             />
             {err && <p className="rounded-xl bg-rose-50 text-rose-700 px-3 py-2 text-xs font-bold leading-relaxed">{err}</p>}
             <p className="text-[10.5px] text-slate-500 leading-relaxed">
-              كود المتجر الآن قصير: <span className="font-mono font-bold" dir="ltr">SND-XXXX-XXXX-XXXX</span> (١٢ خانة)
-              — سهل تكتبه بيدك أو تمليه على أحد.
+              كود واحد فقط لكل متجر — نفس الكود الذي وصلك من سند. اكتبه كما هو.
             </p>
             <button
               type="submit"
@@ -128,7 +129,7 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
               onClick={() => { setMode('activate'); setErr(''); }}
               className="w-full rounded-2xl border-2 border-sky-200 bg-sky-50 text-sky-800 py-3 font-black text-[13px] flex items-center justify-center gap-2"
             >
-              <Store className="w-4 h-4" /> عندي كود طلب — أفعّل متجري الآن
+              <Store className="w-4 h-4" /> أول مرة؟ فعّل متجري بنفس الكود
             </button>
 
             <p className="text-[11px] text-slate-400 text-center">ليس لديك رمز؟ تواصل مع إدارة سند عبر واتساب للحصول على رمز متجرك.</p>
@@ -136,93 +137,30 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
         ) : (
           <form onSubmit={activate} className="space-y-4">
             <div className="rounded-2xl bg-sky-50 border border-sky-200 p-3">
-              <p className="text-[11px] leading-6 text-slate-700">
-                <b>كود الطلب</b> وصلك من سند بعد الموافقة (شكله قصير:
-                <span className="font-mono font-bold" dir="ltr"> SND-XXXX-XXXX</span>).
-                إدخاله هنا ينشئ متجرك ويُصدر <b>كود الدخول الطويل</b> الذي تدخل به التطبيق.
+              <p className="text-[11.5px] leading-6 text-slate-700">
+                اكتب <b>نفس الكود</b> الذي وصلك من إدارة سند بعد الموافقة.
+                هذا الكود الوحيد: يُفعّل متجرك ويدخلك إليه مباشرة.
               </p>
             </div>
 
             <input
               value={appCode}
               onChange={(e) => setAppCode(e.target.value)}
-              placeholder="SND-XXXX-XXXX"
+              placeholder="SND-XXXX-XXXX-XXXX"
               dir="ltr"
               className="w-full rounded-2xl border border-slate-300 px-4 py-3.5 font-mono text-center tracking-widest focus:outline-none focus:border-sky-500"
             />
 
             {actErr && <p className="rounded-xl bg-rose-50 text-rose-700 px-3 py-2 text-xs font-bold leading-relaxed">{actErr}</p>}
 
-            {issued && (
-              <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-3 space-y-2">
-                <p className="text-[12px] font-black text-emerald-900 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" /> تم تفعيل «{issued.storeName || 'متجرك'}» — هذا كود الدخول
-                </p>
-                <div className="flex items-center gap-2">
-                  <code dir="ltr" className="flex-1 rounded-xl bg-white border border-emerald-200 px-2 py-2 text-center font-mono text-[9.5px] leading-4 font-bold text-slate-900 break-all" style={{ wordBreak: 'break-all' }}>
-                    {issued.code}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => { navigator.clipboard?.writeText(issued.code).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
-                    className="shrink-0 rounded-xl bg-emerald-700 px-2.5 py-2 text-[11px] font-bold text-white flex items-center gap-1"
-                  >
-                    <Copy className="w-3.5 h-3.5" /> {copied ? 'تم' : 'نسخ'}
-                  </button>
-                </div>
-                <p className="text-[10.5px] leading-relaxed text-emerald-800">
-                  احفظه — تحتاجه في كل مرة (أرسله لنفسك في واتساب). اضغط «دخول الآن بهذا الكود» للمتابعة بلا نسخ.
-                </p>
-              </div>
-            )}
-
-            {actErr && appCode.trim().length >= 6 && (
-              <button
-                type="button"
-                disabled={activating}
-                onClick={async () => {
-                  setActivating(true);
-                  setActErr('');
-                  try {
-                    const rec: any = await api.getStoreAccessCode(appCode.trim().toUpperCase(), true);
-                    if (rec?.merchantCode) {
-                      setIssued({ code: rec.merchantCode, storeName: rec?.tenant?.name || '' });
-                      setCode(rec.merchantCode);
-                      setActErr('');
-                    } else {
-                      setActErr(rec?.merchantCodeMessage || 'تعذّر إصدار كود جديد.');
-                    }
-                  } catch (e: any) {
-                    setActErr(e.message || 'تعذّر إصدار كود جديد.');
-                  } finally {
-                    setActivating(false);
-                  }
-                }}
-                className="w-full rounded-2xl bg-amber-500 text-slate-950 py-3 font-black text-[12.5px]"
-              >
-                لم يظهر كود الدخول؟ أعد إصداره بكود الطلب
-              </button>
-            )}
-
-            {!issued ? (
-              <button
-                type="submit"
-                disabled={activating || appCode.trim().length < 6}
-                className="w-full rounded-2xl bg-emerald-700 text-white py-3.5 font-black disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {activating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Store className="w-4 h-4" />}
-                {activating ? 'جارٍ التفعيل...' : 'تفعيل المتجر'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void submit(undefined, issued.code)}
-                className="w-full rounded-2xl bg-sky-600 text-white py-3.5 font-black disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                <LogIn className="w-4 h-4" /> {busy ? 'جارٍ الدخول...' : 'دخول الآن بهذا الكود'}
-              </button>
-            )}
+            <button
+              type="submit"
+              disabled={activating || appCode.trim().length < 6}
+              className="w-full rounded-2xl bg-emerald-700 text-white py-3.5 font-black disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {activating ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
+              {activating ? 'جارٍ التفعيل والدخول…' : 'تفعيل ودخول المتجر'}
+            </button>
 
             <button
               type="button"

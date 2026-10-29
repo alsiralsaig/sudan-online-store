@@ -17,7 +17,6 @@ import { SanadWhatsAppFab } from './components/Common/SanadWhatsAppFab.tsx';
 import { SanadErrorBoundary } from './components/Common/SanadErrorBoundary.tsx';
 import { CentralAdminView } from './components/Admin/CentralAdminView.tsx';
 import { MerchantLogin, AdminLogin } from './components/MerchantLogin.tsx';
-import { StaffPinGate } from './components/StaffPinGate.tsx';
 import { ThemeSwitcher } from './components/Common/ThemeSwitcher.tsx';
 import { KitchenDisplayView } from './components/Kitchen/KitchenDisplayView.tsx';
 import { InventoryAuditModal } from './components/Inventory/InventoryAuditModal.tsx';
@@ -157,8 +156,6 @@ export default function App() {
   const [merchantAuthed, setMerchantAuthed] = useState<boolean | null>(null);
   const [adminAuthed, setAdminAuthed] = useState<boolean | null>(null);
   const [authChecking, setAuthChecking] = useState(false);
-  /* جلسة الموظف بالرمز السري — null = لم يُفحص بعد */
-  const [staffVerified, setStaffVerified] = useState<boolean | null>(null);
 
   // Available tenants for demo switching — admin only (merchant sees only own store)
   const [tenantsList, setTenantsList] = useState<any[]>([]);
@@ -284,22 +281,9 @@ export default function App() {
     try {
       await api.merchantMe();
       setMerchantAuthed(true);
-      /* هل الجهاز داخل بجلسة موظف مصرَّح له برمزه؟ لو لا → شاشة الرمز */
-      try {
-        const me: any = await api.staffMe();
-        setStaffVerified(!!me?.staffSession);
-        if (me?.employee) {
-          const next = { id: me.employee.id, name: me.employee.name, role: me.employee.role };
-          setActor(next);
-          api.setActor(next);
-        }
-      } catch {
-        setStaffVerified(false);
-      }
       return true;
     } catch {
       setMerchantAuthed(false);
-      setStaffVerified(false);
       return false;
     } finally { setAuthChecking(false); }
   };
@@ -613,17 +597,10 @@ export default function App() {
   if (authChecking) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">جارٍ التحقق من جلسة المتجر...</div>;
   if (!merchantAuthed) return <MerchantLogin onSuccess={async()=>{ setMerchantAuthed(true); await checkMerchantAuth(); await loadPrimaryData(); }} />;
   /*
-   * بوابة الرمز السري: بعد كود المتجر لا بد من اختيار الموظف وإدخال رمزه،
-   * وإلا لأمكن لأي شخص يفتح الجهاز أن يستلم دور «المالك» من الشريط العلوي.
+   * الدخول بكود واحد فقط: كود المتجر. اختيار الموظف ورمز PIN يُدار من داخل
+   * التطبيق (شريط «المستخدم الحالي»)، لا كبوابة إضافية — بناءً على طلب صاحب
+   * المنصة: كل خطوة زيادة على التاجر الجديد = توقف.
    */
-  if (staffVerified === null) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-sm">جارٍ التحقق من جلسة الموظف...</div>;
-  if (!staffVerified) return <StaffPinGate onSuccess={async (emp) => {
-    setStaffVerified(true);
-    const next = { id: emp.id, name: emp.name, role: emp.role };
-    setActor(next);
-    api.setActor(next);
-    await loadPrimaryData();
-  }} />;
 
   return (
     <PullToRefresh theme="dark">
@@ -911,27 +888,28 @@ export default function App() {
             */}
           <div className="flex items-center gap-1.5">
             <Users className="w-3.5 h-3.5 text-sky-400" />
-            <span className="font-semibold text-white ctx-label">المستخدم الحالي:</span>
-            <span className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-1 text-[11px] font-semibold ctx-select">
-              {actor.name} — {roleLabel(actor.role)}
-            </span>
-            <button
-              onClick={async () => {
-                await api.staffLogout().catch(() => {});
-                setStaffVerified(false);
-                await loadPrimaryData();   /* تحديث البيانات بصلاحيات النظام الافتراضية */
-              }}
-              className="px-2 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px] ctx-btn-ghost"
-              title="تسجيل خروج الموظف الحالي — يُطلب رمز الموظف التالي"
+            <span className="font-semibold text-white ctx-label">من يعمل الآن:</span>
+            <select
+              value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''}
+              onChange={(e) => handleActorSwitch(e.target.value)}
+              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-1 text-[11px] focus:outline-none font-semibold max-w-[70vw] sm:max-w-xs ctx-select"
             >
-              تبديل الموظف
-            </button>
+              {visibleEmployees.length === 0 ? (
+                <option value="">{ownerDisplayName || 'المالك'}</option>
+              ) : (
+                visibleEmployees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name} — {roleLabel(e.role)}
+                  </option>
+                ))
+              )}
+            </select>
           </div>
 
         </div>
 
         <div className="flex items-center gap-2">
-          <button onClick={async()=>{ await api.staffLogout().catch(()=>{}); await api.merchantLogout(); setMerchantAuthed(false); setStaffVerified(false); }} className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px] ctx-btn-ghost">خروج المتجر</button>
+          <button onClick={async()=>{ await api.merchantLogout(); api.clearLocalSession(); setMerchantAuthed(false); }} className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px] ctx-btn-ghost">خروج المتجر</button>
           <button
             onClick={() => switchAppMode('client')}
             className="px-2.5 py-1 bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-all shadow-xs"

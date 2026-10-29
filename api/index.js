@@ -5717,7 +5717,7 @@ function newMerchantCode() {
 function merchantCodeHash(input) {
   if (typeof input !== "string" || input.length > 80) return null;
   const normalized = input.toUpperCase().replace(/[\s-]/g, "");
-  if (/^SND[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
+  if (/^SND[A-HJ-NP-Z2-9]{8,16}$/.test(normalized)) {
     return createHash("sha256").update(`sanad-merchant-code-v2:${normalized}`, "utf8").digest("hex");
   }
   if (/^SND[0-9A-F]{40}$/.test(normalized)) {
@@ -6063,37 +6063,45 @@ apiRouter.post("/auth/merchant/login", (req, res) => {
     return res.status(500).json({ error: "AUTH_NOT_CONFIGURED", message: "\u0645\u0641\u062A\u0627\u062D \u0627\u0644\u062C\u0644\u0633\u0627\u062A \u063A\u064A\u0631 \u0645\u064F\u0647\u064A\u0623 \u0641\u064A \u0627\u0644\u062E\u0627\u062F\u0645." });
   }
   const hash = merchantCodeHash(rawCode);
+  let legacyByPrefix = null;
   if (!hash) {
-    const appCode = db.getTenantApplications().find((a) => (a.activationCode || "").toUpperCase() === rawCode.toUpperCase());
-    if (appCode) {
-      return res.status(400).json({
-        error: "ACTIVATION_CODE_NOT_LOGIN_CODE",
-        message: appCode.status === "approved" ? "\u0647\u0630\u0627 \u0643\u0648\u062F \u0627\u0644\u0637\u0644\u0628 (\u0644\u0644\u062A\u0641\u0639\u064A\u0644 \u0645\u0631\u0629 \u0648\u0627\u062D\u062F\u0629) \u0648\u0644\u064A\u0633 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631. \u0627\u0636\u063A\u0637 \xAB\u062A\u0641\u0639\u064A\u0644 \u0645\u062A\u062C\u0631 \u0628\u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644\xBB \u0641\u064A \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0628\u0647\u0630\u0627 \u0627\u0644\u0643\u0648\u062F \u0644\u062A\u062D\u0635\u0644 \u0639\u0644\u0649 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u0627\u0644\u062E\u0627\u0635 \u0628\u0643." : "\u0647\u0630\u0627 \u0643\u0648\u062F \u0627\u0644\u0637\u0644\u0628 \u0648\u0644\u0645 \u064A\u064F\u0639\u062A\u0645\u062F \u0628\u0639\u062F \u2014 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F."
+    const app = db.getTenantApplications().find((a) => (a.activationCode || "").toUpperCase() === rawCode.toUpperCase());
+    if (app) {
+      if (app.status !== "approved") {
+        return res.status(400).json({ error: "NOT_APPROVED", message: "\u0637\u0644\u0628\u0643 \u0644\u0645 \u064A\u064F\u0639\u062A\u0645\u062F \u0628\u0639\u062F \u2014 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F \u0639\u0628\u0631 \u0648\u0627\u062A\u0633\u0627\u0628." });
+      }
+      const linked = (app.tenantId ? db.getTenant(app.tenantId) : null) || db.getSchema().tenants.find((t) => t.phone === app.phone) || null;
+      if (!linked) {
+        return res.status(409).json({
+          error: "NOT_ACTIVATED",
+          message: "\u0643\u0648\u062F\u0643 \u0645\u0639\u062A\u0645\u062F \u0644\u0643\u0646 \u0627\u0644\u0645\u062A\u062C\u0631 \u0644\u0645 \u064A\u064F\u0646\u0634\u0623 \u0628\u0639\u062F \u2014 \u0627\u0636\u063A\u0637 \xAB\u062A\u0641\u0639\u064A\u0644 \u0645\u062A\u062C\u0631 \u0628\u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644\xBB \u0645\u0631\u0629 \u0648\u0627\u062D\u062F\u0629 \u0641\u064A \u0647\u0630\u0647 \u0627\u0644\u0634\u0627\u0634\u0629."
+        });
+      }
+      const appHash = merchantCodeHash(rawCode);
+      if (appHash) db.setMerchantCode(linked.id, appHash, "self_activation", rawCode);
+      db.commit();
+      if (linked.status === "suspended") return res.status(403).json({ error: "TENANT_SUSPENDED", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0648\u0642\u0648\u0641." });
+      const appToken = issueMerchantSession(linked.id, String(linked.merchantCodeHash), res);
+      if (!appToken) return res.status(500).json({ error: "ISSUE_FAILED", message: "\u062A\u0639\u0630\u0651\u0631 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062C\u0644\u0633\u0629." });
+      db.logAudit({ tenantId: linked.id, actorId: "owner", actorName: app.ownerName || "\u0635\u0627\u062D\u0628 \u0627\u0644\u0645\u062A\u062C\u0631", action: "MERCHANT_LOGIN", entity: "Tenant", entityId: linked.id, details: "\u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631 \u0628\u0643\u0648\u062F \u0627\u0644\u062A\u0641\u0639\u064A\u0644 (\u0643\u0648\u062F \u0648\u0627\u062D\u062F)" });
+      return res.json({
+        success: true,
+        token: appToken,
+        tenant: { id: linked.id, name: linked.name, tradeName: linked.tradeName, slug: linked.slug, city: linked.city }
       });
     }
     const typed = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (typed.startsWith("SND") && typed.length >= 20) {
-      const byPrefix = db.getSchema().tenants.filter((t) => {
-        const stored = String(t.merchantCodeHash || "");
-        return /^[0-9a-f]{64}$/.test(stored) && String(t.merchantCodePrefix || "").toUpperCase().startsWith(typed.slice(0, 16));
-      });
-      if (byPrefix.length === 1) {
-        const target = byPrefix[0];
-        if (target.status === "suspended") return res.status(403).json({ error: "TENANT_SUSPENDED", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0648\u0642\u0648\u0641." });
-        const token22 = issueMerchantSession(target.id, String(target.merchantCodeHash), res);
-        if (!token22) return res.status(500).json({ error: "ISSUE_FAILED", message: "\u062A\u0639\u0630\u0651\u0631 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062C\u0644\u0633\u0629." });
-        return res.json({
-          success: true,
-          token: token22,
-          partialCode: true,
-          message: "\u062F\u062E\u0644\u062A \u0628\u062C\u0632\u0621 \u0645\u0646 \u0627\u0644\u0643\u0648\u062F \u2014 \u0627\u0637\u0644\u0628 \u0643\u0648\u062F\u0643 \u0627\u0644\u0642\u0635\u064A\u0631 \u0627\u0644\u062C\u062F\u064A\u062F \u0645\u0646 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F.",
-          tenant: { id: target.id, name: target.name, tradeName: target.tradeName, slug: target.slug, city: target.city }
-        });
-      }
+      const byPrefix = db.getSchema().tenants.filter(
+        (t) => /^[0-9a-f]{64}$/.test(String(t.merchantCodeHash || "")) && String(t.merchantCodePrefix || "").toUpperCase().startsWith(typed.slice(0, 16))
+      );
+      if (byPrefix.length === 1) legacyByPrefix = byPrefix[0];
     }
-    return res.status(401).json({ error: "INVALID_CODE", message: "\u0643\u0648\u062F \u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D. \u0634\u0643\u0644\u0647: SND-XXXX-XXXX-XXXX (\u0661\u0662 \u062E\u0627\u0646\u0629)." });
+    if (!legacyByPrefix) {
+      return res.status(401).json({ error: "INVALID_CODE", message: "\u0643\u0648\u062F \u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D. \u062A\u0623\u0643\u062F \u0645\u0646 \u0646\u0633\u062E\u0647 \u0643\u0645\u0627 \u0648\u0635\u0644\u0643 \u0645\u0646 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F." });
+    }
   }
-  let tenant = db.findTenantByMerchantCodeHash(hash);
+  let tenant = hash ? db.findTenantByMerchantCodeHash(hash) : legacyByPrefix || void 0;
   const hint = String(slug || tenantId || "").trim();
   if (hint) {
     const hinted = db.getTenant(hint) || db.getTenantBySlug(hint);
@@ -6108,12 +6116,15 @@ apiRouter.post("/auth/merchant/login", (req, res) => {
   if (!tenant) {
     const app = db.getTenantApplications().find((a) => (a.activationCode || "").toUpperCase() === rawCode.toUpperCase());
     if (app) {
-      return res.status(400).json({
-        error: "ACTIVATION_CODE_NOT_LOGIN_CODE",
-        message: app.status === "approved" ? "\u0647\u0630\u0627 \u0643\u0648\u062F \u0627\u0644\u0637\u0644\u0628 (\u0644\u0644\u062A\u0641\u0639\u064A\u0644 \u0645\u0631\u0629 \u0648\u0627\u062D\u062F\u0629) \u0648\u0644\u064A\u0633 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631. \u0627\u0636\u063A\u0637 \xAB\u062A\u0641\u0639\u064A\u0644 \u0645\u062A\u062C\u0631 \u0628\u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644\xBB \u0641\u064A \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0628\u0647\u0630\u0627 \u0627\u0644\u0643\u0648\u062F \u0644\u062A\u062D\u0635\u0644 \u0639\u0644\u0649 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u0627\u0644\u062E\u0627\u0635 \u0628\u0643." : "\u0647\u0630\u0627 \u0643\u0648\u062F \u0627\u0644\u0637\u0644\u0628 \u0648\u0644\u0645 \u064A\u064F\u0639\u062A\u0645\u062F \u0628\u0639\u062F \u2014 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F."
+      if (app.status !== "approved") {
+        return res.status(400).json({ error: "NOT_APPROVED", message: "\u0637\u0644\u0628\u0643 \u0644\u0645 \u064A\u064F\u0639\u062A\u0645\u062F \u0628\u0639\u062F \u2014 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F \u0639\u0628\u0631 \u0648\u0627\u062A\u0633\u0627\u0628." });
+      }
+      return res.status(409).json({
+        error: "NOT_ACTIVATED",
+        message: "\u0643\u0648\u062F\u0643 \u0635\u062D\u064A\u062D \u0648\u0645\u0639\u062A\u0645\u062F\u060C \u0644\u0643\u0646 \u0627\u0644\u0645\u062A\u062C\u0631 \u0644\u0645 \u064A\u064F\u0646\u0634\u0623 \u0628\u0639\u062F. \u0627\u0636\u063A\u0637 \xAB\u062A\u0641\u0639\u064A\u0644 \u0645\u062A\u062C\u0631 \u0628\u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644\xBB \u0641\u064A \u0646\u0641\u0633 \u0627\u0644\u0634\u0627\u0634\u0629 \u0648\u0627\u0643\u062A\u0628 \u0646\u0641\u0633 \u0627\u0644\u0643\u0648\u062F \u2014 \u0645\u0631\u0629 \u0648\u0627\u062D\u062F\u0629 \u0641\u0642\u0637."
       });
     }
-    return res.status(401).json({ error: "INVALID_CODE", message: "\u0627\u0644\u0643\u0648\u062F \u063A\u064A\u0631 \u0635\u062D\u064A\u062D \u0623\u0648 \u0644\u064A\u0633 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0645\u062A\u062C\u0631 \u2014 \u062A\u0623\u0643\u062F \u0623\u0646\u0643 \u0646\u0633\u062E\u062A \u0643\u0648\u062F \u0627\u0644\u0645\u062A\u062C\u0631 (SND-\u2026) \u0643\u0627\u0645\u0644\u0627\u064B." });
+    return res.status(401).json({ error: "INVALID_CODE", message: "\u0627\u0644\u0643\u0648\u062F \u063A\u064A\u0631 \u0635\u062D\u064A\u062D \u2014 \u062A\u0623\u0643\u062F \u0645\u0646 \u0646\u0633\u062E\u0647 \u0643\u0645\u0627 \u0648\u0635\u0644\u0643 \u0645\u0646 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F." });
   }
   if (tenant.status === "suspended") return res.status(403).json({ error: "TENANT_SUSPENDED", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0648\u0642\u0648\u0641." });
   const token2 = issueMerchantSession(tenant.id, hash, res);
@@ -9655,6 +9666,10 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
   if (!code) {
     return res.status(400).json({ error: "CODE_REQUIRED", message: "\u0623\u062F\u062E\u0644 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644." });
   }
+  const existingTenant = db.findTenantByMerchantCodeHash(String(merchantCodeHash(code) || ""));
+  if (existingTenant) {
+    return res.json({ success: true, created: false, alreadyActive: true, tenant: existingTenant });
+  }
   const application = db.getTenantApplications().find((a) => (a.activationCode || "").toUpperCase() === code);
   if (!application) {
     return res.status(404).json({ error: "NOT_FOUND", message: "\u0644\u0627 \u064A\u0648\u062C\u062F \u0637\u0644\u0628 \u0628\u0647\u0630\u0627 \u0627\u0644\u0643\u0648\u062F. \u0631\u0627\u062C\u0639 \u0627\u0644\u0625\u062F\u0627\u0631\u0629." });
@@ -9671,8 +9686,22 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
       existing.ownerName = application.ownerName;
     }
     ensureOwnerEmployee(existing.id, application.ownerName, application.phone);
+    let repeatCode = String(application.activationCode || "").toUpperCase() || null;
+    try {
+      const h = repeatCode ? merchantCodeHash(repeatCode) : null;
+      if (h && String(existing.merchantCodeHash || "") !== h) {
+        db.setMerchantCode(existing.id, h, "self_activation", repeatCode || void 0);
+      }
+    } catch {
+    }
     db.commit();
-    return res.json({ success: true, created: false, tenant: existing });
+    return res.json({
+      success: true,
+      created: false,
+      tenant: existing,
+      merchantCode: repeatCode,
+      merchantCodeMessage: repeatCode ? `\u0645\u062A\u062C\u0631\u0643 \u0645\u0641\u0639\u0651\u0644. \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u0647\u0648 \u0646\u0641\u0633\u0647: ${repeatCode}` : "\u0645\u062A\u062C\u0631\u0643 \u0645\u0641\u0639\u0651\u0644 \u2014 \u0627\u0637\u0644\u0628 \u0643\u0648\u062F\u0643 \u0645\u0646 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F \u0625\u0646 \u0641\u0642\u062F\u062A\u0647."
+    });
   }
   const now = /* @__PURE__ */ new Date();
   const tenantId = `tenant_${application.id.replace(/^tapp_?/, "").slice(0, 10) || Date.now()}`;
@@ -9727,12 +9756,20 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
   application.activatedAt = now.toISOString();
   let storeAccessCode = null;
   try {
-    const fresh = newMerchantCode();
-    const hash = merchantCodeHash(fresh);
+    const loginCode = String(application.activationCode || "").toUpperCase();
+    const hash = loginCode ? merchantCodeHash(loginCode) : null;
     if (hash) {
-      db.setMerchantCode(tenantId, hash, "self_activation", fresh);
-      storeAccessCode = fresh;
+      db.setMerchantCode(tenantId, hash, "self_activation", loginCode);
+      storeAccessCode = loginCode;
       application.merchantCodeIssuedAt = (/* @__PURE__ */ new Date()).toISOString();
+    } else {
+      const fresh = newMerchantCode();
+      const freshHash = merchantCodeHash(fresh);
+      if (freshHash) {
+        db.setMerchantCode(tenantId, freshHash, "self_activation", fresh);
+        storeAccessCode = fresh;
+        application.merchantCodeIssuedAt = (/* @__PURE__ */ new Date()).toISOString();
+      }
     }
   } catch {
     storeAccessCode = null;
@@ -9752,7 +9789,7 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
     created: true,
     tenant,
     merchantCode: storeAccessCode,
-    merchantCodeMessage: storeAccessCode ? "\u0647\u0630\u0627 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0645\u062A\u062C\u0631\u0643 \u2014 \u0627\u062D\u0641\u0638\u0647\u060C \u0633\u062A\u062D\u062A\u0627\u062C\u0647 \u0641\u064A \u0643\u0644 \u0645\u0631\u0629 \u062A\u062F\u062E\u0644 \u0641\u064A\u0647\u0627 \u0627\u0644\u062A\u0637\u0628\u064A\u0642." : "\u062A\u0639\u0630\u0651\u0631 \u0625\u0635\u062F\u0627\u0631 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B \u2014 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F \u0639\u0628\u0631 \u0648\u0627\u062A\u0633\u0627\u0628."
+    merchantCodeMessage: storeAccessCode ? `\u062A\u0645 \u062A\u0641\u0639\u064A\u0644 \u0645\u062A\u062C\u0631\u0643 \u2014 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u0647\u0648 \u0646\u0641\u0633\u0647 \u0627\u0644\u0643\u0648\u062F \u0627\u0644\u0630\u064A \u0648\u0635\u0644\u0643: ${storeAccessCode}` : "\u062A\u0639\u0630\u0651\u0631 \u062A\u062C\u0647\u064A\u0632 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u2014 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F \u0639\u0628\u0631 \u0648\u0627\u062A\u0633\u0627\u0628."
   });
 });
 apiRouter.get("/admin/tenant-applications", adminAuthMiddleware, (req, res) => {
