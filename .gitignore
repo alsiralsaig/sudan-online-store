@@ -28,3 +28,9 @@ android/build/
 android/.gradle/
 android/app/src/main/assets/public/
 android/sanad-build.properties
+
+# مشروع الغلاف المولّد
+native-wrapper/app/build/
+native-wrapper/build/
+native-wrapper/.gradle/
+native-wrapper/sanad.props

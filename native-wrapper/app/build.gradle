@@ -1,0 +1,54 @@
+apply plugin: 'com.android.application'
+
+// كل تطبيق يُبنى بمعاملات مختلفة عبر ملف خصائص: -PsanadProps=...
+def props = new Properties()
+def propsPath = project.findProperty("sanadProps")
+if (propsPath) { file(propsPath).withInputStream { props.load(it) } }
+def cfg = { String k, String fallback -> (props.getProperty(k) ?: project.findProperty(k) ?: fallback) }
+
+android {
+    namespace "app.wrapper"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId cfg("appId", "com.sanad.merchant")
+        minSdk 24
+        targetSdk 35
+        versionCode cfg("versionCode", "1").toInteger()
+        versionName cfg("versionName", "1.0.0")
+        buildConfigField "String", "HOST",      "\"${cfg("host", "sudan-online-store-eta.vercel.app")}\""
+        buildConfigField "String", "START_URL", "\"${cfg("startUrl", "https://sudan-online-store-eta.vercel.app/?app=merchant")}\""
+        buildConfigField "String", "THEME",     "\"${cfg("theme", "#047857")}\""
+        buildConfigField "String", "UA_TAG",    "\"${cfg("uaTag", "SanadWrapper")}\""
+    }
+
+    buildFeatures { buildConfig true }
+
+    signingConfigs {
+        if (props.getProperty("keystore")) {
+            sanad {
+                storeFile file(props.getProperty("keystore"))
+                storePassword props.getProperty("storePassword")
+                keyAlias props.getProperty("keyAlias")
+                keyPassword props.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (props.getProperty("keystore")) {
+                signingConfig signingConfigs.sanad
+            }
+        }
+    }
+
+    applicationVariants.all { v ->
+        v.outputs.all { o -> o.outputFileName = "sanad-${cfg("appKey", "wrapper")}.apk" }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}
