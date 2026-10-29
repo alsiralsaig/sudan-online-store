@@ -192,25 +192,16 @@ apiRouter.post('/auth/merchant/login', (req, res) => {
       });
     }
     /*
-     * مطابقة تساهلية للمشكلة الحقيقية: الحقل يعرض ~٢٤ حرفاً فقط، فينسخ التاجر
-     * نصف الكود (SND-AA9D-2B4B-2BBD-92) ويرى «رمز غير صالح».
-     * الحل: لو كان المُدخل بادئة صحيحة لكود متجر واحد فقط، نسمح بالدخول.
-     * مشروط بالبادئة الكاملة «SND-» + ١٦ خانة على الأقل، ولو تطابقت أكثر من
-     * متجر واحد نطلب الكود كاملاً (بلا تخمين).
+     * توافق خلفي فقط للكود القديم الطويل: لو بقي تاجر بكود ٤٤ خانة ونسخ
+     * نصفه، نطابق بدايته. الكود الجديد القصير يُطابق كاملاً أو لا.
      */
     const typed = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (typed.startsWith('SND') && typed.length >= 16) {
-      const matches = db.getSchema().tenants.filter((t) => {
+    if (typed.startsWith('SND') && typed.length >= 20) {
+      const byPrefix = db.getSchema().tenants.filter((t) => {
         const stored = String((t as any).merchantCodeHash || '');
-        return /^[0-9a-f]{64}$/.test(stored);
+        return /^[0-9a-f]{64}$/.test(stored) &&
+          String((t as any).merchantCodePrefix || '').toUpperCase().startsWith(typed.slice(0, 16));
       });
-      /*
-       * المقارنة تحتاج الكود الأصلي — غير محفوظ (hash فقط). لذلك نتحقق من
-       * البادئة عبر بصمة قصيرة محفوظة عند الإصدار (merchantCodePrefix).
-       */
-      const byPrefix = matches.filter((t) =>
-        String((t as any).merchantCodePrefix || '').toUpperCase().startsWith(typed.slice(0, 16))
-      );
       if (byPrefix.length === 1) {
         const target: any = byPrefix[0];
         if (target.status === 'suspended') return res.status(403).json({ error: 'TENANT_SUSPENDED', message: 'المتجر موقوف.' });
@@ -220,18 +211,12 @@ apiRouter.post('/auth/merchant/login', (req, res) => {
           success: true,
           token: token2,
           partialCode: true,
-          message: 'دخلت بجزء من الكود — انسخ الكود كاملاً من رسالة سند واحفظه.',
+          message: 'دخلت بجزء من الكود — اطلب كودك القصير الجديد من إدارة سند.',
           tenant: { id: target.id, name: target.name, tradeName: target.tradeName, slug: target.slug, city: target.city },
         });
       }
-      if (byPrefix.length > 1) {
-        return res.status(400).json({
-          error: 'CODE_AMBIGUOUS',
-          message: 'هذا جزء من الكود. انسخ كود المتجر كاملاً (اضغط مطوّلاً على الكود في رسالة سند ثم «نسخ الكل»).',
-        });
-      }
     }
-    return res.status(401).json({ error: 'INVALID_CODE', message: 'رمز المتجر غير صالح — تأكد من النسخ الكامل (يبدأ بـ SND- وفيه ١١ مقطعاً).' });
+    return res.status(401).json({ error: 'INVALID_CODE', message: 'كود المتجر غير صحيح. شكله: SND-XXXX-XXXX-XXXX (١٢ خانة).' });
   }
   // Prefer tenant lookup by hash (code itself identifies the store)
   let tenant = db.findTenantByMerchantCodeHash(hash);
@@ -4680,11 +4665,19 @@ apiRouter.post('/tenant-applications/access-code', (req, res) => {
  * إصلاح شامل (مدير المنصة): يصدر كوداً لكل متجر نشط بلا كود.
  * يُستخدم مرة واحدة بعد النشر لتنظيف كل المتاجر القديمة عالقة بلا دخول.
  */
-apiRouter.post('/admin/tenants/repair-codes', adminAuthMiddleware, (_req, res) => {
+apiRouter.post('/admin/tenants/repair-codes', adminAuthMiddleware, (req, res) => {
+  const rotateAll = req.body?.rotateAll === true;
   const repaired: { tenantId: string; name: string; code: string }[] = [];
   for (const tenant of db.getSchema().tenants) {
     const hash = String((tenant as any).merchantCodeHash || '');
-    if (/^[0-9a-f]{64}$/.test(hash)) continue;
+    /*
+     * rotateAll=true: تحويل كل الأكواد إلى الصيغة القصيرة (حتى لو عندها كود)
+     * — يُستخدم مرة واحدة بعد إطلاق الصيغة الجديدة. غير ذلك: فقط بلا كود.
+     */
+    const needsCode = rotateAll
+      ? String((tenant as any).merchantCodePrefix || '').length > 12 || !String((tenant as any).merchantCodePrefix || '')
+      : !/^[0-9a-f]{64}$/.test(hash);
+    if (!needsCode) continue;
     if (tenant.status === 'suspended') continue;
     const fresh = newMerchantCode();
     const freshHash = merchantCodeHash(fresh);

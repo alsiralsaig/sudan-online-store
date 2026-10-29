@@ -105,14 +105,14 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
             <input
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="SND-XXXX-XXXX-..."
+              placeholder="SND-XXXX-XXXX-XXXX"
               dir="ltr"
               className="w-full rounded-2xl border border-slate-300 px-4 py-3.5 font-mono text-center tracking-widest focus:outline-none focus:border-sky-500"
             />
             {err && <p className="rounded-xl bg-rose-50 text-rose-700 px-3 py-2 text-xs font-bold leading-relaxed">{err}</p>}
             <p className="text-[10.5px] text-slate-500 leading-relaxed">
-              الحقل يعرض ٢٤ حرفاً فقط من الكود (الكود ٤٤ حرفاً). تأكد من **نسخ الكود كاملاً** —
-              اضغط على الكود في رسالة سند مطوّلاً ثم «نسخ الكل». ولو النسخ ناقص، التطبيق يقبل البداية ويدخلك.
+              كود المتجر الآن قصير: <span className="font-mono font-bold" dir="ltr">SND-XXXX-XXXX-XXXX</span> (١٢ خانة)
+              — سهل تكتبه بيدك أو تمليه على أحد.
             </p>
             <button
               type="submit"

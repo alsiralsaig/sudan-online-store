@@ -5709,15 +5709,21 @@ function passwordMatches(input, configured2) {
   if (typeof input !== "string" || input.length > 1024 || !configured2 || configured2.length > 1024) return false;
   return safeEqual(input, configured2);
 }
+var MERCHANT_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 function newMerchantCode() {
-  const hex = randomBytes(20).toString("hex").toUpperCase();
-  return `SND-${hex.match(/.{1,4}/g).join("-")}`;
+  const block = () => Array.from({ length: 4 }, () => MERCHANT_CODE_ALPHABET[Math.floor(Math.random() * MERCHANT_CODE_ALPHABET.length)]).join("");
+  return `SND-${block()}-${block()}-${block()}`;
 }
 function merchantCodeHash(input) {
   if (typeof input !== "string" || input.length > 80) return null;
   const normalized = input.toUpperCase().replace(/[\s-]/g, "");
-  if (!/^SND[0-9A-F]{40}$/.test(normalized)) return null;
-  return createHash("sha256").update(`sanad-merchant-code-v1:${normalized}`, "utf8").digest("hex");
+  if (/^SND[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
+    return createHash("sha256").update(`sanad-merchant-code-v2:${normalized}`, "utf8").digest("hex");
+  }
+  if (/^SND[0-9A-F]{40}$/.test(normalized)) {
+    return createHash("sha256").update(`sanad-merchant-code-v1:${normalized}`, "utf8").digest("hex");
+  }
+  return null;
 }
 function adminRevision(password) {
   return createHash("sha256").update(`sanad-admin-password-v1:${password}`, "utf8").digest("hex");
@@ -6066,14 +6072,11 @@ apiRouter.post("/auth/merchant/login", (req, res) => {
       });
     }
     const typed = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (typed.startsWith("SND") && typed.length >= 16) {
-      const matches = db.getSchema().tenants.filter((t) => {
+    if (typed.startsWith("SND") && typed.length >= 20) {
+      const byPrefix = db.getSchema().tenants.filter((t) => {
         const stored = String(t.merchantCodeHash || "");
-        return /^[0-9a-f]{64}$/.test(stored);
+        return /^[0-9a-f]{64}$/.test(stored) && String(t.merchantCodePrefix || "").toUpperCase().startsWith(typed.slice(0, 16));
       });
-      const byPrefix = matches.filter(
-        (t) => String(t.merchantCodePrefix || "").toUpperCase().startsWith(typed.slice(0, 16))
-      );
       if (byPrefix.length === 1) {
         const target = byPrefix[0];
         if (target.status === "suspended") return res.status(403).json({ error: "TENANT_SUSPENDED", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0648\u0642\u0648\u0641." });
@@ -6083,18 +6086,12 @@ apiRouter.post("/auth/merchant/login", (req, res) => {
           success: true,
           token: token22,
           partialCode: true,
-          message: "\u062F\u062E\u0644\u062A \u0628\u062C\u0632\u0621 \u0645\u0646 \u0627\u0644\u0643\u0648\u062F \u2014 \u0627\u0646\u0633\u062E \u0627\u0644\u0643\u0648\u062F \u0643\u0627\u0645\u0644\u0627\u064B \u0645\u0646 \u0631\u0633\u0627\u0644\u0629 \u0633\u0646\u062F \u0648\u0627\u062D\u0641\u0638\u0647.",
+          message: "\u062F\u062E\u0644\u062A \u0628\u062C\u0632\u0621 \u0645\u0646 \u0627\u0644\u0643\u0648\u062F \u2014 \u0627\u0637\u0644\u0628 \u0643\u0648\u062F\u0643 \u0627\u0644\u0642\u0635\u064A\u0631 \u0627\u0644\u062C\u062F\u064A\u062F \u0645\u0646 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F.",
           tenant: { id: target.id, name: target.name, tradeName: target.tradeName, slug: target.slug, city: target.city }
         });
       }
-      if (byPrefix.length > 1) {
-        return res.status(400).json({
-          error: "CODE_AMBIGUOUS",
-          message: "\u0647\u0630\u0627 \u062C\u0632\u0621 \u0645\u0646 \u0627\u0644\u0643\u0648\u062F. \u0627\u0646\u0633\u062E \u0643\u0648\u062F \u0627\u0644\u0645\u062A\u062C\u0631 \u0643\u0627\u0645\u0644\u0627\u064B (\u0627\u0636\u063A\u0637 \u0645\u0637\u0648\u0651\u0644\u0627\u064B \u0639\u0644\u0649 \u0627\u0644\u0643\u0648\u062F \u0641\u064A \u0631\u0633\u0627\u0644\u0629 \u0633\u0646\u062F \u062B\u0645 \xAB\u0646\u0633\u062E \u0627\u0644\u0643\u0644\xBB)."
-        });
-      }
     }
-    return res.status(401).json({ error: "INVALID_CODE", message: "\u0631\u0645\u0632 \u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D \u2014 \u062A\u0623\u0643\u062F \u0645\u0646 \u0627\u0644\u0646\u0633\u062E \u0627\u0644\u0643\u0627\u0645\u0644 (\u064A\u0628\u062F\u0623 \u0628\u0640 SND- \u0648\u0641\u064A\u0647 \u0661\u0661 \u0645\u0642\u0637\u0639\u0627\u064B)." });
+    return res.status(401).json({ error: "INVALID_CODE", message: "\u0643\u0648\u062F \u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D. \u0634\u0643\u0644\u0647: SND-XXXX-XXXX-XXXX (\u0661\u0662 \u062E\u0627\u0646\u0629)." });
   }
   let tenant = db.findTenantByMerchantCodeHash(hash);
   const hint = String(slug || tenantId || "").trim();
@@ -9631,11 +9628,13 @@ apiRouter.post("/tenant-applications/access-code", (req, res) => {
   const { merchantCodeHash: _h2, ...safeTenant } = tenant;
   res.json({ success: true, issued: true, tenant: safeTenant, ...withIssuedCode({}, fresh) });
 });
-apiRouter.post("/admin/tenants/repair-codes", adminAuthMiddleware, (_req, res) => {
+apiRouter.post("/admin/tenants/repair-codes", adminAuthMiddleware, (req, res) => {
+  const rotateAll = req.body?.rotateAll === true;
   const repaired = [];
   for (const tenant of db.getSchema().tenants) {
     const hash = String(tenant.merchantCodeHash || "");
-    if (/^[0-9a-f]{64}$/.test(hash)) continue;
+    const needsCode = rotateAll ? String(tenant.merchantCodePrefix || "").length > 12 || !String(tenant.merchantCodePrefix || "") : !/^[0-9a-f]{64}$/.test(hash);
+    if (!needsCode) continue;
     if (tenant.status === "suspended") continue;
     const fresh = newMerchantCode();
     const freshHash = merchantCodeHash(fresh);

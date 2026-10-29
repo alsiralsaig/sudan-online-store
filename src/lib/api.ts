@@ -243,8 +243,13 @@ class ApiClient {
     return this.request('/auth/admin/logout', { method: 'POST', body: '{}' });
   }
   /** إصلاح شامل: إصدار كود دخول لكل متجر نشط بلا كود (بعد النشر). */
-  public async repairMerchantCodes(): Promise<{ success: boolean; count: number; repaired: { tenantId: string; name: string; code: string }[]; message: string }> {
-    return this.request('/admin/tenants/repair-codes', { method: 'POST', body: '{}' });
+  public async repairMerchantCodes(rotateAll = false): Promise<{ success: boolean; count: number; repaired: { tenantId: string; name: string; code: string }[]; message: string }> {
+    return this.request('/admin/tenants/repair-codes', { method: 'POST', body: JSON.stringify({ rotateAll }) });
+  }
+
+  /** تحويل كل أكواد المتاجر إلى الصيغة القصيرة الجديدة (يعيد كل الأكواد). */
+  public async shortenAllCodes(): Promise<{ success: boolean; count: number; repaired: { tenantId: string; name: string; code: string }[]; message: string }> {
+    return this.request('/admin/tenants/repair-codes', { method: 'POST', body: JSON.stringify({ rotateAll: true }) });
   }
 
   public async issueMerchantCode(tenantId: string): Promise<{ success: boolean; code: string; tenantId: string }> {

@@ -34,17 +34,35 @@ export function passwordMatches(input: unknown, configured: string | undefined):
   return safeEqual(input, configured);
 }
 
-/** The high-entropy code can be displayed once by the admin and sent securely. */
+/**
+ * كود المتجر — ثلاث مجموعات من ٤ خانات (SND-XXXX-XXXX-XXXX).
+ * ليه: الكود القديم كان ٤٤ خانة (١١ مقطعاً) لا يمكن كتابته على ورقة أو
+ * إملائه في الهاتف، وكان الحقل يعرض نصفه فقط فيُقصّ ويُرفض. الآن ١٢ خانة:
+ * سهل النسخ والإملاء، ويُكتب بسرعة على لوحة أرقام/حروف.
+ * الحصانة: ١٢ خانة من أبجدية ٣٢ حرفاً ≈ ٦٠ بت، مع حدّ محاولات خاطئة على
+ * الخادم — كافية تماماً لكود دخول متجر.
+ */
+const MERCHANT_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // بلا I/O/0/1 (تُلتبس)
+
 export function newMerchantCode(): string {
-  const hex = randomBytes(20).toString('hex').toUpperCase();
-  return `SND-${hex.match(/.{1,4}/g)!.join('-')}`;
+  const block = () =>
+    Array.from({ length: 4 }, () => MERCHANT_CODE_ALPHABET[Math.floor(Math.random() * MERCHANT_CODE_ALPHABET.length)]).join('');
+  return `SND-${block()}-${block()}-${block()}`;
 }
 
+/** يقبل الصيغة القصيرة الجديدة والقديمة (٤٤ خانة) — القديمة تبقى صالحة للدخول. */
 export function merchantCodeHash(input: unknown): string | null {
   if (typeof input !== 'string' || input.length > 80) return null;
   const normalized = input.toUpperCase().replace(/[\s-]/g, '');
-  if (!/^SND[0-9A-F]{40}$/.test(normalized)) return null;
-  return createHash('sha256').update(`sanad-merchant-code-v1:${normalized}`, 'utf8').digest('hex');
+  /* جديد: SND + 12 خانة (٣٢ حرفاً بلا I/O/0/1) */
+  if (/^SND[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
+    return createHash('sha256').update(`sanad-merchant-code-v2:${normalized}`, 'utf8').digest('hex');
+  }
+  /* قديم: SND + 40 خانة hex */
+  if (/^SND[0-9A-F]{40}$/.test(normalized)) {
+    return createHash('sha256').update(`sanad-merchant-code-v1:${normalized}`, 'utf8').digest('hex');
+  }
+  return null;
 }
 
 export function merchantCodeMatches(input: unknown, expectedHash: unknown): boolean {
