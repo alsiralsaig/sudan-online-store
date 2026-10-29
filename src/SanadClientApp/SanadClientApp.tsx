@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ClientHeader } from './components/ClientHeader.tsx';
 import { ClientHeroBanner } from './components/ClientHeroBanner.tsx';
 import { ClientProductCatalog } from './components/ClientProductCatalog.tsx';
@@ -29,6 +29,7 @@ import type {
   ClientPurchaseRequest,
 } from './types.ts';
 import type { Product, Branch, Tenant } from '../types/index.ts';
+import { useAppHistory, type AppHistoryState } from './useAppHistory.ts';
 import { api } from '../lib/api.ts';
 import { getOwnerToken } from './lib/ownerToken.ts';
 import {
@@ -74,10 +75,14 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
   const [browseMode, setBrowseMode] = useState<BrowseMode>('listings');
   const [browseCategory, setBrowseCategory] = useState<string>('all');
 
+  /** يُربط لاحقاً بخطاف السجل (المعرّف أدناه) — استدعاء آمن قبل التهيئة */
+  const browseRecorder = useRef<(mode: BrowseMode, category: string) => void>(() => {});
+
   const openBrowse = (mode: BrowseMode, category = 'all') => {
     setBrowseMode(mode);
     setBrowseCategory(category);
     setActiveTab('market_browse');
+    browseRecorder.current(mode, category);
   };
   const [selectedAdForDetail, setSelectedAdForDetail] = useState<ClientMarketAd | null>(null);
   const [openStore, setOpenStore] = useState<{ slug: string; name?: string } | null>(null);
@@ -492,13 +497,74 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
     setPurchaseRequests((prev) => [req, ...prev]);
   };
 
+  /* ------------------------------------------------------------------
+   * زر الرجوع في التلفون = رجوع للصفحة السابقة داخل التطبيق.
+   * ------------------------------------------------------------------
+   * كل انتقال (تبويب/متجر/تفاصيل إعلان/نافذة) يُسجَّل كخطوة في سجل
+   * المتصفح، وعند الضغط على رجوع نُعيد الشاشة السابقة كما كانت.
+   * بدون ذلك كان الزر يطلب «اضغط رجوع تاني للخروج» والمستخدم داخل متجر.
+   */
+  const currentHistoryState: AppHistoryState = {
+    page: openStore
+      ? 'store'
+      : selectedAdForDetail
+        ? 'ad'
+        : isCartOpen
+          ? 'cart'
+          : activeTab,
+    id: openStore?.slug || selectedAdForDetail?.id,
+    tab: activeTab,
+  };
+
+  const historyStateRef = useRef<AppHistoryState>(currentHistoryState);
+  historyStateRef.current = currentHistoryState;
+
+  const restoredFromPop = useRef(false);
+
+  const restoreFromState = React.useCallback((state: AppHistoryState) => {
+    restoredFromPop.current = true;
+    // إغلاق النوافذ المفتوحة أولاً ثم الرجوع للشاشة المسجّلة
+    setSelectedAdForDetail(null);
+    setOpenStore(null);
+    setIsCartOpen(false);
+    setIsSectionsModalOpen(false);
+    setIsSearchModalOpen(false);
+    if (state.page === 'market_browse') {
+      const [mode, category] = String(state.id || 'listings:all').split(':');
+      setBrowseMode(mode as BrowseMode);
+      setBrowseCategory(category || 'all');
+      setActiveTab('market_browse');
+      return;
+    }
+    if (state.page === 'store' && state.id) {
+      setOpenStore({ slug: state.id });
+    } else if (state.page === 'ad') {
+      // تفاصيل الإعلان تُستعاد من القائمة المحمّلة
+      const found = marketAds.find((a) => a.id === state.id);
+      if (found) setSelectedAdForDetail(found);
+    }
+    setActiveTab((state.tab || 'market_home') as ClientActiveTab);
+  }, [marketAds]);
+
+  const { push: pushHistory } = useAppHistory(restoreFromState, currentHistoryState);
+
+  /** غلاف لكل انتقال: يسجّل الخطوة ثم ينفّذ التنقل */
+  const go = (state: AppHistoryState, apply: () => void) => {
+    pushHistory(state);
+    apply();
+  };
+
+  // ربط استعراض السوق بسجل التلفون (أقسام/معارض/متاجر)
+  browseRecorder.current = (mode: BrowseMode, category: string) =>
+    pushHistory({ page: 'market_browse', id: `${mode}:${category}`, tab: 'market_browse' });
+
   return (
     <div className="client-shell min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900 pb-16">
       {/* New notifications drop from the top of the screen while browsing */}
       <InAppAlertBanner
         app="client"
         ownerToken={getOwnerToken()}
-        onNavigate={(tab) => setActiveTab(tab as any)}
+        onNavigate={(tab) => go({ page: tab, tab }, () => setActiveTab(tab as any))}
       />
       {/* 1. Header — hidden on the market home, which carries its own slim bar */}
       {activeTab !== 'market_home' && !openStore && (
@@ -507,7 +573,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
         onTabChange={setActiveTab}
         cartCount={cart.reduce((sum, item) => sum + item.quantity, 0)}
         cartTotal={cart.reduce((sum, item) => sum + item.quantity * item.product.sellingPriceSdg, 0)}
-        onOpenCart={() => setIsCartOpen(true)}
+        onOpenCart={() => go({ page: 'cart', tab: activeTab }, () => setIsCartOpen(true))}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         selectedBranch={selectedBranch}
@@ -527,33 +593,33 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
           <ClientMerchantStoreView
             slug={openStore.slug}
             fallbackName={openStore.name}
-            onBack={() => setOpenStore(null)}
+            onBack={() => go({ page: 'market_home', tab: 'market_home' }, () => setOpenStore(null))}
           />
         )}
         {/* Tab 1: Market Home (The Screenshot View) */}
         {!openStore && activeTab === 'market_home' && (
           <ClientMarketHomeView
             cartCount={cart.reduce((sum, item) => sum + item.quantity, 0)}
-            onOpenCart={() => setIsCartOpen(true)}
+            onOpenCart={() => go({ page: 'cart', tab: activeTab }, () => setIsCartOpen(true))}
             onSelectSection={(key) => {
               if (key === 'auctions') setActiveTab('auctions');
               else if (key === 'business_directory') setActiveTab('branches_info');
               else setActiveTab('catalog');
             }}
-            onOpenSections={() => setIsSectionsModalOpen(true)}
-            onOpenSearch={() => setIsSearchModalOpen(true)}
+            onOpenSections={() => go({ page: 'sections', tab: activeTab }, () => setIsSectionsModalOpen(true))}
+            onOpenSearch={() => go({ page: 'search', tab: activeTab }, () => setIsSearchModalOpen(true))}
             onOpenAssistant={() => {
               // Trigger AI chat open via query or state
               const btn = document.querySelector('button[title*="المساعد الذكي"]') as HTMLButtonElement;
               if (btn) btn.click();
             }}
-            onSelectAd={(ad) => setSelectedAdForDetail(ad)}
-            onOpenCatalog={() => setActiveTab('catalog')}
+            onSelectAd={(ad) => go({ page: 'ad', id: ad.id, tab: activeTab }, () => setSelectedAdForDetail(ad))}
+            onOpenCatalog={() => go({ page: 'catalog', tab: 'catalog' }, () => setActiveTab('catalog'))}
             ads={marketAds}
             purchaseRequests={purchaseRequests}
             onOpenCreateModal={() => setIsCreateModalOpen(true)}
             ownerToken={getOwnerToken()}
-            onNavigateTab={(tab) => setActiveTab(tab as any)}
+            onNavigateTab={(tab) => go({ page: tab, tab }, () => setActiveTab(tab as any))}
             onBrowseCategory={(catId) => openBrowse('listings', catId)}
             onBrowseShowrooms={() => openBrowse('showrooms')}
             onBrowseMerchantAds={() => openBrowse('merchant-ads')}
@@ -566,9 +632,9 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
           <ClientMarketBrowseView
             mode={browseMode}
             initialCategory={browseCategory}
-            onBack={() => setActiveTab('market_home')}
+            onBack={() => go({ page: 'market_home', tab: 'market_home' }, () => setActiveTab('market_home'))}
             onCreateAd={() => setIsCreateModalOpen(true)}
-            onOpenStore={(slug, name) => setOpenStore({ slug, name })}
+            onOpenStore={(slug, name) => go({ page: 'store', id: slug, tab: activeTab }, () => setOpenStore({ slug, name }))}
           />
         )}
 
@@ -577,9 +643,9 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
           <div>
             <ClientHeroBanner
               storeName={tenant?.tradeName || tenant?.name || 'سند'}
-              onExploreProducts={() => setActiveTab('catalog')}
-              onExplorePreOrders={() => setActiveTab('pre_orders')}
-              onTrackOrder={() => setActiveTab('track_order')}
+              onExploreProducts={() => go({ page: 'catalog', tab: 'catalog' }, () => setActiveTab('catalog'))}
+              onExplorePreOrders={() => go({ page: 'pre_orders', tab: 'pre_orders' }, () => setActiveTab('pre_orders'))}
+              onTrackOrder={() => go({ page: 'track_order', tab: 'track_order' }, () => setActiveTab('track_order'))}
             />
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
               <ClientProductCatalog
@@ -712,7 +778,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => setActiveTab('wishlist')}
+                  onClick={() => go({ page: 'wishlist', tab: 'wishlist' }, () => setActiveTab('wishlist'))}
                   className="p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 text-right border border-slate-200 space-y-1 transition-all"
                 >
                   <Heart className="w-5 h-5 text-red-500" />
@@ -721,7 +787,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('loyalty')}
+                  onClick={() => go({ page: 'loyalty', tab: 'loyalty' }, () => setActiveTab('loyalty'))}
                   className="p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 text-right border border-slate-200 space-y-1 transition-all"
                 >
                   <Sparkles className="w-5 h-5 text-amber-500" />
@@ -730,7 +796,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('track_order')}
+                  onClick={() => go({ page: 'track_order', tab: 'track_order' }, () => setActiveTab('track_order'))}
                   className="p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 text-right border border-slate-200 space-y-1 transition-all"
                 >
                   <Truck className="w-5 h-5 text-teal-600" />
@@ -739,7 +805,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('branches_info')}
+                  onClick={() => go({ page: 'branches_info', tab: 'branches_info' }, () => setActiveTab('branches_info'))}
                   className="p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 text-right border border-slate-200 space-y-1 transition-all"
                 >
                   <Building className="w-5 h-5 text-emerald-700" />
@@ -790,7 +856,7 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                 setIsCartOpen(true);
               }}
               activeAppliedVoucherId={appliedVoucher?.id}
-              onExploreProducts={() => setActiveTab('catalog')}
+              onExploreProducts={() => go({ page: 'catalog', tab: 'catalog' }, () => setActiveTab('catalog'))}
               currency="SDG"
             />
           </div>
