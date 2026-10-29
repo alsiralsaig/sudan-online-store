@@ -88,7 +88,9 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
     setError(''); setBusy(true);
     try {
       await api.deleteProduct(product.id);
-      onChanged();
+      setConfirmDelete(false);
+      onChanged();   // تحديث قوائم الأصناف والمخزون
+      onClose();     // إغلاق النافذة بعد نجاح الحذف
     } catch (e: any) {
       setError(e.message === 'OFFLINE_MODE' ? 'يلزم الاتصال بالإنترنت لحذف الصنف.' : e.message || 'تعذر حذف الصنف.');
     } finally { setBusy(false); }
@@ -130,7 +132,6 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
             </div>
           </fieldset>
           {uploading && <p className="text-emerald-600 flex gap-2"><Loader2 className="w-4 h-4 animate-spin" /> جارٍ رفع الملف...</p>}
-          {confirmDelete && canEdit && <div className="border border-rose-400 bg-rose-50 text-rose-900 p-3 rounded-xl space-y-2" role="alert"><p className="font-bold">تأكيد حذف «{product.name}»؟</p><p className="text-xs leading-relaxed">سيختفي من قوائم المتجر والبيع، وتبقى الفواتير وحركات ورصيد المخزون محفوظة. الإعلانات المنشورة بشكل مستقل لا تُحذف تلقائياً.</p><div className="flex gap-2"><button type="button" disabled={busy} onClick={() => void remove()} className="bg-rose-700 text-white px-3 py-2 rounded-lg font-bold">نعم، احذف الصنف</button><button type="button" disabled={busy} onClick={() => setConfirmDelete(false)} className="bg-slate-200 text-slate-800 px-3 py-2 rounded-lg">تراجع</button></div></div>}
         </div>
         <div className="border-t border-slate-200 p-3 flex flex-wrap gap-2 shrink-0">
           {canEdit && <><button type="submit" disabled={busy || uploading || confirmDelete} className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 disabled:opacity-50"><Save className="w-4 h-4" /> {busy ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}</button><button type="button" disabled={busy || uploading} onClick={() => setConfirmDelete(true)} className="bg-rose-100 text-rose-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2 disabled:opacity-50"><Trash2 className="w-4 h-4" /> حذف الصنف</button></>}
@@ -138,6 +139,24 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
         </div>
       </form>
     </div>
+    {confirmDelete && canEdit && (
+      <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-4" role="alertdialog" aria-modal="true" aria-labelledby="confirm-delete-title">
+        <div className="bg-white w-full max-w-sm rounded-2xl border border-slate-300 shadow-2xl overflow-hidden text-sm" dir="rtl">
+          <div className="px-4 py-3 bg-rose-600 text-white flex items-center gap-2">
+            <Trash2 className="w-5 h-5" />
+            <h3 id="confirm-delete-title" className="font-bold">تأكيد حذف «{product.name}»؟</h3>
+          </div>
+          <div className="p-4 space-y-3 text-slate-700">
+            <p className="text-xs leading-relaxed">سيختفي الصنف فوراً من قوائم المتجر ونقاط البيع وتطبيق المتسوقين. الفواتير وحركات المخزون تبقى محفوظة في السجل.</p>
+            {error && <div role="alert" className="rounded-lg bg-rose-100 text-rose-800 p-2 text-xs">{error}</div>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" disabled={busy} onClick={() => void remove()} className="flex-1 bg-rose-700 text-white px-3 py-2.5 rounded-xl font-bold disabled:opacity-50">{busy ? 'جارٍ الحذف...' : 'نعم، احذف الصنف'}</button>
+              <button type="button" disabled={busy} onClick={() => { setConfirmDelete(false); setError(''); }} className="flex-1 bg-slate-200 text-slate-800 px-3 py-2.5 rounded-xl font-bold disabled:opacity-50">تراجع</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
     {scannerOpen && <div className="relative z-[80]"><CameraBarcodeScanner isOpen onClose={() => setScannerOpen(false)} onScanSuccess={(code) => { setBarcode(code); setScannerOpen(false); }} submitLabel="اعتماد الباركود" /></div>}
   </>;
 };
