@@ -152,6 +152,30 @@ export function merchantAuthMiddleware(req: Request, res: Response, next: NextFu
   }
   const authReq = req as AuthenticatedRequest;
   authReq.tenantId = tenant.id;
+
+  /*
+   * جلسة الموظف (staff): رمز الموظف نفسه هو المصادقة، فلا نحتاج رأس
+   * x-actor-id — بل العكس: نرفض أي محاولة لانتحال دور غيره من نفس الجهاز.
+   */
+  const staffToken = extractToken(req, ['sanad_staff_token']);
+  if (staffToken) {
+    const staffClaims = verifySession(staffToken, secret, 'staff');
+    if (!staffClaims || staffClaims.tenantId !== tenant.id) {
+      return res.status(401).json({ error: 'STAFF_SESSION_INVALID', message: 'جلسة الموظف غير صالحة، أدخل رمزك مجدداً.' });
+    }
+    const staffEmployee = (db.getSchema().employees || []).find((e) => e.id === staffClaims.employeeId && e.tenantId === tenant.id);
+    if (!staffEmployee || staffEmployee.isActive === false) {
+      return res.status(403).json({ error: 'STAFF_REVOKED', message: 'هذا الموظف غير مفعّل — راجع مالك المتجر.' });
+    }
+    authReq.actorId = staffEmployee.id;
+    authReq.actorName = staffEmployee.name;
+    authReq.actorRole = staffEmployee.role;
+    authReq.authRole = 'merchant';
+    (req as any).merchantClaims = claims;
+    (req as any).staffSession = true;
+    return next();
+  }
+
   // Validate actor belongs to this tenant
   const rawActorId = (req.headers['x-actor-id'] as string) || 'emp_owner_' + tenant.id;
   const rawActorName = (req.headers['x-actor-name'] as string) || '';
@@ -213,6 +237,46 @@ export function issueMerchantSession(tenantId: string, codeHash: string, res: Re
 
 export function destroyMerchantSession(res: Response) {
   clearCookie(res, 'sanad_merchant_token');
+  clearCookie(res, 'sanad_staff_token');
+}
+
+/**
+ * جلسة الموظف — تُصدر بعد التحقق من رمزه السري.
+ * مدة قصيرة (12 ساعة) لأنها جلسة وردية عمل، وتُربط برمز المتجر الحالي
+ * (revision) فتبطل تلقائياً لو تغيّر كود المتجر.
+ */
+export function issueStaffSession(tenantId: string, revision: string, employeeId: string, res: Response): string | null {
+  const secret = getSecret();
+  if (!validSigningSecret(secret)) return null;
+  try {
+    const token = signSession({ role: 'staff', tenantId, employeeId, revision }, secret);
+    setCookie(res, 'sanad_staff_token', token, 12 * 60 * 60);
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+export function destroyStaffSession(res: Response) {
+  clearCookie(res, 'sanad_staff_token');
+}
+
+/** الموظفون المتاحون للدخول في هذا المتجر (اسم + دور فقط — بلا أي بيانات حساسة). */
+export function listStaffForLogin(tenantId: string): { id: string; name: string; role: string }[] {
+  return (db.getSchema().employees || [])
+    .filter((e) => e.tenantId === tenantId && e.isActive !== false && e.role !== 'super_admin')
+    .map((e) => ({ id: e.id, name: e.name, role: e.role }));
+}
+
+/** يتحقق من رمز الموظف داخل متجر محدد. */
+export function staffPinMatches(tenantId: string, employeeId: string, pin: unknown): { employee?: any; error?: 'EMPLOYEE_NOT_FOUND' | 'INVALID_PIN' } {
+  const pinClean = String(pin ?? '').replace(/\D/g, '').slice(0, 6);
+  if (pinClean.length < 4) return { error: 'INVALID_PIN' };
+  const employee = (db.getSchema().employees || []).find((e) => e.id === employeeId && e.tenantId === tenantId);
+  if (!employee || employee.isActive === false) return { error: 'EMPLOYEE_NOT_FOUND' };
+  const actual = String((employee as any).pin || '');
+  if (!actual) return { error: 'INVALID_PIN' };
+  return actual === pinClean ? { employee } : { error: 'INVALID_PIN' };
 }
 
 export function merchantCodeMatchesForLogin(inputCode: string): { tenant: any; hash: string } | null {

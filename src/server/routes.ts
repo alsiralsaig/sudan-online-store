@@ -68,6 +68,10 @@ import {
   destroyMerchantSession,
   merchantCodeMatchesForLogin,
   authSecretConfigured,
+  listStaffForLogin,
+  staffPinMatches,
+  issueStaffSession,
+  destroyStaffSession,
 } from './auth.ts';
 import { adminRevision, newMerchantCode, merchantCodeHash, validSigningSecret, verifySession } from './securitySessions.ts';
 import crypto from 'node:crypto';
@@ -198,6 +202,63 @@ apiRouter.post('/auth/merchant/login', (req, res) => {
 
 apiRouter.post('/auth/merchant/logout', (req, res) => {
   destroyMerchantSession(res);
+  res.json({ success: true });
+});
+
+/* ---- دخول الموظف برمزه السري (بعد دخول المتجر بكود SND) ---- */
+
+/** قائمة الموظفين القابلة للدخول — أسماء وأدوار فقط */
+apiRouter.get('/auth/staff/list', merchantAuthMiddleware, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  res.json({ success: true, employees: listStaffForLogin(authReq.tenantId) });
+});
+
+/** هل الجلسة الحالية جلسة موظف مصرَّح له بالرمز؟ */
+apiRouter.get('/auth/staff/me', merchantAuthMiddleware, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const employee = (db.getSchema().employees || []).find((e) => e.id === authReq.actorId);
+  res.json({
+    success: true,
+    authenticated: true,
+    staffSession: !!(req as any).staffSession,
+    employee: employee
+      ? { id: employee.id, name: employee.name, role: employee.role }
+      : { id: authReq.actorId, name: authReq.actorName, role: authReq.actorRole },
+  });
+});
+
+apiRouter.post('/auth/staff/login', merchantAuthMiddleware, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const { employeeId, pin } = req.body || {};
+  const result = staffPinMatches(authReq.tenantId, String(employeeId || ''), pin);
+  if (result.error === 'EMPLOYEE_NOT_FOUND') {
+    return res.status(404).json({ error: 'EMPLOYEE_NOT_FOUND', message: 'الموظف غير موجود في هذا المتجر.' });
+  }
+  if (result.error === 'INVALID_PIN') {
+    return res.status(401).json({ error: 'INVALID_PIN', message: 'الرمز السري غير صحيح — جرّب مرة أخرى أو راجع المالك.' });
+  }
+  const tenant = db.getTenant(authReq.tenantId);
+  const revision = String((tenant as any)?.merchantCodeHash || '');
+  const token = issueStaffSession(authReq.tenantId, revision, result.employee.id, res);
+  if (!token) return res.status(500).json({ error: 'ISSUE_FAILED', message: 'تعذّر إنشاء جلسة الموظف.' });
+  db.logAudit({
+    tenantId: authReq.tenantId,
+    actorId: result.employee.id,
+    actorName: result.employee.name,
+    action: 'STAFF_LOGIN',
+    entity: 'Employee',
+    entityId: result.employee.id,
+    details: `دخول الموظف ${result.employee.name} برمزه السري`,
+  });
+  res.json({
+    success: true,
+    token,
+    employee: { id: result.employee.id, name: result.employee.name, role: result.employee.role, permissions: result.employee.permissions || [] },
+  });
+});
+
+apiRouter.post('/auth/staff/logout', (_req, res) => {
+  destroyStaffSession(res);
   res.json({ success: true });
 });
 
@@ -339,12 +400,19 @@ apiRouter.get('/employees', merchantAuthMiddleware, (req, res) => {
 
 /* ---- تصريح المالك لإضافة الموظفين ------------------------------------- */
 
-/** سجل مالك المتجر — حتى لو دخل بجلسة رمز المتجر بلا سجل موظف مطابق. */
+/**
+ * سجل الموظف الذي ينفّذ الطلب فعلاً.
+ * مهم: لو كان له سجل مطابق نُعيده كما هو (ولو كان كاشيراً) — وإلا لاعتُبر كل
+ * مستخدم «مالكاً» بسبب الرجوع لسجل المالك، فيمرّ التصريح بلا فائدة.
+ * الرجوع لسجل المالك يحدث فقط عندما لا يوجد سجل مطابق (جلسة قديمة/مالك فقط).
+ */
 function resolveOwnerEmployee(tenantId: string, actorId?: string) {
   const employees = db.getSchema().employees || [];
-  const byId = actorId ? employees.find((e) => e.id === actorId && e.tenantId === tenantId) : undefined;
-  if (byId && byId.role === 'owner') return byId;
-  return employees.find((e) => e.tenantId === tenantId && e.role === 'owner') || byId || null;
+  if (actorId) {
+    const byId = employees.find((e) => e.id === actorId && e.tenantId === tenantId);
+    if (byId) return byId;
+  }
+  return employees.find((e) => e.tenantId === tenantId && e.role === 'owner') || null;
 }
 
 /** صلاحيات المالك فقط — من ليس مالكاً لا يوافق على نفسه. */
@@ -361,9 +429,12 @@ const requireOwnerActor = (req: Request, res: Response, next: NextFunction) => {
 
 /** هل هذا الطلب يحتاج تصريحاً؟ (تستخدمه الواجهة قبل الإرسال) */
 apiRouter.post('/employees/approval-check', merchantAuthMiddleware, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
   const { role, permissions } = req.body || {};
+  const actorIsOwner = (resolveOwnerEmployee(authReq.tenantId, authReq.actorId)?.role || authReq.actorRole) === 'owner';
+  if (actorIsOwner) return res.json({ success: true, required: false, reason: '', actorIsOwner: true });
   const gate = requiresOwnerApproval(String(role || ''), Array.isArray(permissions) ? permissions.map(String) : []);
-  res.json({ success: true, ...gate });
+  res.json({ success: true, ...gate, actorIsOwner: false });
 });
 
 /** الطلبات المعلّقة — تظهر للمالك في تبويب الموظفين */
@@ -454,7 +525,11 @@ apiRouter.post('/employees', merchantAuthMiddleware, (req, res) => {
    * يملك شاشة الموظفين. المالك يوافق في شاشة «تصريح المالك» برمزه السري.
    */
   const requestedPerms: string[] = Array.isArray(permissions) ? permissions.map(String) : [];
-  const gate = requiresOwnerApproval(String(role), requestedPerms);
+  /* المالك هو من يضيف الموظفين ويضع رموزهم — لا يُطلب منه تصريح على عمله. */
+  const actorIsOwner = (resolveOwnerEmployee(authReq.tenantId, authReq.actorId)?.role || authReq.actorRole) === 'owner';
+  const gate = actorIsOwner
+    ? { required: false, reason: '' }
+    : requiresOwnerApproval(String(role), requestedPerms);
   if (gate.required) {
     if (!approvalId) {
       return res.status(428).json({
@@ -523,7 +598,10 @@ apiRouter.put('/employees/:id', merchantAuthMiddleware, (req, res) => {
    */
   const nextRole = typeof role === 'string' && role ? role : emp.role;
   const nextPerms = Array.isArray(permissions) ? permissions.map(String) : (emp.permissions || []);
-  const gate = requiresOwnerApproval(String(nextRole), nextPerms);
+  const actorIsOwner = (resolveOwnerEmployee(authReq.tenantId, authReq.actorId)?.role || authReq.actorRole) === 'owner';
+  const gate = actorIsOwner
+    ? { required: false, reason: '' }
+    : requiresOwnerApproval(String(nextRole), nextPerms);
   if (gate.required) {
     if (!approvalId) {
       return res.status(428).json({

@@ -190,6 +190,24 @@ class ApiClient {
   public async merchantLogout(): Promise<{ success: boolean }> {
     return this.request('/auth/merchant/logout', { method: 'POST', body: '{}' });
   }
+
+  /* ---- دخول الموظف برمزه السري ---- */
+
+  public async staffList(): Promise<{ success: boolean; employees: { id: string; name: string; role: string }[] }> {
+    return this.request('/auth/staff/list');
+  }
+
+  public async staffMe(): Promise<{ success: boolean; staffSession: boolean; employee: { id: string; name: string; role: string } }> {
+    return this.request('/auth/staff/me');
+  }
+
+  public async staffLogin(employeeId: string, pin: string): Promise<{ success: boolean; employee: { id: string; name: string; role: string } }> {
+    return this.request('/auth/staff/login', { method: 'POST', body: JSON.stringify({ employeeId, pin }) });
+  }
+
+  public async staffLogout(): Promise<{ success: boolean }> {
+    return this.request('/auth/staff/logout', { method: 'POST', body: '{}' });
+  }
   public async adminLogin(password: string): Promise<{ success: boolean; token: string }> {
     return this.request('/auth/admin/login', { method: 'POST', body: JSON.stringify({ password }) });
   }

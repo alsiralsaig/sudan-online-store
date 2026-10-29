@@ -5717,10 +5717,20 @@ function signature(payload, secret) {
 function signSession(input, secret, now = Date.now()) {
   if (!validSigningSecret(secret)) throw new Error("AUTH_SECRET_NOT_CONFIGURED");
   if (!/^[0-9a-f]{64}$/.test(input.revision)) throw new Error("INVALID_REVISION");
-  if (input.role === "merchant" && (typeof input.tenantId !== "string" || !input.tenantId || input.tenantId.length > 200)) throw new Error("TENANT_REQUIRED");
+  if ((input.role === "merchant" || input.role === "staff") && (typeof input.tenantId !== "string" || !input.tenantId || input.tenantId.length > 200)) throw new Error("TENANT_REQUIRED");
   if (input.role === "admin" && input.tenantId !== void 0) throw new Error("INVALID_ADMIN_TENANT");
+  if (input.role === "staff" && (typeof input.employeeId !== "string" || !input.employeeId || input.employeeId.length > 200)) throw new Error("EMPLOYEE_REQUIRED");
   const maxAge = input.role === "admin" ? 12 * 60 * 60 * 1e3 : 14 * 24 * 60 * 60 * 1e3;
-  const claims = { v: 1, role: input.role, ...input.role === "merchant" ? { tenantId: input.tenantId } : {}, revision: input.revision, issuedAt: now, expiresAt: now + maxAge, nonce: randomBytes(16).toString("hex") };
+  const claims = {
+    v: 1,
+    role: input.role,
+    ...input.role === "merchant" || input.role === "staff" ? { tenantId: input.tenantId } : {},
+    ...input.role === "staff" ? { employeeId: input.employeeId } : {},
+    revision: input.revision,
+    issuedAt: now,
+    expiresAt: now + maxAge,
+    nonce: randomBytes(16).toString("hex")
+  };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${payload}.${signature(payload, secret)}`;
 }
@@ -5734,8 +5744,9 @@ function verifySession(token2, secret, role, now = Date.now()) {
     if (!value || typeof value !== "object") return null;
     const claims = value;
     if (claims.v !== 1 || claims.role !== role || !Number.isSafeInteger(claims.issuedAt) || !Number.isSafeInteger(claims.expiresAt) || claims.issuedAt > now || claims.expiresAt <= now || claims.expiresAt <= claims.issuedAt || !/^[0-9a-f]{64}$/.test(claims.revision) || !/^[0-9a-f]{32}$/.test(claims.nonce)) return null;
-    if (claims.role === "merchant" && (typeof claims.tenantId !== "string" || !claims.tenantId || claims.tenantId.length > 200)) return null;
+    if ((claims.role === "merchant" || claims.role === "staff") && (typeof claims.tenantId !== "string" || !claims.tenantId || claims.tenantId.length > 200)) return null;
     if (claims.role === "admin" && claims.tenantId !== void 0) return null;
+    if (claims.role === "staff" && (typeof claims.employeeId !== "string" || !claims.employeeId || claims.employeeId.length > 200)) return null;
     const maxAge = role === "admin" ? 12 * 60 * 60 * 1e3 : 14 * 24 * 60 * 60 * 1e3;
     if (claims.expiresAt - claims.issuedAt > maxAge) return null;
     return claims;
@@ -5870,6 +5881,24 @@ function merchantAuthMiddleware(req, res, next) {
   }
   const authReq = req;
   authReq.tenantId = tenant.id;
+  const staffToken = extractToken(req, ["sanad_staff_token"]);
+  if (staffToken) {
+    const staffClaims = verifySession(staffToken, secret, "staff");
+    if (!staffClaims || staffClaims.tenantId !== tenant.id) {
+      return res.status(401).json({ error: "STAFF_SESSION_INVALID", message: "\u062C\u0644\u0633\u0629 \u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629\u060C \u0623\u062F\u062E\u0644 \u0631\u0645\u0632\u0643 \u0645\u062C\u062F\u062F\u0627\u064B." });
+    }
+    const staffEmployee = (db.getSchema().employees || []).find((e) => e.id === staffClaims.employeeId && e.tenantId === tenant.id);
+    if (!staffEmployee || staffEmployee.isActive === false) {
+      return res.status(403).json({ error: "STAFF_REVOKED", message: "\u0647\u0630\u0627 \u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0645\u0641\u0639\u0651\u0644 \u2014 \u0631\u0627\u062C\u0639 \u0645\u0627\u0644\u0643 \u0627\u0644\u0645\u062A\u062C\u0631." });
+    }
+    authReq.actorId = staffEmployee.id;
+    authReq.actorName = staffEmployee.name;
+    authReq.actorRole = staffEmployee.role;
+    authReq.authRole = "merchant";
+    req.merchantClaims = claims;
+    req.staffSession = true;
+    return next();
+  }
   const rawActorId = req.headers["x-actor-id"] || "emp_owner_" + tenant.id;
   const rawActorName = req.headers["x-actor-name"] || "";
   let decodedName = tenant.ownerName || tenant.tradeName || "\u0645\u0627\u0644\u0643 \u0627\u0644\u0645\u062A\u062C\u0631";
@@ -5925,6 +5954,33 @@ function issueMerchantSession(tenantId, codeHash, res) {
 }
 function destroyMerchantSession(res) {
   clearCookie(res, "sanad_merchant_token");
+  clearCookie(res, "sanad_staff_token");
+}
+function issueStaffSession(tenantId, revision, employeeId, res) {
+  const secret = getSecret();
+  if (!validSigningSecret(secret)) return null;
+  try {
+    const token2 = signSession({ role: "staff", tenantId, employeeId, revision }, secret);
+    setCookie(res, "sanad_staff_token", token2, 12 * 60 * 60);
+    return token2;
+  } catch {
+    return null;
+  }
+}
+function destroyStaffSession(res) {
+  clearCookie(res, "sanad_staff_token");
+}
+function listStaffForLogin(tenantId) {
+  return (db.getSchema().employees || []).filter((e) => e.tenantId === tenantId && e.isActive !== false && e.role !== "super_admin").map((e) => ({ id: e.id, name: e.name, role: e.role }));
+}
+function staffPinMatches(tenantId, employeeId, pin) {
+  const pinClean = String(pin ?? "").replace(/\D/g, "").slice(0, 6);
+  if (pinClean.length < 4) return { error: "INVALID_PIN" };
+  const employee = (db.getSchema().employees || []).find((e) => e.id === employeeId && e.tenantId === tenantId);
+  if (!employee || employee.isActive === false) return { error: "EMPLOYEE_NOT_FOUND" };
+  const actual = String(employee.pin || "");
+  if (!actual) return { error: "INVALID_PIN" };
+  return actual === pinClean ? { employee } : { error: "INVALID_PIN" };
 }
 
 // src/server/routes.ts
@@ -6011,6 +6067,53 @@ apiRouter.post("/auth/merchant/login", (req, res) => {
 });
 apiRouter.post("/auth/merchant/logout", (req, res) => {
   destroyMerchantSession(res);
+  res.json({ success: true });
+});
+apiRouter.get("/auth/staff/list", merchantAuthMiddleware, (req, res) => {
+  const authReq = req;
+  res.json({ success: true, employees: listStaffForLogin(authReq.tenantId) });
+});
+apiRouter.get("/auth/staff/me", merchantAuthMiddleware, (req, res) => {
+  const authReq = req;
+  const employee = (db.getSchema().employees || []).find((e) => e.id === authReq.actorId);
+  res.json({
+    success: true,
+    authenticated: true,
+    staffSession: !!req.staffSession,
+    employee: employee ? { id: employee.id, name: employee.name, role: employee.role } : { id: authReq.actorId, name: authReq.actorName, role: authReq.actorRole }
+  });
+});
+apiRouter.post("/auth/staff/login", merchantAuthMiddleware, (req, res) => {
+  const authReq = req;
+  const { employeeId, pin } = req.body || {};
+  const result = staffPinMatches(authReq.tenantId, String(employeeId || ""), pin);
+  if (result.error === "EMPLOYEE_NOT_FOUND") {
+    return res.status(404).json({ error: "EMPLOYEE_NOT_FOUND", message: "\u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+  }
+  if (result.error === "INVALID_PIN") {
+    return res.status(401).json({ error: "INVALID_PIN", message: "\u0627\u0644\u0631\u0645\u0632 \u0627\u0644\u0633\u0631\u064A \u063A\u064A\u0631 \u0635\u062D\u064A\u062D \u2014 \u062C\u0631\u0651\u0628 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649 \u0623\u0648 \u0631\u0627\u062C\u0639 \u0627\u0644\u0645\u0627\u0644\u0643." });
+  }
+  const tenant = db.getTenant(authReq.tenantId);
+  const revision = String(tenant?.merchantCodeHash || "");
+  const token2 = issueStaffSession(authReq.tenantId, revision, result.employee.id, res);
+  if (!token2) return res.status(500).json({ error: "ISSUE_FAILED", message: "\u062A\u0639\u0630\u0651\u0631 \u0625\u0646\u0634\u0627\u0621 \u062C\u0644\u0633\u0629 \u0627\u0644\u0645\u0648\u0638\u0641." });
+  db.logAudit({
+    tenantId: authReq.tenantId,
+    actorId: result.employee.id,
+    actorName: result.employee.name,
+    action: "STAFF_LOGIN",
+    entity: "Employee",
+    entityId: result.employee.id,
+    details: `\u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u0648\u0638\u0641 ${result.employee.name} \u0628\u0631\u0645\u0632\u0647 \u0627\u0644\u0633\u0631\u064A`
+  });
+  res.json({
+    success: true,
+    token: token2,
+    employee: { id: result.employee.id, name: result.employee.name, role: result.employee.role, permissions: result.employee.permissions || [] }
+  });
+});
+apiRouter.post("/auth/staff/logout", (_req, res) => {
+  destroyStaffSession(res);
   res.json({ success: true });
 });
 apiRouter.get("/auth/merchant/me", merchantAuthMiddleware, (req, res) => {
@@ -6120,9 +6223,11 @@ apiRouter.get("/employees", merchantAuthMiddleware, (req, res) => {
 });
 function resolveOwnerEmployee(tenantId, actorId) {
   const employees = db.getSchema().employees || [];
-  const byId = actorId ? employees.find((e) => e.id === actorId && e.tenantId === tenantId) : void 0;
-  if (byId && byId.role === "owner") return byId;
-  return employees.find((e) => e.tenantId === tenantId && e.role === "owner") || byId || null;
+  if (actorId) {
+    const byId = employees.find((e) => e.id === actorId && e.tenantId === tenantId);
+    if (byId) return byId;
+  }
+  return employees.find((e) => e.tenantId === tenantId && e.role === "owner") || null;
 }
 var requireOwnerActor = (req, res, next) => {
   const actor = req;
@@ -6135,9 +6240,12 @@ var requireOwnerActor = (req, res, next) => {
   next();
 };
 apiRouter.post("/employees/approval-check", merchantAuthMiddleware, (req, res) => {
+  const authReq = req;
   const { role, permissions } = req.body || {};
+  const actorIsOwner = (resolveOwnerEmployee(authReq.tenantId, authReq.actorId)?.role || authReq.actorRole) === "owner";
+  if (actorIsOwner) return res.json({ success: true, required: false, reason: "", actorIsOwner: true });
   const gate = requiresOwnerApproval(String(role || ""), Array.isArray(permissions) ? permissions.map(String) : []);
-  res.json({ success: true, ...gate });
+  res.json({ success: true, ...gate, actorIsOwner: false });
 });
 apiRouter.get("/employees/approvals", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
@@ -6209,7 +6317,8 @@ apiRouter.post("/employees", merchantAuthMiddleware, (req, res) => {
     return res.status(400).json({ error: "\u0627\u0644\u0627\u0633\u0645 \u0648\u0627\u0644\u0645\u0633\u0645\u0649 \u0627\u0644\u0648\u0638\u064A\u0641\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
   }
   const requestedPerms = Array.isArray(permissions) ? permissions.map(String) : [];
-  const gate = requiresOwnerApproval(String(role), requestedPerms);
+  const actorIsOwner = (resolveOwnerEmployee(authReq.tenantId, authReq.actorId)?.role || authReq.actorRole) === "owner";
+  const gate = actorIsOwner ? { required: false, reason: "" } : requiresOwnerApproval(String(role), requestedPerms);
   if (gate.required) {
     if (!approvalId) {
       return res.status(428).json({
@@ -6264,7 +6373,8 @@ apiRouter.put("/employees/:id", merchantAuthMiddleware, (req, res) => {
   const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, isActive, approvalId } = req.body || {};
   const nextRole = typeof role === "string" && role ? role : emp.role;
   const nextPerms = Array.isArray(permissions) ? permissions.map(String) : emp.permissions || [];
-  const gate = requiresOwnerApproval(String(nextRole), nextPerms);
+  const actorIsOwner = (resolveOwnerEmployee(authReq.tenantId, authReq.actorId)?.role || authReq.actorRole) === "owner";
+  const gate = actorIsOwner ? { required: false, reason: "" } : requiresOwnerApproval(String(nextRole), nextPerms);
   if (gate.required) {
     if (!approvalId) {
       return res.status(428).json({

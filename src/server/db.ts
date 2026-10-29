@@ -89,6 +89,23 @@ export interface DatabaseSchema {
   notifications: AppNotification[];
   pushSubscriptions: PushSubscriptionRecord[];
   pushKeys: { id: string; publicKey: string; privateKey: string; createdAt: string }[];
+  /** طلبات تصريح المالك لإضافة الموظفين */
+  ownerApprovals?: {
+    id: string;
+    tenantId: string;
+    requestedBy: string;
+    requestedById: string;
+    employeeName: string;
+    employeeRole: string;
+    permissions: string[];
+    reason: string;
+    status: 'pending' | 'approved' | 'rejected' | 'used';
+    createdAt: string;
+    expiresAt: string;
+    approvedAt?: string;
+    approvedBy?: string;
+    usedAt?: string;
+  }[];
   marketBanners: MarketBanner[];
 }
 

@@ -6,11 +6,13 @@
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
-export type SessionRole = 'admin' | 'merchant';
+export type SessionRole = 'admin' | 'merchant' | 'staff';
 export interface SessionClaims {
   v: 1;
   role: SessionRole;
   tenantId?: string;
+  /** للموظف: معرّف سجل الموظف داخل المتجر. */
+  employeeId?: string;
   revision: string;
   issuedAt: number;
   expiresAt: number;
@@ -59,13 +61,23 @@ function signature(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(`sanad-session-v1.${payload}`).digest('base64url');
 }
 
-export function signSession(input: { role: SessionRole; tenantId?: string; revision: string }, secret: string, now = Date.now()): string {
+export function signSession(input: { role: SessionRole; tenantId?: string; employeeId?: string; revision: string }, secret: string, now = Date.now()): string {
   if (!validSigningSecret(secret)) throw new Error('AUTH_SECRET_NOT_CONFIGURED');
   if (!/^[0-9a-f]{64}$/.test(input.revision)) throw new Error('INVALID_REVISION');
-  if (input.role === 'merchant' && (typeof input.tenantId !== 'string' || !input.tenantId || input.tenantId.length > 200)) throw new Error('TENANT_REQUIRED');
+  if ((input.role === 'merchant' || input.role === 'staff') && (typeof input.tenantId !== 'string' || !input.tenantId || input.tenantId.length > 200)) throw new Error('TENANT_REQUIRED');
   if (input.role === 'admin' && input.tenantId !== undefined) throw new Error('INVALID_ADMIN_TENANT');
+  if (input.role === 'staff' && (typeof input.employeeId !== 'string' || !input.employeeId || input.employeeId.length > 200)) throw new Error('EMPLOYEE_REQUIRED');
   const maxAge = input.role === 'admin' ? 12 * 60 * 60 * 1000 : 14 * 24 * 60 * 60 * 1000;
-  const claims: SessionClaims = { v: 1, role: input.role, ...(input.role === 'merchant' ? { tenantId: input.tenantId } : {}), revision: input.revision, issuedAt: now, expiresAt: now + maxAge, nonce: randomBytes(16).toString('hex') };
+  const claims: SessionClaims = {
+    v: 1,
+    role: input.role,
+    ...(input.role === 'merchant' || input.role === 'staff' ? { tenantId: input.tenantId } : {}),
+    ...(input.role === 'staff' ? { employeeId: input.employeeId } : {}),
+    revision: input.revision,
+    issuedAt: now,
+    expiresAt: now + maxAge,
+    nonce: randomBytes(16).toString('hex'),
+  };
   const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
   return `${payload}.${signature(payload, secret)}`;
 }
@@ -81,8 +93,9 @@ export function verifySession(token: unknown, secret: string | undefined, role: 
     if (!value || typeof value !== 'object') return null;
     const claims = value as SessionClaims;
     if (claims.v !== 1 || claims.role !== role || !Number.isSafeInteger(claims.issuedAt) || !Number.isSafeInteger(claims.expiresAt) || claims.issuedAt > now || claims.expiresAt <= now || claims.expiresAt <= claims.issuedAt || !/^[0-9a-f]{64}$/.test(claims.revision) || !/^[0-9a-f]{32}$/.test(claims.nonce)) return null;
-    if (claims.role === 'merchant' && (typeof claims.tenantId !== 'string' || !claims.tenantId || claims.tenantId.length > 200)) return null;
+    if ((claims.role === 'merchant' || claims.role === 'staff') && (typeof claims.tenantId !== 'string' || !claims.tenantId || claims.tenantId.length > 200)) return null;
     if (claims.role === 'admin' && claims.tenantId !== undefined) return null;
+    if (claims.role === 'staff' && (typeof claims.employeeId !== 'string' || !claims.employeeId || claims.employeeId.length > 200)) return null;
     const maxAge = role === 'admin' ? 12 * 60 * 60 * 1000 : 14 * 24 * 60 * 60 * 1000;
     if (claims.expiresAt - claims.issuedAt > maxAge) return null;
     return claims;
