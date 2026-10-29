@@ -202,10 +202,10 @@ class ApiClient {
     return this.request('/auth/merchant/login', { method: 'POST', body: JSON.stringify({ code, slug: hint, tenantId: hint }) });
   }
   /** يسترجع/يصدر كود دخول المتجر لتاجر يملك كود الطلب المعتمد. */
-  public async getStoreAccessCode(applicationCode: string): Promise<{ success: boolean; issued?: boolean; tenant?: any; merchantCode: string | null; merchantCodeMessage?: string }> {
+  public async getStoreAccessCode(applicationCode: string, rotate = false): Promise<{ success: boolean; issued?: boolean; tenant?: any; merchantCode: string | null; merchantCodeMessage?: string; canRotate?: boolean }> {
     return this.request('/tenant-applications/access-code', {
       method: 'POST',
-      body: JSON.stringify({ code: applicationCode }),
+      body: JSON.stringify({ code: applicationCode, rotate }),
     });
   }
 

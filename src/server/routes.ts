@@ -191,6 +191,46 @@ apiRouter.post('/auth/merchant/login', (req, res) => {
             : 'هذا كود الطلب ولم يُعتمد بعد — تواصل مع إدارة سند.',
       });
     }
+    /*
+     * مطابقة تساهلية للمشكلة الحقيقية: الحقل يعرض ~٢٤ حرفاً فقط، فينسخ التاجر
+     * نصف الكود (SND-AA9D-2B4B-2BBD-92) ويرى «رمز غير صالح».
+     * الحل: لو كان المُدخل بادئة صحيحة لكود متجر واحد فقط، نسمح بالدخول.
+     * مشروط بالبادئة الكاملة «SND-» + ١٦ خانة على الأقل، ولو تطابقت أكثر من
+     * متجر واحد نطلب الكود كاملاً (بلا تخمين).
+     */
+    const typed = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (typed.startsWith('SND') && typed.length >= 16) {
+      const matches = db.getSchema().tenants.filter((t) => {
+        const stored = String((t as any).merchantCodeHash || '');
+        return /^[0-9a-f]{64}$/.test(stored);
+      });
+      /*
+       * المقارنة تحتاج الكود الأصلي — غير محفوظ (hash فقط). لذلك نتحقق من
+       * البادئة عبر بصمة قصيرة محفوظة عند الإصدار (merchantCodePrefix).
+       */
+      const byPrefix = matches.filter((t) =>
+        String((t as any).merchantCodePrefix || '').toUpperCase().startsWith(typed.slice(0, 16))
+      );
+      if (byPrefix.length === 1) {
+        const target: any = byPrefix[0];
+        if (target.status === 'suspended') return res.status(403).json({ error: 'TENANT_SUSPENDED', message: 'المتجر موقوف.' });
+        const token2 = issueMerchantSession(target.id, String(target.merchantCodeHash), res);
+        if (!token2) return res.status(500).json({ error: 'ISSUE_FAILED', message: 'تعذّر إنشاء الجلسة.' });
+        return res.json({
+          success: true,
+          token: token2,
+          partialCode: true,
+          message: 'دخلت بجزء من الكود — انسخ الكود كاملاً من رسالة سند واحفظه.',
+          tenant: { id: target.id, name: target.name, tradeName: target.tradeName, slug: target.slug, city: target.city },
+        });
+      }
+      if (byPrefix.length > 1) {
+        return res.status(400).json({
+          error: 'CODE_AMBIGUOUS',
+          message: 'هذا جزء من الكود. انسخ كود المتجر كاملاً (اضغط مطوّلاً على الكود في رسالة سند ثم «نسخ الكل»).',
+        });
+      }
+    }
     return res.status(401).json({ error: 'INVALID_CODE', message: 'رمز المتجر غير صالح — تأكد من النسخ الكامل (يبدأ بـ SND- وفيه ١١ مقطعاً).' });
   }
   // Prefer tenant lookup by hash (code itself identifies the store)
@@ -2875,7 +2915,7 @@ apiRouter.post('/admin/tenants/:id/merchant-code', adminAuthMiddleware, (req, re
   const newCode = newMerchantCode();
   const hash = merchantCodeHash(newCode);
   if (!hash) return res.status(500).json({ error: 'CODE_GEN_FAILED' });
-  db.setMerchantCode(tenant.id, hash, 'saas_admin');
+  db.setMerchantCode(tenant.id, hash, 'saas_admin', newCode);
   db.commit();
   db.logAudit({
     tenantId: tenant.id,
@@ -4573,7 +4613,7 @@ function ensureOwnerEmployee(tenantId: string, ownerName: string, phone: string)
 /** كود المتجر هو نص 44 خانة (SND- + 40 hex) — كود الطلب قصير (SND-XXXX-XXXX). */
 function withIssuedCode<T extends Record<string, any>>(tenant: T, issued: string | null) {
   return {
-    ...tenant,
+    ...(tenant || {}),
     merchantCode: issued,
     merchantCodeMessage: issued
       ? 'هذا كود دخول متجرك — احفظه الآن، لن يظهر مرة أخرى.'
@@ -4605,16 +4645,23 @@ apiRouter.post('/tenant-applications/access-code', (req, res) => {
   }
 
   const hash = String((tenant as any).merchantCodeHash || '');
+  /*
+   * قاعدة مهمة: صاحب كود الطلب يملك المتجر، فإصدار كود جديد له آمن ومقصود
+   * (وهو زر «نسيت/لم يظهر الكود»). إعادة الإصدار تُلغي الكود السابق فقط —
+   * ولا تُنشئ متجراً ثانياً أبداً.
+   */
   if (/^[0-9a-f]{64}$/.test(hash)) {
-    /* المتجر سليم ولديه كود — لا نولّد كوداً جديداً بلا إذن (يلغي كود التاجر الحالي) */
-    const { merchantCodeHash: _h, ...safe } = tenant as any;
-    return res.json({ success: true, issued: false, tenant: safe, ...withIssuedCode({}, null) });
+    const rotate = req.body?.rotate === true || req.body?.rotate === 'true';
+    if (!rotate) {
+      const { merchantCodeHash: _h, ...safe } = tenant as any;
+      return res.json({ success: true, issued: false, canRotate: true, tenant: safe, ...withIssuedCode({}, null) });
+    }
   }
 
   const fresh = newMerchantCode();
   const freshHash = merchantCodeHash(fresh);
   if (!freshHash) return res.status(500).json({ error: 'CODE_GEN_FAILED', message: 'تعذّر توليد الكود — حاول مرة أخرى.' });
-  db.setMerchantCode(tenant.id, freshHash, 'self_activation_repair');
+  db.setMerchantCode(tenant.id, freshHash, 'self_activation_repair', fresh);
   db.commit();
   db.logAudit({
     tenantId: tenant.id,
@@ -4642,7 +4689,7 @@ apiRouter.post('/admin/tenants/repair-codes', adminAuthMiddleware, (_req, res) =
     const fresh = newMerchantCode();
     const freshHash = merchantCodeHash(fresh);
     if (!freshHash) continue;
-    db.setMerchantCode(tenant.id, freshHash, 'saas_admin_repair');
+    db.setMerchantCode(tenant.id, freshHash, 'saas_admin_repair', fresh);
     repaired.push({ tenantId: tenant.id, name: tenant.tradeName || tenant.name, code: fresh });
   }
   if (repaired.length) db.commit();
@@ -4762,7 +4809,7 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
     const fresh = newMerchantCode();
     const hash = merchantCodeHash(fresh);
     if (hash) {
-      db.setMerchantCode(tenantId, hash, 'self_activation');
+      db.setMerchantCode(tenantId, hash, 'self_activation', fresh);
       storeAccessCode = fresh;
       (application as any).merchantCodeIssuedAt = new Date().toISOString();
     }

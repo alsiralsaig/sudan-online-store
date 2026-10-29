@@ -2338,13 +2338,24 @@ class Database {
     return this.data.tenants.find((t: any) => (t as any).merchantCodeHash === hash);
   }
 
-  public setMerchantCode(tenantId: string, hash: string, issuedBy?: string): Tenant | null {
+  /**
+   * يخزّن بصمة الكود (للدخول) + بادئته (١٦ خانة) لمطابقة الأكواد المقتطعة.
+   * البادئة ليست سراً: ١٦ من ٤٤ خانة لا تكفي لتخمين الكود، لكنها تنقذ التاجر
+   * الذي ينسخ نصف الكود لأن الحقل يعرض ٢٤ حرفاً فقط.
+   */
+  public setMerchantCode(tenantId: string, hash: string, issuedBy?: string, plainCode?: string): Tenant | null {
     const tenant = this.getTenant(tenantId);
     if (!tenant) return null;
     if (!/^[0-9a-f]{64}$/.test(hash)) return null;
     (tenant as any).merchantCodeHash = hash;
     (tenant as any).merchantCodeIssuedAt = new Date().toISOString();
     if (issuedBy) (tenant as any).merchantCodeIssuedBy = issuedBy;
+    if (plainCode) {
+      const compact = String(plainCode).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      (tenant as any).merchantCodePrefix = compact.slice(0, 16);
+    } else {
+      delete (tenant as any).merchantCodePrefix;
+    }
     this.save();
     return tenant;
   }

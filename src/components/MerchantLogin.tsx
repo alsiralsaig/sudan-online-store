@@ -110,6 +110,10 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
               className="w-full rounded-2xl border border-slate-300 px-4 py-3.5 font-mono text-center tracking-widest focus:outline-none focus:border-sky-500"
             />
             {err && <p className="rounded-xl bg-rose-50 text-rose-700 px-3 py-2 text-xs font-bold leading-relaxed">{err}</p>}
+            <p className="text-[10.5px] text-slate-500 leading-relaxed">
+              الحقل يعرض ٢٤ حرفاً فقط من الكود (الكود ٤٤ حرفاً). تأكد من **نسخ الكود كاملاً** —
+              اضغط على الكود في رسالة سند مطوّلاً ثم «نسخ الكل». ولو النسخ ناقص، التطبيق يقبل البداية ويدخلك.
+            </p>
             <button
               type="submit"
               disabled={busy || code.trim().length < 6}
@@ -155,7 +159,7 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
                   <CheckCircle2 className="w-4 h-4" /> تم تفعيل «{issued.storeName || 'متجرك'}» — هذا كود الدخول
                 </p>
                 <div className="flex items-center gap-2">
-                  <code dir="ltr" className="flex-1 rounded-xl bg-white border border-emerald-200 px-2 py-2 text-center font-mono text-[11px] font-bold text-slate-900 break-all">
+                  <code dir="ltr" className="flex-1 rounded-xl bg-white border border-emerald-200 px-2 py-2 text-center font-mono text-[9.5px] leading-4 font-bold text-slate-900 break-all" style={{ wordBreak: 'break-all' }}>
                     {issued.code}
                   </code>
                   <button
@@ -167,9 +171,37 @@ export function MerchantLogin({ onSuccess }: { onSuccess: () => void }) {
                   </button>
                 </div>
                 <p className="text-[10.5px] leading-relaxed text-emerald-800">
-                  احفظه — تحتاجه في كل مرة. اضغط «دخول الآن» للمتابعة.
+                  احفظه — تحتاجه في كل مرة (أرسله لنفسك في واتساب). اضغط «دخول الآن بهذا الكود» للمتابعة بلا نسخ.
                 </p>
               </div>
+            )}
+
+            {actErr && appCode.trim().length >= 6 && (
+              <button
+                type="button"
+                disabled={activating}
+                onClick={async () => {
+                  setActivating(true);
+                  setActErr('');
+                  try {
+                    const rec: any = await api.getStoreAccessCode(appCode.trim().toUpperCase(), true);
+                    if (rec?.merchantCode) {
+                      setIssued({ code: rec.merchantCode, storeName: rec?.tenant?.name || '' });
+                      setCode(rec.merchantCode);
+                      setActErr('');
+                    } else {
+                      setActErr(rec?.merchantCodeMessage || 'تعذّر إصدار كود جديد.');
+                    }
+                  } catch (e: any) {
+                    setActErr(e.message || 'تعذّر إصدار كود جديد.');
+                  } finally {
+                    setActivating(false);
+                  }
+                }}
+                className="w-full rounded-2xl bg-amber-500 text-slate-950 py-3 font-black text-[12.5px]"
+              >
+                لم يظهر كود الدخول؟ أعد إصداره بكود الطلب
+              </button>
             )}
 
             {!issued ? (

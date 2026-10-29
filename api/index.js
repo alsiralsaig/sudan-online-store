@@ -3073,13 +3073,24 @@ var Database = class {
     if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return void 0;
     return this.data.tenants.find((t) => t.merchantCodeHash === hash);
   }
-  setMerchantCode(tenantId, hash, issuedBy) {
+  /**
+   * يخزّن بصمة الكود (للدخول) + بادئته (١٦ خانة) لمطابقة الأكواد المقتطعة.
+   * البادئة ليست سراً: ١٦ من ٤٤ خانة لا تكفي لتخمين الكود، لكنها تنقذ التاجر
+   * الذي ينسخ نصف الكود لأن الحقل يعرض ٢٤ حرفاً فقط.
+   */
+  setMerchantCode(tenantId, hash, issuedBy, plainCode) {
     const tenant = this.getTenant(tenantId);
     if (!tenant) return null;
     if (!/^[0-9a-f]{64}$/.test(hash)) return null;
     tenant.merchantCodeHash = hash;
     tenant.merchantCodeIssuedAt = (/* @__PURE__ */ new Date()).toISOString();
     if (issuedBy) tenant.merchantCodeIssuedBy = issuedBy;
+    if (plainCode) {
+      const compact = String(plainCode).toUpperCase().replace(/[^A-Z0-9]/g, "");
+      tenant.merchantCodePrefix = compact.slice(0, 16);
+    } else {
+      delete tenant.merchantCodePrefix;
+    }
     this.save();
     return tenant;
   }
@@ -6054,6 +6065,35 @@ apiRouter.post("/auth/merchant/login", (req, res) => {
         message: appCode.status === "approved" ? "\u0647\u0630\u0627 \u0643\u0648\u062F \u0627\u0644\u0637\u0644\u0628 (\u0644\u0644\u062A\u0641\u0639\u064A\u0644 \u0645\u0631\u0629 \u0648\u0627\u062D\u062F\u0629) \u0648\u0644\u064A\u0633 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631. \u0627\u0636\u063A\u0637 \xAB\u062A\u0641\u0639\u064A\u0644 \u0645\u062A\u062C\u0631 \u0628\u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644\xBB \u0641\u064A \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0628\u0647\u0630\u0627 \u0627\u0644\u0643\u0648\u062F \u0644\u062A\u062D\u0635\u0644 \u0639\u0644\u0649 \u0643\u0648\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u0627\u0644\u062E\u0627\u0635 \u0628\u0643." : "\u0647\u0630\u0627 \u0643\u0648\u062F \u0627\u0644\u0637\u0644\u0628 \u0648\u0644\u0645 \u064A\u064F\u0639\u062A\u0645\u062F \u0628\u0639\u062F \u2014 \u062A\u0648\u0627\u0635\u0644 \u0645\u0639 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F."
       });
     }
+    const typed = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (typed.startsWith("SND") && typed.length >= 16) {
+      const matches = db.getSchema().tenants.filter((t) => {
+        const stored = String(t.merchantCodeHash || "");
+        return /^[0-9a-f]{64}$/.test(stored);
+      });
+      const byPrefix = matches.filter(
+        (t) => String(t.merchantCodePrefix || "").toUpperCase().startsWith(typed.slice(0, 16))
+      );
+      if (byPrefix.length === 1) {
+        const target = byPrefix[0];
+        if (target.status === "suspended") return res.status(403).json({ error: "TENANT_SUSPENDED", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u0648\u0642\u0648\u0641." });
+        const token22 = issueMerchantSession(target.id, String(target.merchantCodeHash), res);
+        if (!token22) return res.status(500).json({ error: "ISSUE_FAILED", message: "\u062A\u0639\u0630\u0651\u0631 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062C\u0644\u0633\u0629." });
+        return res.json({
+          success: true,
+          token: token22,
+          partialCode: true,
+          message: "\u062F\u062E\u0644\u062A \u0628\u062C\u0632\u0621 \u0645\u0646 \u0627\u0644\u0643\u0648\u062F \u2014 \u0627\u0646\u0633\u062E \u0627\u0644\u0643\u0648\u062F \u0643\u0627\u0645\u0644\u0627\u064B \u0645\u0646 \u0631\u0633\u0627\u0644\u0629 \u0633\u0646\u062F \u0648\u0627\u062D\u0641\u0638\u0647.",
+          tenant: { id: target.id, name: target.name, tradeName: target.tradeName, slug: target.slug, city: target.city }
+        });
+      }
+      if (byPrefix.length > 1) {
+        return res.status(400).json({
+          error: "CODE_AMBIGUOUS",
+          message: "\u0647\u0630\u0627 \u062C\u0632\u0621 \u0645\u0646 \u0627\u0644\u0643\u0648\u062F. \u0627\u0646\u0633\u062E \u0643\u0648\u062F \u0627\u0644\u0645\u062A\u062C\u0631 \u0643\u0627\u0645\u0644\u0627\u064B (\u0627\u0636\u063A\u0637 \u0645\u0637\u0648\u0651\u0644\u0627\u064B \u0639\u0644\u0649 \u0627\u0644\u0643\u0648\u062F \u0641\u064A \u0631\u0633\u0627\u0644\u0629 \u0633\u0646\u062F \u062B\u0645 \xAB\u0646\u0633\u062E \u0627\u0644\u0643\u0644\xBB)."
+        });
+      }
+    }
     return res.status(401).json({ error: "INVALID_CODE", message: "\u0631\u0645\u0632 \u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D \u2014 \u062A\u0623\u0643\u062F \u0645\u0646 \u0627\u0644\u0646\u0633\u062E \u0627\u0644\u0643\u0627\u0645\u0644 (\u064A\u0628\u062F\u0623 \u0628\u0640 SND- \u0648\u0641\u064A\u0647 \u0661\u0661 \u0645\u0642\u0637\u0639\u0627\u064B)." });
   }
   let tenant = db.findTenantByMerchantCodeHash(hash);
@@ -8205,7 +8245,7 @@ apiRouter.post("/admin/tenants/:id/merchant-code", adminAuthMiddleware, (req, re
   const newCode2 = newMerchantCode();
   const hash = merchantCodeHash(newCode2);
   if (!hash) return res.status(500).json({ error: "CODE_GEN_FAILED" });
-  db.setMerchantCode(tenant.id, hash, "saas_admin");
+  db.setMerchantCode(tenant.id, hash, "saas_admin", newCode2);
   db.commit();
   db.logAudit({
     tenantId: tenant.id,
@@ -9546,7 +9586,7 @@ function ensureOwnerEmployee(tenantId, ownerName, phone) {
 }
 function withIssuedCode(tenant, issued) {
   return {
-    ...tenant,
+    ...tenant || {},
     merchantCode: issued,
     merchantCodeMessage: issued ? "\u0647\u0630\u0627 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0645\u062A\u062C\u0631\u0643 \u2014 \u0627\u062D\u0641\u0638\u0647 \u0627\u0644\u0622\u0646\u060C \u0644\u0646 \u064A\u0638\u0647\u0631 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649." : "\u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631 \u0644\u0647 \u0643\u0648\u062F \u062F\u062E\u0648\u0644 \u0645\u064F\u0635\u062F\u0631 \u0645\u0646 \u0642\u0628\u0644 \u2014 \u0627\u0637\u0644\u0628\u0647 \u0645\u0646 \u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F \u0639\u0628\u0631 \u0648\u0627\u062A\u0633\u0627\u0628 (\u0623\u0648 \u0623\u0639\u062F \u0625\u0635\u062F\u0627\u0631\u0647 \u0645\u0646 \u0627\u0644\u0645\u0646\u0635\u0629)."
   };
@@ -9568,13 +9608,16 @@ apiRouter.post("/tenant-applications/access-code", (req, res) => {
   }
   const hash = String(tenant.merchantCodeHash || "");
   if (/^[0-9a-f]{64}$/.test(hash)) {
-    const { merchantCodeHash: _h, ...safe } = tenant;
-    return res.json({ success: true, issued: false, tenant: safe, ...withIssuedCode({}, null) });
+    const rotate = req.body?.rotate === true || req.body?.rotate === "true";
+    if (!rotate) {
+      const { merchantCodeHash: _h, ...safe } = tenant;
+      return res.json({ success: true, issued: false, canRotate: true, tenant: safe, ...withIssuedCode({}, null) });
+    }
   }
   const fresh = newMerchantCode();
   const freshHash = merchantCodeHash(fresh);
   if (!freshHash) return res.status(500).json({ error: "CODE_GEN_FAILED", message: "\u062A\u0639\u0630\u0651\u0631 \u062A\u0648\u0644\u064A\u062F \u0627\u0644\u0643\u0648\u062F \u2014 \u062D\u0627\u0648\u0644 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649." });
-  db.setMerchantCode(tenant.id, freshHash, "self_activation_repair");
+  db.setMerchantCode(tenant.id, freshHash, "self_activation_repair", fresh);
   db.commit();
   db.logAudit({
     tenantId: tenant.id,
@@ -9597,7 +9640,7 @@ apiRouter.post("/admin/tenants/repair-codes", adminAuthMiddleware, (_req, res) =
     const fresh = newMerchantCode();
     const freshHash = merchantCodeHash(fresh);
     if (!freshHash) continue;
-    db.setMerchantCode(tenant.id, freshHash, "saas_admin_repair");
+    db.setMerchantCode(tenant.id, freshHash, "saas_admin_repair", fresh);
     repaired.push({ tenantId: tenant.id, name: tenant.tradeName || tenant.name, code: fresh });
   }
   if (repaired.length) db.commit();
@@ -9688,7 +9731,7 @@ apiRouter.post("/tenant-applications/activate", (req, res) => {
     const fresh = newMerchantCode();
     const hash = merchantCodeHash(fresh);
     if (hash) {
-      db.setMerchantCode(tenantId, hash, "self_activation");
+      db.setMerchantCode(tenantId, hash, "self_activation", fresh);
       storeAccessCode = fresh;
       application.merchantCodeIssuedAt = (/* @__PURE__ */ new Date()).toISOString();
     }
