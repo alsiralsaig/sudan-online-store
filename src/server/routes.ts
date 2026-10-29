@@ -51,6 +51,15 @@ import type {
 } from '../types/index.ts';
 import { getPublicKey as getPushPublicKey, notify as notifyUser, notifyLowStock, runNotificationScan } from './notifications.ts';
 import {
+  createApprovalRequest,
+  getApproval,
+  listPending,
+  approve as approveEmployeeRequest,
+  reject as rejectEmployeeRequest,
+  consumeApproval,
+  requiresOwnerApproval,
+} from './ownerApproval.ts';
+import {
   adminAuthMiddleware,
   merchantAuthMiddleware,
   issueAdminSession,
@@ -328,6 +337,100 @@ apiRouter.get('/employees', merchantAuthMiddleware, (req, res) => {
   res.json({ employees });
 });
 
+/* ---- تصريح المالك لإضافة الموظفين ------------------------------------- */
+
+/** سجل مالك المتجر — حتى لو دخل بجلسة رمز المتجر بلا سجل موظف مطابق. */
+function resolveOwnerEmployee(tenantId: string, actorId?: string) {
+  const employees = db.getSchema().employees || [];
+  const byId = actorId ? employees.find((e) => e.id === actorId && e.tenantId === tenantId) : undefined;
+  if (byId && byId.role === 'owner') return byId;
+  return employees.find((e) => e.tenantId === tenantId && e.role === 'owner') || byId || null;
+}
+
+/** صلاحيات المالك فقط — من ليس مالكاً لا يوافق على نفسه. */
+const requireOwnerActor = (req: Request, res: Response, next: NextFunction) => {
+  const actor = req as AuthenticatedRequest;
+  const owner = resolveOwnerEmployee(actor.tenantId, actor.actorId);
+  const role = owner?.role || actor.actorRole;
+  if (role !== 'owner' && role !== 'super_admin') {
+    return res.status(403).json({ error: 'OWNER_ONLY', message: 'التصريح يحتاج رمز مالك المتجر نفسه.' });
+  }
+  (req as any).ownerEmployee = owner;
+  next();
+};
+
+/** هل هذا الطلب يحتاج تصريحاً؟ (تستخدمه الواجهة قبل الإرسال) */
+apiRouter.post('/employees/approval-check', merchantAuthMiddleware, (req, res) => {
+  const { role, permissions } = req.body || {};
+  const gate = requiresOwnerApproval(String(role || ''), Array.isArray(permissions) ? permissions.map(String) : []);
+  res.json({ success: true, ...gate });
+});
+
+/** الطلبات المعلّقة — تظهر للمالك في تبويب الموظفين */
+apiRouter.get('/employees/approvals', merchantAuthMiddleware, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  res.json({ success: true, approvals: listPending(authReq.tenantId) });
+});
+
+/** إنشاء طلب تصريح (من الشخص الذي يضيف الموظف) */
+apiRouter.post('/employees/approvals', merchantAuthMiddleware, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const { employeeName, employeeRole, permissions } = req.body || {};
+  if (!employeeName || !employeeRole) {
+    return res.status(400).json({ error: 'اسم الموظف ودوره مطلوبان لطلب التصريح.' });
+  }
+  const perms: string[] = Array.isArray(permissions) ? permissions.map(String) : [];
+  const gate = requiresOwnerApproval(String(employeeRole), perms);
+  if (!gate.required) {
+    return res.json({ success: true, required: false, approval: null, reason: '' });
+  }
+  const approval = createApprovalRequest({
+    tenantId: authReq.tenantId,
+    requestedBy: authReq.actorName,
+    requestedById: authReq.actorId,
+    employeeName: String(employeeName).slice(0, 120),
+    employeeRole: String(employeeRole),
+    permissions: perms,
+    reason: gate.reason,
+  });
+  res.json({ success: true, required: true, approval, reason: gate.reason });
+});
+
+/** موافقة المالك — تحتاج رمز المالك السري */
+apiRouter.post('/employees/approvals/:id/approve', merchantAuthMiddleware, requireOwnerActor, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const pin = String(req.body?.ownerPin || '').replace(/\D/g, '');
+  const owner = (req as any).ownerEmployee || resolveOwnerEmployee(authReq.tenantId, authReq.actorId);
+  const ownerPin = String((owner as any)?.pin || '');
+  if (!ownerPin) {
+    return res.status(409).json({ error: 'OWNER_PIN_NOT_SET', message: 'لم يُضبط رمز سري لمالك المتجر بعد — اضبطه من تبويب الموظفين.' });
+  }
+  if (!pin || pin !== ownerPin) {
+    return res.status(401).json({ error: 'OWNER_PIN_INVALID', message: 'الرمز السري غير صحيح — التصريح يحتاج رمز مالك المتجر.' });
+  }
+  const record = approveEmployeeRequest(authReq.tenantId, String(req.params.id), authReq.actorName);
+  if (!record) {
+    return res.status(404).json({ error: 'APPROVAL_NOT_FOUND', message: 'الطلب غير موجود أو انتهت صلاحيته.' });
+  }
+  res.json({ success: true, approval: record });
+});
+
+/** رفض المالك للطلب */
+apiRouter.post('/employees/approvals/:id/reject', merchantAuthMiddleware, requireOwnerActor, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const record = rejectEmployeeRequest(authReq.tenantId, String(req.params.id), authReq.actorName);
+  if (!record) return res.status(404).json({ error: 'APPROVAL_NOT_FOUND', message: 'الطلب غير موجود.' });
+  res.json({ success: true, approval: record });
+});
+
+/** حالة طلب واحد — يستعلم عنها من يضيف الموظف (بين جهازين) */
+apiRouter.get('/employees/approvals/:id', merchantAuthMiddleware, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const record = getApproval(authReq.tenantId, String(req.params.id));
+  if (!record) return res.status(404).json({ error: 'APPROVAL_NOT_FOUND', message: 'الطلب غير موجود.' });
+  res.json({ success: true, approval: record });
+});
+
 apiRouter.post('/employees', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const tenant = db.getTenant(authReq.tenantId);
@@ -340,9 +443,34 @@ apiRouter.post('/employees', merchantAuthMiddleware, (req, res) => {
     });
   }
 
-  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions } = req.body;
+  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, approvalId } = req.body;
   if (!name || !role) {
     return res.status(400).json({ error: 'الاسم والمسمى الوظيفي مطلوبان' });
+  }
+
+  /*
+   * تصريح المالك — إضافة موظف بدور «المالك» أو بصلاحيات حساسة (إدارة موظفين،
+   * تعديل أسعار، أرباح، تكلفة) تحتاج موافقة المالك نفسه، لا مجرد مستخدم آخر
+   * يملك شاشة الموظفين. المالك يوافق في شاشة «تصريح المالك» برمزه السري.
+   */
+  const requestedPerms: string[] = Array.isArray(permissions) ? permissions.map(String) : [];
+  const gate = requiresOwnerApproval(String(role), requestedPerms);
+  if (gate.required) {
+    if (!approvalId) {
+      return res.status(428).json({
+        error: 'OWNER_APPROVAL_REQUIRED',
+        message: `إضافة هذا الموظف تحتاج تصريح المالك: ${gate.reason}`,
+        reason: gate.reason,
+      });
+    }
+    const consumed = consumeApproval(authReq.tenantId, String(approvalId));
+    if (!consumed.ok) {
+      return res.status(428).json({
+        error: 'OWNER_APPROVAL_INVALID',
+        message: consumed.error || 'التصريح غير صالح.',
+        reason: gate.reason,
+      });
+    }
   }
 
   const pinClean = String(pin || '').replace(/\D/g, '').slice(0, 6);
@@ -388,7 +516,27 @@ apiRouter.put('/employees/:id', merchantAuthMiddleware, (req, res) => {
   );
   if (!emp) return res.status(404).json({ error: 'الموظف غير موجود' });
 
-  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, isActive } = req.body || {};
+  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, isActive, approvalId } = req.body || {};
+  /*
+   * ترقية موظف إلى «المالك» أو منحه صلاحيات حساسة تمر بنفس بوابة التصريح،
+   * وإلا لأمكن التحايل على بوابة الإضافة بتعديل موظف موجود.
+   */
+  const nextRole = typeof role === 'string' && role ? role : emp.role;
+  const nextPerms = Array.isArray(permissions) ? permissions.map(String) : (emp.permissions || []);
+  const gate = requiresOwnerApproval(String(nextRole), nextPerms);
+  if (gate.required) {
+    if (!approvalId) {
+      return res.status(428).json({
+        error: 'OWNER_APPROVAL_REQUIRED',
+        message: `تعديل هذا الموظف يحتاج تصريح المالك: ${gate.reason}`,
+        reason: gate.reason,
+      });
+    }
+    const consumed = consumeApproval(authReq.tenantId, String(approvalId));
+    if (!consumed.ok) {
+      return res.status(428).json({ error: 'OWNER_APPROVAL_INVALID', message: consumed.error || 'التصريح غير صالح.', reason: gate.reason });
+    }
+  }
   if (typeof name === 'string' && name.trim()) emp.name = name.trim();
   if (typeof email === 'string') emp.email = email;
   if (typeof phone === 'string') emp.phone = phone;

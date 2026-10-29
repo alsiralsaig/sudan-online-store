@@ -2974,6 +2974,7 @@ var Database = class {
       notifications: INITIAL_NOTIFICATIONS,
       pushSubscriptions: [],
       pushKeys: [],
+      ownerApprovals: [],
       marketBanners: INITIAL_MARKET_BANNERS
     };
   }
@@ -5560,6 +5561,129 @@ async function runBackup(at = /* @__PURE__ */ new Date()) {
   }
 }
 
+// src/server/ownerApproval.ts
+import crypto from "node:crypto";
+var TTL_MS = 2 * 60 * 60 * 1e3;
+var SENSITIVE_PERMISSIONS = ["manage_staff", "edit_prices", "view_profits", "view_cogs"];
+function requiresOwnerApproval(role, permissions) {
+  if (role === "owner" || role === "super_admin") {
+    return { required: true, reason: "\u0627\u0644\u0645\u0648\u0638\u0641 \u0627\u0644\u062C\u062F\u064A\u062F \u0628\u062F\u0648\u0631 \xAB\u0627\u0644\u0645\u0627\u0644\u0643 / \u0627\u0644\u0645\u062F\u064A\u0631\xBB \u2014 \u0635\u0644\u0627\u062D\u064A\u0627\u062A \u0643\u0627\u0645\u0644\u0629 \u0639\u0644\u0649 \u0627\u0644\u0645\u062A\u062C\u0631." };
+  }
+  const sensitive = permissions.filter((p) => SENSITIVE_PERMISSIONS.includes(p));
+  if (sensitive.length > 0) {
+    const labels = {
+      manage_staff: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u0648\u0638\u0641\u064A\u0646",
+      edit_prices: "\u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0623\u0633\u0639\u0627\u0631",
+      view_profits: "\u0635\u0627\u0641\u064A \u0627\u0644\u0623\u0631\u0628\u0627\u062D",
+      view_cogs: "\u062A\u0643\u0644\u0641\u0629 \u0627\u0644\u0634\u0631\u0627\u0621"
+    };
+    return {
+      required: true,
+      reason: `\u0627\u0644\u0637\u0644\u0628 \u064A\u0645\u0646\u062D \u0635\u0644\u0627\u062D\u064A\u0627\u062A \u062D\u0633\u0627\u0633\u0629: ${sensitive.map((p) => labels[p] || p).join(" \xB7 ")}`
+    };
+  }
+  return { required: false, reason: "" };
+}
+function readAll() {
+  const bag = db.getSchema();
+  if (!Array.isArray(bag.ownerApprovals)) bag.ownerApprovals = [];
+  return bag.ownerApprovals;
+}
+function writeAll(rows) {
+  db.getSchema().ownerApprovals = rows.slice(0, 500);
+  db.commit();
+}
+function createApprovalRequest(input) {
+  const rows = readAll();
+  const dup = rows.find(
+    (r) => r.tenantId === input.tenantId && r.status === "pending" && r.requestedById === input.requestedById && r.employeeName === input.employeeName && r.employeeRole === input.employeeRole
+  );
+  if (dup && new Date(dup.expiresAt).getTime() > Date.now()) return dup;
+  const now = Date.now();
+  const record = {
+    id: `apr_${crypto.randomBytes(6).toString("hex")}`,
+    tenantId: input.tenantId,
+    requestedBy: input.requestedBy,
+    requestedById: input.requestedById,
+    employeeName: input.employeeName,
+    employeeRole: input.employeeRole,
+    permissions: input.permissions.slice(0, 30),
+    reason: input.reason,
+    status: "pending",
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + TTL_MS).toISOString()
+  };
+  writeAll([record, ...rows]);
+  db.logAudit({
+    tenantId: input.tenantId,
+    actorId: input.requestedById,
+    actorName: input.requestedBy,
+    action: "REQUEST_EMPLOYEE_APPROVAL",
+    entity: "Employee",
+    entityId: record.id,
+    details: `\u0637\u0644\u0628 \u062A\u0635\u0631\u064A\u062D \u0645\u0627\u0644\u0643 \u0644\u0625\u0636\u0627\u0641\u0629 \xAB${input.employeeName}\xBB \u2014 ${input.reason}`
+  });
+  return record;
+}
+function getApproval(tenantId, id) {
+  return readAll().find((r) => r.tenantId === tenantId && r.id === id) || null;
+}
+function listPending(tenantId) {
+  return readAll().filter((r) => r.tenantId === tenantId && r.status === "pending");
+}
+function approve(tenantId, id, approvedBy) {
+  const rows = readAll();
+  const rec = rows.find((r) => r.tenantId === tenantId && r.id === id);
+  if (!rec || rec.status !== "pending") return null;
+  if (new Date(rec.expiresAt).getTime() < Date.now()) return null;
+  rec.status = "approved";
+  rec.approvedAt = (/* @__PURE__ */ new Date()).toISOString();
+  rec.approvedBy = approvedBy;
+  writeAll(rows);
+  db.logAudit({
+    tenantId,
+    actorId: "owner",
+    actorName: approvedBy,
+    action: "APPROVE_EMPLOYEE",
+    entity: "Employee",
+    entityId: rec.id,
+    details: `\u0635\u0627\u062F\u0642 \u0627\u0644\u0645\u0627\u0644\u0643 \u0639\u0644\u0649 \u0625\u0636\u0627\u0641\u0629 \xAB${rec.employeeName}\xBB`
+  });
+  return rec;
+}
+function reject(tenantId, id, rejectedBy) {
+  const rows = readAll();
+  const rec = rows.find((r) => r.tenantId === tenantId && r.id === id);
+  if (!rec || rec.status !== "pending") return null;
+  rec.status = "rejected";
+  rec.approvedAt = (/* @__PURE__ */ new Date()).toISOString();
+  rec.approvedBy = rejectedBy;
+  writeAll(rows);
+  db.logAudit({
+    tenantId,
+    actorId: "owner",
+    actorName: rejectedBy,
+    action: "REJECT_EMPLOYEE",
+    entity: "Employee",
+    entityId: rec.id,
+    details: `\u0631\u0641\u0636 \u0627\u0644\u0645\u0627\u0644\u0643 \u0625\u0636\u0627\u0641\u0629 \xAB${rec.employeeName}\xBB`
+  });
+  return rec;
+}
+function consumeApproval(tenantId, id) {
+  const rows = readAll();
+  const rec = rows.find((r) => r.tenantId === tenantId && r.id === id);
+  if (!rec) return { ok: false, error: "\u0637\u0644\u0628 \u0627\u0644\u062A\u0635\u0631\u064A\u062D \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." };
+  if (new Date(rec.expiresAt).getTime() < Date.now()) return { ok: false, error: "\u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u0629 \u0637\u0644\u0628 \u0627\u0644\u062A\u0635\u0631\u064A\u062D \u2014 \u0627\u0637\u0644\u0628 \u062A\u0635\u0631\u064A\u062D\u0627\u064B \u062C\u062F\u064A\u062F\u0627\u064B \u0645\u0646 \u0627\u0644\u0645\u0627\u0644\u0643." };
+  if (rec.status === "pending") return { ok: false, error: "\u0644\u0645 \u064A\u0648\u0627\u0641\u0642 \u0627\u0644\u0645\u0627\u0644\u0643 \u0639\u0644\u0649 \u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0628\u0639\u062F." };
+  if (rec.status === "rejected") return { ok: false, error: "\u0631\u0641\u0636 \u0627\u0644\u0645\u0627\u0644\u0643 \u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628." };
+  if (rec.status === "used") return { ok: false, error: "\u0647\u0630\u0627 \u0627\u0644\u062A\u0635\u0631\u064A\u062D \u0627\u0633\u062A\u064F\u062E\u062F\u0645 \u0645\u0646 \u0642\u0628\u0644 \u2014 \u0627\u0637\u0644\u0628 \u062A\u0635\u0631\u064A\u062D\u0627\u064B \u062C\u062F\u064A\u062F\u0627\u064B." };
+  rec.status = "used";
+  rec.usedAt = (/* @__PURE__ */ new Date()).toISOString();
+  writeAll(rows);
+  return { ok: true, record: rec };
+}
+
 // src/server/securitySessions.ts
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 function safeEqual(a, b) {
@@ -5804,7 +5928,7 @@ function destroyMerchantSession(res) {
 }
 
 // src/server/routes.ts
-import crypto from "node:crypto";
+import crypto2 from "node:crypto";
 var apiRouter = Router();
 apiRouter.get("/barcode-lookup/:barcode", barcodeLookupHandler);
 function tryMerchantTenantId(req) {
@@ -5994,6 +6118,82 @@ apiRouter.get("/employees", merchantAuthMiddleware, (req, res) => {
   const employees = db.getSchema().employees.filter((e) => e.tenantId === authReq.tenantId);
   res.json({ employees });
 });
+function resolveOwnerEmployee(tenantId, actorId) {
+  const employees = db.getSchema().employees || [];
+  const byId = actorId ? employees.find((e) => e.id === actorId && e.tenantId === tenantId) : void 0;
+  if (byId && byId.role === "owner") return byId;
+  return employees.find((e) => e.tenantId === tenantId && e.role === "owner") || byId || null;
+}
+var requireOwnerActor = (req, res, next) => {
+  const actor = req;
+  const owner = resolveOwnerEmployee(actor.tenantId, actor.actorId);
+  const role = owner?.role || actor.actorRole;
+  if (role !== "owner" && role !== "super_admin") {
+    return res.status(403).json({ error: "OWNER_ONLY", message: "\u0627\u0644\u062A\u0635\u0631\u064A\u062D \u064A\u062D\u062A\u0627\u062C \u0631\u0645\u0632 \u0645\u0627\u0644\u0643 \u0627\u0644\u0645\u062A\u062C\u0631 \u0646\u0641\u0633\u0647." });
+  }
+  req.ownerEmployee = owner;
+  next();
+};
+apiRouter.post("/employees/approval-check", merchantAuthMiddleware, (req, res) => {
+  const { role, permissions } = req.body || {};
+  const gate = requiresOwnerApproval(String(role || ""), Array.isArray(permissions) ? permissions.map(String) : []);
+  res.json({ success: true, ...gate });
+});
+apiRouter.get("/employees/approvals", merchantAuthMiddleware, (req, res) => {
+  const authReq = req;
+  res.json({ success: true, approvals: listPending(authReq.tenantId) });
+});
+apiRouter.post("/employees/approvals", merchantAuthMiddleware, (req, res) => {
+  const authReq = req;
+  const { employeeName, employeeRole, permissions } = req.body || {};
+  if (!employeeName || !employeeRole) {
+    return res.status(400).json({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0638\u0641 \u0648\u062F\u0648\u0631\u0647 \u0645\u0637\u0644\u0648\u0628\u0627\u0646 \u0644\u0637\u0644\u0628 \u0627\u0644\u062A\u0635\u0631\u064A\u062D." });
+  }
+  const perms = Array.isArray(permissions) ? permissions.map(String) : [];
+  const gate = requiresOwnerApproval(String(employeeRole), perms);
+  if (!gate.required) {
+    return res.json({ success: true, required: false, approval: null, reason: "" });
+  }
+  const approval = createApprovalRequest({
+    tenantId: authReq.tenantId,
+    requestedBy: authReq.actorName,
+    requestedById: authReq.actorId,
+    employeeName: String(employeeName).slice(0, 120),
+    employeeRole: String(employeeRole),
+    permissions: perms,
+    reason: gate.reason
+  });
+  res.json({ success: true, required: true, approval, reason: gate.reason });
+});
+apiRouter.post("/employees/approvals/:id/approve", merchantAuthMiddleware, requireOwnerActor, (req, res) => {
+  const authReq = req;
+  const pin = String(req.body?.ownerPin || "").replace(/\D/g, "");
+  const owner = req.ownerEmployee || resolveOwnerEmployee(authReq.tenantId, authReq.actorId);
+  const ownerPin = String(owner?.pin || "");
+  if (!ownerPin) {
+    return res.status(409).json({ error: "OWNER_PIN_NOT_SET", message: "\u0644\u0645 \u064A\u064F\u0636\u0628\u0637 \u0631\u0645\u0632 \u0633\u0631\u064A \u0644\u0645\u0627\u0644\u0643 \u0627\u0644\u0645\u062A\u062C\u0631 \u0628\u0639\u062F \u2014 \u0627\u0636\u0628\u0637\u0647 \u0645\u0646 \u062A\u0628\u0648\u064A\u0628 \u0627\u0644\u0645\u0648\u0638\u0641\u064A\u0646." });
+  }
+  if (!pin || pin !== ownerPin) {
+    return res.status(401).json({ error: "OWNER_PIN_INVALID", message: "\u0627\u0644\u0631\u0645\u0632 \u0627\u0644\u0633\u0631\u064A \u063A\u064A\u0631 \u0635\u062D\u064A\u062D \u2014 \u0627\u0644\u062A\u0635\u0631\u064A\u062D \u064A\u062D\u062A\u0627\u062C \u0631\u0645\u0632 \u0645\u0627\u0644\u0643 \u0627\u0644\u0645\u062A\u062C\u0631." });
+  }
+  const record = approve(authReq.tenantId, String(req.params.id), authReq.actorName);
+  if (!record) {
+    return res.status(404).json({ error: "APPROVAL_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0623\u0648 \u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u062A\u0647." });
+  }
+  res.json({ success: true, approval: record });
+});
+apiRouter.post("/employees/approvals/:id/reject", merchantAuthMiddleware, requireOwnerActor, (req, res) => {
+  const authReq = req;
+  const record = reject(authReq.tenantId, String(req.params.id), authReq.actorName);
+  if (!record) return res.status(404).json({ error: "APPROVAL_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  res.json({ success: true, approval: record });
+});
+apiRouter.get("/employees/approvals/:id", merchantAuthMiddleware, (req, res) => {
+  const authReq = req;
+  const record = getApproval(authReq.tenantId, String(req.params.id));
+  if (!record) return res.status(404).json({ error: "APPROVAL_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  res.json({ success: true, approval: record });
+});
 apiRouter.post("/employees", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const tenant = db.getTenant(authReq.tenantId);
@@ -6004,9 +6204,28 @@ apiRouter.post("/employees", merchantAuthMiddleware, (req, res) => {
       error: `\u0648\u0635\u0644\u062A \u0644\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 \u0644\u0644\u0645\u0648\u0638\u0641\u064A\u0646 \u0641\u064A \u0628\u0627\u0642\u062A\u0643 (${plan.maxEmployees} \u0645\u0648\u0638\u0641). \u064A\u0631\u062C\u0649 \u062A\u0631\u0642\u064A\u0629 \u0627\u0634\u062A\u0631\u0627\u0643\u0643.`
     });
   }
-  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions } = req.body;
+  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, approvalId } = req.body;
   if (!name || !role) {
     return res.status(400).json({ error: "\u0627\u0644\u0627\u0633\u0645 \u0648\u0627\u0644\u0645\u0633\u0645\u0649 \u0627\u0644\u0648\u0638\u064A\u0641\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
+  }
+  const requestedPerms = Array.isArray(permissions) ? permissions.map(String) : [];
+  const gate = requiresOwnerApproval(String(role), requestedPerms);
+  if (gate.required) {
+    if (!approvalId) {
+      return res.status(428).json({
+        error: "OWNER_APPROVAL_REQUIRED",
+        message: `\u0625\u0636\u0627\u0641\u0629 \u0647\u0630\u0627 \u0627\u0644\u0645\u0648\u0638\u0641 \u062A\u062D\u062A\u0627\u062C \u062A\u0635\u0631\u064A\u062D \u0627\u0644\u0645\u0627\u0644\u0643: ${gate.reason}`,
+        reason: gate.reason
+      });
+    }
+    const consumed = consumeApproval(authReq.tenantId, String(approvalId));
+    if (!consumed.ok) {
+      return res.status(428).json({
+        error: "OWNER_APPROVAL_INVALID",
+        message: consumed.error || "\u0627\u0644\u062A\u0635\u0631\u064A\u062D \u063A\u064A\u0631 \u0635\u0627\u0644\u062D.",
+        reason: gate.reason
+      });
+    }
   }
   const pinClean = String(pin || "").replace(/\D/g, "").slice(0, 6);
   const newEmployee = {
@@ -6042,7 +6261,23 @@ apiRouter.put("/employees/:id", merchantAuthMiddleware, (req, res) => {
     (e) => e.id === req.params.id && e.tenantId === authReq.tenantId
   );
   if (!emp) return res.status(404).json({ error: "\u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
-  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, isActive } = req.body || {};
+  const { name, email, phone, role, pin, branchId, maxDiscountPct, permissions, isActive, approvalId } = req.body || {};
+  const nextRole = typeof role === "string" && role ? role : emp.role;
+  const nextPerms = Array.isArray(permissions) ? permissions.map(String) : emp.permissions || [];
+  const gate = requiresOwnerApproval(String(nextRole), nextPerms);
+  if (gate.required) {
+    if (!approvalId) {
+      return res.status(428).json({
+        error: "OWNER_APPROVAL_REQUIRED",
+        message: `\u062A\u0639\u062F\u064A\u0644 \u0647\u0630\u0627 \u0627\u0644\u0645\u0648\u0638\u0641 \u064A\u062D\u062A\u0627\u062C \u062A\u0635\u0631\u064A\u062D \u0627\u0644\u0645\u0627\u0644\u0643: ${gate.reason}`,
+        reason: gate.reason
+      });
+    }
+    const consumed = consumeApproval(authReq.tenantId, String(approvalId));
+    if (!consumed.ok) {
+      return res.status(428).json({ error: "OWNER_APPROVAL_INVALID", message: consumed.error || "\u0627\u0644\u062A\u0635\u0631\u064A\u062D \u063A\u064A\u0631 \u0635\u0627\u0644\u062D.", reason: gate.reason });
+    }
+  }
   if (typeof name === "string" && name.trim()) emp.name = name.trim();
   if (typeof email === "string") emp.email = email;
   if (typeof phone === "string") emp.phone = phone;
@@ -8875,7 +9110,7 @@ apiRouter.post("/market-ads", (req, res) => {
     if (claimed && String(claimed).length >= 8) {
       resolvedOwner = String(claimed);
     } else {
-      resolvedOwner = `anon:${crypto.randomBytes(16).toString("hex")}`;
+      resolvedOwner = `anon:${crypto2.randomBytes(16).toString("hex")}`;
     }
   }
   const merchantTenant = merchantTenantId ? db.getTenant(merchantTenantId) : void 0;

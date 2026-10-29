@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Building,
   Users,
@@ -30,7 +30,7 @@ interface BranchesEmployeesViewProps {
   onRefresh: () => void;
 }
 
-type StaffTab = 'branches' | 'employees' | 'audit';
+type StaffTab = 'branches' | 'employees' | 'audit' | 'approvals';
 
 const emptyPerms = (): Record<PermKey, boolean> =>
   PERM_DEFS.reduce((acc, p) => {
@@ -62,10 +62,98 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
   const [empBranchId, setEmpBranchId] = useState(branches[0]?.id || '');
   const [empMaxDiscount, setEmpMaxDiscount] = useState('10');
   const [empPerms, setEmpPerms] = useState<Record<PermKey, boolean>>(emptyPerms());
+  /*
+   * تصريح المالك: إضافة موظف بدور المالك أو بصلاحيات حساسة تحتاج رمز المالك.
+   * الطلب يُنشأ على الخادم فيظهر في تبويب «تصريح المالك» على أي جهاز يدخل
+   * به المالك، وبعد الموافقة يكمل الحفظ هنا تلقائياً.
+   */
+  const [approvalId, setApprovalId] = useState<string | null>(null);
+  const [approvalReason, setApprovalReason] = useState<string>('');
+  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'pending' | 'approved'>('idle');
+  const [ownerPinInput, setOwnerPinInput] = useState('');
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const [approvalMsg, setApprovalMsg] = useState<string | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [approvalPins, setApprovalPins] = useState<Record<string, string>>({});
+  const [approvalActionBusy, setApprovalActionBusy] = useState<string | null>(null);
+
+  const approveRequestFromTab = async (id: string) => {
+    setApprovalActionBusy(id);
+    try {
+      await api.approveEmployeeApproval(id, approvalPins[id] || '');
+      setApprovalPins((prev) => ({ ...prev, [id]: '' }));
+      refreshApprovals();
+    } catch (err: any) {
+      alert(err.message || 'تعذّر التصريح.');
+    } finally {
+      setApprovalActionBusy(null);
+    }
+  };
+
+  const rejectRequestFromTab = async (id: string) => {
+    setApprovalActionBusy(id);
+    try {
+      await api.rejectEmployeeApproval(id);
+      refreshApprovals();
+    } catch (err: any) {
+      alert(err.message || 'تعذّر الرفض.');
+    } finally {
+      setApprovalActionBusy(null);
+    }
+  };
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const refreshApprovals = useCallback(() => {
+    api
+      .getEmployeeApprovals()
+      .then((r: any) => setPendingApprovals(r.approvals || []))
+      .catch(() => setPendingApprovals([]));
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'employees' || activeTab === 'approvals') refreshApprovals();
+  }, [activeTab, refreshApprovals]);
+
+  /* المعلّق يتحول لمصرَّح به من جهاز آخر (جوال المالك) → نكمل الحفظ تلقائياً */
+  useEffect(() => {
+    if (!approvalId || approvalStatus !== 'pending') return;
+    const timer = setInterval(async () => {
+      try {
+        const r: any = await api.getEmployeeApproval(approvalId);
+        if (r?.approval?.status === 'approved') {
+          setApprovalStatus('approved');
+          setApprovalMsg('صادق المالك ✅ — اضغط «حفظ الموظف» الآن.');
+          setErrorMsg(null);
+        } else if (r?.approval?.status === 'rejected') {
+          setApprovalStatus('idle');
+          setApprovalId(null);
+          setErrorMsg('رفض المالك إضافة هذا الموظف.');
+        }
+      } catch { /* تجاهل انقطاع الشبكة المؤقت */ }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [approvalId, approvalStatus]);
+
+  const approveFromHere = async () => {
+    if (!approvalId) return;
+    setApprovalBusy(true);
+    setApprovalMsg(null);
+    try {
+      await api.approveEmployeeApproval(approvalId, ownerPinInput);
+      setApprovalStatus('approved');
+      setOwnerPinInput('');
+      setApprovalMsg('تم التصريح ✅ — اضغط «حفظ الموظف» الآن.');
+      setErrorMsg(null);
+      refreshApprovals();
+    } catch (err: any) {
+      setApprovalMsg(err.message || 'تعذّر التصريح.');
+    } finally {
+      setApprovalBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (activeTab !== 'audit') return;
@@ -133,6 +221,11 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
     for (const p of PERM_DEFS) next[p.key] = hasPerm(emp, p.key);
     setEmpPerms(next);
     setErrorMsg(null);
+    setApprovalId(null);
+    setApprovalStatus('idle');
+    setApprovalReason('');
+    setApprovalMsg(null);
+    setOwnerPinInput('');
     setIsEmployeeModalOpen(true);
   };
 
@@ -154,6 +247,38 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
       .map(([k]) => k);
     if (empRole === 'owner') permissions.push('all');
     const pin = empPin.replace(/\D/g, '').slice(0, 6);
+
+    /* هل تغيّر الدور أو الصلاحيات عن القيم المحفوظة؟ (وقتها تلزم موافقة المالك) */
+    const sortedNew = [...permissions].sort().join(',');
+    const sortedOld = [...(editingEmployee?.permissions || [])].sort().join(',');
+    const permissionsChanged = !editingEmployee || editingEmployee.role !== empRole || sortedNew !== sortedOld;
+
+    /* بوابة تصريح المالك: نطلب الطلب على الخادم أولاً إن لزم */
+    if (!editingEmployee || permissionsChanged) {
+      try {
+        const check: any = await api.checkEmployeeApproval(empRole, permissions);
+        if (check?.required && approvalStatus !== 'approved') {
+          const req: any = await api.requestEmployeeApproval({
+            employeeName: empName,
+            employeeRole: empRole,
+            permissions,
+          });
+          setApprovalId(req?.approval?.id || null);
+          setApprovalReason(req?.reason || check.reason || '');
+          setApprovalStatus('pending');
+          setApprovalMsg(null);
+          setIsSubmitting(false);
+          return;
+        }
+      } catch (err: any) {
+        setErrorMsg(err.message || 'تعذّر إنشاء طلب التصريح.');
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    const approvalPayload = approvalStatus === 'approved' && approvalId ? { approvalId } : {};
+
     try {
       if (editingEmployee) {
         const res = await api.updateEmployee(editingEmployee.id, {
@@ -164,6 +289,7 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
           branchId: empBranchId,
           maxDiscountPct: Number(empMaxDiscount),
           permissions,
+          ...approvalPayload,
           ...(pin.length >= 4 ? { pin } : {}),
         });
         if (res.success) {
@@ -185,10 +311,15 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
           branchId: empBranchId,
           maxDiscountPct: Number(empMaxDiscount),
           permissions,
+          ...approvalPayload,
         });
         if (res.success) {
           setIsEmployeeModalOpen(false);
+          setApprovalId(null);
+          setApprovalStatus('idle');
+          setApprovalMsg(null);
           onRefresh();
+          refreshApprovals();
         }
       }
     } catch (err: any) {
@@ -225,6 +356,7 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
                 ['employees', `فريق العمل (${employees.length})`],
                 ['branches', `الفروع (${branches.length})`],
                 ['audit', `سجل التدقيق (${auditLogs.length || '…'})`],
+                ['approvals', `تصريح المالك${pendingApprovals.length ? ` (${pendingApprovals.length})` : ''}`],
               ] as [StaffTab, string][]
             ).map(([id, label]) => (
               <button
@@ -239,6 +371,7 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
                 {id === 'employees' && <Users className="w-3.5 h-3.5" />}
                 {id === 'branches' && <Building className="w-3.5 h-3.5" />}
                 {id === 'audit' && <Clock className="w-3.5 h-3.5" />}
+                {id === 'approvals' && <Shield className="w-3.5 h-3.5" />}
                 {label}
               </button>
             ))}
@@ -421,6 +554,68 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'approvals' && (
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <h3 className="font-black flex items-center gap-2"><Shield className="w-4 h-4" /> تصريح المالك — إضافة الموظفين</h3>
+            <p className="text-xs mt-1 leading-relaxed">
+              أي إضافة موظف بدور «المالك / المدير» أو بصلاحيات حساسة (إدارة موظفين، تعديل أسعار، أرباح، تكلفة)
+              تحتاج تصريحك أنت. راجع الطلب ثم أدخل رمزك السري للموافقة.
+            </p>
+          </div>
+
+          {pendingApprovals.length === 0 ? (
+            <p className="text-sm text-slate-500 bg-white border border-slate-200 rounded-2xl p-5 text-center">
+              لا توجد طلبات تصريح معلّقة الآن.
+            </p>
+          ) : (
+            pendingApprovals.map((a) => (
+              <div key={a.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-black text-slate-900">{a.employeeName}</p>
+                    <p className="text-xs text-slate-500">
+                      الدور: {roleLabel(a.employeeRole)} • طلبه: {a.requestedBy} • {new Date(a.createdAt).toLocaleString('ar-EG')}
+                    </p>
+                  </div>
+                  <span className="text-[11px] px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800 font-bold">بانتظار تصريحك</span>
+                </div>
+                <p className="text-xs text-slate-600">{a.reason}</p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="رمزك السري"
+                    value={approvalPins[a.id] || ''}
+                    onChange={(e) =>
+                      setApprovalPins({ ...approvalPins, [a.id]: e.target.value.replace(/\D/g, '').slice(0, 6) })
+                    }
+                    className="w-32 bg-slate-50 border border-slate-300 rounded-lg p-2 text-slate-900 font-mono tracking-widest"
+                  />
+                  <button
+                    type="button"
+                    disabled={approvalActionBusy === a.id || (approvalPins[a.id] || '').length < 4}
+                    onClick={() => void approveRequestFromTab(a.id)}
+                    className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold disabled:opacity-40"
+                  >
+                    {approvalActionBusy === a.id ? '...' : 'تصريح'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={approvalActionBusy === a.id}
+                    onClick={() => void rejectRequestFromTab(a.id)}
+                    className="px-3 py-2 rounded-lg bg-rose-100 text-rose-700 font-bold disabled:opacity-40"
+                  >
+                    رفض
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       )}
 
@@ -621,16 +816,66 @@ export const BranchesEmployeesView: React.FC<BranchesEmployeesViewProps> = ({
               ))}
             </div>
 
+            {/*
+              * بوابة تصريح المالك — تظهر فقط عند الحاجة (دور مالك أو صلاحيات
+              * حساسة). تُخفي «حفظ الموظف» حتى يصادق المالك برمزه السري، ولا
+              * يمكن التحايل عليها لأن الخادم يرفض أي إضافة بدون تصريح.
+              */}
+            {approvalStatus !== 'idle' && (
+              <div className="rounded-xl border border-amber-700 bg-amber-950/40 p-3.5 space-y-2.5">
+                <div className="flex items-center gap-2 font-bold text-amber-200">
+                  <Shield className="w-4 h-4" />
+                  تصريح مالك المتجر مطلوب
+                </div>
+                <p className="text-amber-100/90 leading-relaxed">{approvalReason}</p>
+                {approvalStatus === 'pending' && (
+                  <>
+                    <p className="text-slate-300 leading-relaxed">
+                      اطلب من المالك فتح التطبيق على جواله ← تبويب الموظفين ← «تصريح المالك» ثم المصادقة على الطلب
+                      برمزه السري. الطلب يظهر له فوراً على أي جهاز. ولو المالك معك الآن، أدخل رمزه هنا:
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={ownerPinInput}
+                        onChange={(e) => setOwnerPinInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="رمز المالك السري"
+                        className="flex-1 bg-slate-950 border border-amber-700 rounded-lg p-2 text-white outline-none font-mono tracking-widest"
+                      />
+                      <button
+                        type="button"
+                        disabled={approvalBusy || ownerPinInput.length < 4}
+                        onClick={() => void approveFromHere()}
+                        className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black disabled:opacity-50"
+                      >
+                        {approvalBusy ? '...' : 'تصريح'}
+                      </button>
+                    </div>
+                    {approvalMsg && <p className="text-rose-300">{approvalMsg}</p>}
+                    <p className="text-[11px] text-slate-400">
+                      رقم الطلب: <span className="font-mono">{approvalId}</span> — صالح ساعتين.
+                    </p>
+                  </>
+                )}
+                {approvalStatus === 'approved' && (
+                  <p className="text-emerald-300 font-bold">تم التصريح ✅ — اضغط «حفظ الموظف» لإتمام الإضافة.</p>
+                )}
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button type="button" onClick={() => setIsEmployeeModalOpen(false)} className="px-4 py-2 rounded-xl text-slate-400 hover:bg-slate-800">
                 إلغاء
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black"
+                disabled={isSubmitting || approvalStatus === 'pending'}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black disabled:opacity-40 disabled:cursor-not-allowed"
+                title={approvalStatus === 'pending' ? 'بانتظار تصريح المالك' : undefined}
               >
-                حفظ الموظف
+                {approvalStatus === 'pending' ? 'بانتظار تصريح المالك 🔒' : 'حفظ الموظف'}
               </button>
             </div>
           </form>

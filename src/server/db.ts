@@ -2195,6 +2195,7 @@ class Database {
       notifications: INITIAL_NOTIFICATIONS,
       pushSubscriptions: [],
       pushKeys: [],
+      ownerApprovals: [],
       marketBanners: INITIAL_MARKET_BANNERS,
     };
   }

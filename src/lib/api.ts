@@ -257,6 +257,43 @@ class ApiClient {
     return this.request(`/employees/${id}`, { method: 'DELETE' });
   }
 
+  /* ---- تصريح المالك لإضافة الموظفين ---- */
+
+  /** هل هذه الإضافة تحتاج تصريح مالك؟ */
+  public async checkEmployeeApproval(role: string, permissions: string[]): Promise<{ required: boolean; reason: string }> {
+    return this.request('/employees/approval-check', {
+      method: 'POST',
+      body: JSON.stringify({ role, permissions }),
+    });
+  }
+
+  public async requestEmployeeApproval(payload: {
+    employeeName: string;
+    employeeRole: string;
+    permissions: string[];
+  }): Promise<{ success: boolean; required: boolean; approval: any; reason: string }> {
+    return this.request('/employees/approvals', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  public async getEmployeeApprovals(): Promise<{ success: boolean; approvals: any[] }> {
+    return this.request('/employees/approvals');
+  }
+
+  public async getEmployeeApproval(id: string): Promise<{ success: boolean; approval: any }> {
+    return this.request(`/employees/approvals/${encodeURIComponent(id)}`);
+  }
+
+  public async approveEmployeeApproval(id: string, ownerPin: string): Promise<{ success: boolean; approval: any }> {
+    return this.request(`/employees/approvals/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ ownerPin }),
+    });
+  }
+
+  public async rejectEmployeeApproval(id: string): Promise<{ success: boolean; approval: any }> {
+    return this.request(`/employees/approvals/${encodeURIComponent(id)}/reject`, { method: 'POST', body: '{}' });
+  }
+
   /** تحليل جملة بيع باللهجة السودانية على الخادم (قواعد ثم Gemini) */
   public async parseSaleVoice(speechText: string): Promise<{
     source: string;
