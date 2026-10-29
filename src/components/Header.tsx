@@ -29,12 +29,36 @@ import {
   Cloud,
   CloudOff,
   CloudUpload,
+  Menu,
+  ChevronDown,
 } from 'lucide-react';
 import type { InventoryAlert } from '../types/index.ts';
 import { SanadLogo } from './Common/SanadLogo.tsx';
 import { TenantApplicationModal } from './Common/TenantApplicationModal.tsx';
 import { NotificationBell } from './Common/NotificationBell.tsx';
 import { ThemeSwitcher } from './Common/ThemeSwitcher.tsx';
+
+/**
+ * وحدات تطبيق التاجر — مصدر واحد للقائمة المنسدلة.
+ * الترتيب مقصود: الأكثر استخداماً في الأعلى (الكاشير ثم المخزون ثم المبيعات).
+ */
+const MERCHANT_NAV: { id: string; label: string }[] = [
+  { id: 'welcome', label: 'الرئيسية' },
+  { id: 'pos', label: 'الكاشير (نقطة البيع)' },
+  { id: 'inventory', label: 'المخزون والمنتجات' },
+  { id: 'sales', label: 'سجل المبيعات والفواتير' },
+  { id: 'reports', label: 'التقارير والأرباح' },
+  { id: 'shifts', label: 'الورديات ومطابقة الخزينة' },
+  { id: 'purchases_expenses', label: 'المشتريات والمصروفات' },
+  { id: 'inventory_audit', label: 'تدقيق المخزون (بالهاتف)' },
+  { id: 'transfers', label: 'تحويلات الفروع' },
+  { id: 'branches_employees', label: 'الفروع والموظفين' },
+  { id: 'currencies', label: 'العملات والصرف (6 عملات)' },
+  { id: 'store_orders', label: 'طلبات المتجر الإلكتروني' },
+  { id: 'my_ads', label: 'إعلاناتي' },
+  { id: 'kitchen', label: 'شاشة المطبخ (KDS)' },
+  { id: 'subscription', label: 'الاشتراك والباقات' },
+];
 
 interface HeaderProps {
   currentTab: string;
@@ -77,6 +101,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenActivateStore,
   onOpenCloud,
 }) => {
+  const [isNavOpen, setIsNavOpen] = React.useState(false);
   const [isAlertsOpen, setIsAlertsOpen] = React.useState(false);
   const [isTenantModalOpen, setIsTenantModalOpen] = React.useState(false);
 
@@ -413,148 +438,61 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Secondary workspace navigation bar for all modules */}
-      <div className="flex items-center gap-2 px-3 sm:px-6 py-2 bg-slate-900 border-t border-slate-800 overflow-x-auto no-scrollbar text-xs">
+      {/*
+        * التنقل بين الوحدات — قائمة منسدلة في أعلى اليمين.
+        * ليه: الشريط الأفقي المنسحب كان الناس ما يعرفوش إنه فيه تبويبات مخفية
+        * على الجوال. القائمة المنسدلة تفتح بزر واضح وتُظهر كل الوحدات مرة واحدة.
+        */}
+      <div className="relative flex items-center justify-between gap-2 px-3 sm:px-6 py-2 bg-slate-900 border-t border-slate-800 text-xs">
         <button
-          onClick={() => onTabChange('welcome')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'welcome' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
+          onClick={() => setIsNavOpen((v) => !v)}
+          aria-expanded={isNavOpen}
+          aria-haspopup="menu"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold border border-slate-700"
         >
-          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-          <span>الرئيسية</span>
+          <Menu className="w-4 h-4 text-sky-400" />
+          <span>{MERCHANT_NAV.find((n) => n.id === currentTab)?.label || 'القائمة'}</span>
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isNavOpen ? 'rotate-180' : ''}`} />
         </button>
+
         <button
           onClick={() => onTabChange('pos')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'pos' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold ${
+            currentTab === 'pos' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
           }`}
         >
           <ShoppingCart className="w-3.5 h-3.5" />
-          <span>الكاشير (POS)</span>
+          <span>الكاشير</span>
         </button>
-        <button
-          onClick={() => onTabChange('kitchen')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'kitchen' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <UtensilsCrossed className="w-3.5 h-3.5 text-amber-500" />
-          <span>شاشة المطبخ (KDS)</span>
-        </button>
-        <button
-          onClick={() => onTabChange('inventory')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'inventory' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5" />
-          <span>المخزون والمنتجات</span>
-        </button>
-        <button
-          onClick={() => onTabChange('inventory_audit')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'inventory_audit'
-              ? 'bg-slate-900 text-emerald-400 shadow-sm font-bold ring-1 ring-emerald-500/30'
-              : 'text-slate-700 hover:text-slate-900 bg-emerald-50/70 border border-emerald-200/50 font-semibold'
-          }`}
-        >
-          <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
-          <span>تدقيق المخزون (بالهاتف)</span>
-        </button>
-        <button
-          onClick={() => onTabChange('transfers')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'transfers' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <ArrowLeftRight className="w-3.5 h-3.5" />
-          <span>تحويلات الفروع</span>
-        </button>
-        <button
-          onClick={() => onTabChange('shifts')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'shifts' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Clock className="w-3.5 h-3.5" />
-          <span>الورديات ومطابقة الخزينة</span>
-        </button>
-        <button
-          onClick={() => onTabChange('sales')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'sales' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Store className="w-3.5 h-3.5" />
-          <span>سجل المبيعات والفواتير</span>
-        </button>
-        <button
-          onClick={() => onTabChange('purchases_expenses')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'purchases_expenses' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Coins className="w-3.5 h-3.5" />
-          <span>المشتريات والمصروفات</span>
-        </button>
-        <button
-          onClick={() => onTabChange('reports')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'reports' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <BarChart3 className="w-3.5 h-3.5" />
-          <span>التقارير والأرباح</span>
-        </button>
-        <button
-          onClick={() => onTabChange('branches_employees')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'branches_employees' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <UserCheck className="w-3.5 h-3.5" />
-          <span>الفروع والموظفين</span>
-        </button>
-        <button
-          onClick={() => onTabChange('currencies')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'currencies' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Coins className="w-3.5 h-3.5" />
-          <span>العملات والصرف (6 عملات)</span>
-        </button>
-        <button
-          onClick={() => onTabChange('store_orders')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'store_orders' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Globe className="w-3.5 h-3.5" />
-          <span>طلبات المتجر الإلكتروني</span>
-        </button>
-        <button
-          onClick={() => onTabChange('subscription')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'subscription' ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <CreditCard className="w-3.5 h-3.5" />
-          <span>الاشتراك والباقات</span>
-        </button>
-        <button
-          onClick={() => onTabChange('my_ads')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md whitespace-nowrap transition-colors ${
-            currentTab === 'my_ads'
-              ? 'bg-slate-800 text-emerald-300 shadow-sm font-semibold'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Megaphone className="w-3.5 h-3.5 text-emerald-600" />
-          <span>إعلاناتي</span>
-        </button>
-        {/* إدارة المنصة المركزية محجوبة في متجر التاجر — للإدارة فقط عبر ?app=super_admin */}
+
+        {isNavOpen && (
+          <>
+            <div className="fixed inset-0 z-[60]" onClick={() => setIsNavOpen(false)} />
+            <div
+              role="menu"
+              className="absolute top-full start-0 mt-1 z-[61] w-[min(92vw,20rem)] max-h-[70vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-1.5 space-y-0.5"
+            >
+              {MERCHANT_NAV.map((item) => (
+                <button
+                  key={item.id}
+                  role="menuitem"
+                  onClick={() => {
+                    onTabChange(item.id);
+                    setIsNavOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-right transition-colors ${
+                    currentTab === item.id
+                      ? 'bg-sky-600/20 text-sky-300 font-bold border border-sky-500/40'
+                      : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-600 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       <TenantApplicationModal

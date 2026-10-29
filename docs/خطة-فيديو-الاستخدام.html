@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>خطة فيديو شرح تطبيق سند</title>
+<style>
+  :root { --sky:#0ea5e9; --sky2:#38bdf8; --ink:#0f172a; --muted:#475569; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Tahoma,Arial,sans-serif; background:#f1f5f9; color:var(--ink); line-height:1.75; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 14px 60px; }
+  header.hero { background:linear-gradient(135deg,#0284c7,#0ea5e9 55%,#38bdf8); color:#fff; border-radius:22px; padding:24px 20px; box-shadow:0 12px 30px rgba(2,132,199,.25); }
+  header.hero h1 { margin:0 0 6px; font-size:22px; }
+  header.hero p { margin:0; font-size:13px; opacity:.95; }
+  .badge { display:inline-block; background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35); border-radius:999px; padding:3px 10px; font-size:11px; font-weight:700; margin-bottom:10px; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:18px; padding:16px 16px 8px; margin-top:16px; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+  .card h2 { font-size:16px; margin:0 0 4px; display:flex; align-items:center; gap:8px; }
+  .num { display:inline-flex; width:26px; height:26px; border-radius:9px; background:var(--sky); color:#fff; align-items:center; justify-content:center; font-size:13px; font-weight:800; }
+  .sub { font-size:12px; color:var(--muted); margin:0 0 10px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:right; padding:8px 8px; border-bottom:1px solid #eef2f7; vertical-align:top; }
+  th { font-size:11px; color:#64748b; font-weight:800; background:#f8fafc; }
+  td.t { white-space:nowrap; color:#0284c7; font-weight:700; font-size:12px; }
+  .say { background:#f0f9ff; border:1px solid #bae6fd; border-radius:14px; padding:10px 12px; font-size:13px; margin:8px 0 12px; }
+  .say b { color:#0369a1; }
+  ul { margin:8px 0 14px; padding-inline-start:20px; font-size:13px; }
+  li { margin:4px 0; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:640px){ .grid { grid-template-columns:1fr; } }
+  .tip { background:#fffbeb; border:1px solid #fde68a; border-radius:14px; padding:12px; font-size:12.5px; }
+  .tip h3 { margin:0 0 6px; font-size:13px; color:#92400e; }
+  .check { list-style:none; padding:0; }
+  .check li { display:flex; gap:8px; align-items:flex-start; }
+  .box { flex:none; width:16px; height:16px; border:2px solid #94a3b8; border-radius:5px; margin-top:5px; }
+  .kbd { background:#e2e8f0; border-radius:6px; padding:1px 6px; font-size:11.5px; font-weight:700; }
+  footer { text-align:center; font-size:11px; color:#94a3b8; margin-top:26px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="badge">دليل عملي · سند</span>
+    <h1>كيف تعمل فيديو شرح استخدام التطبيق</h1>
+    <p>ابدأ بفيديو واحد قصير (٦٠–٩٠ ثانية). ليس فيلماً واحداً طويلاً. الفيديوهات القصيرة تُشاهد كاملة وتُفهم، والطويلة يُغلقها الناس بعد ٢٠ ثانية.</p>
+  </header>
+
+  <div class="card">
+    <h2><span class="num">١</span> من أين تبدأ بالضبط</h2>
+    <p class="sub">الترتيب مبني على سؤال التاجر الأول: «كيف أبيع أول فاتورة؟»</p>
+    <table>
+      <tr><th>#</th><th>الفيديو</th><th>المدة</th><th>لمن</th></tr>
+      <tr><td class="t">١</td><td><b>أول فاتورة في ٦٠ ثانية</b><br><span class="sub">دخول المتجر ← شاشة «من يدخل الآن؟» ← الكاشير ← بيع صنف ← طباعة/إرسال الفاتورة</span></td><td class="t">٦٠–٩٠ث</td><td>كل تاجر جديد</td></tr>
+      <tr><td class="t">٢</td><td><b>أضف أصنافك مرة واحدة</b><br><span class="sub">المخزون والمنتجات ← إضافة صنف (صورة، سعر، باركود، حد النواقص) ← استيراد من Excel</span></td><td class="t">٩٠ث</td><td>كل تاجر جديد</td></tr>
+      <tr><td class="t">٣</td><td><b>اعرف مبيعاتك وأرباحك</b><br><span class="sub">الرئيسية (لوحة اليوم) ← التقارير والأرباح ← الورديات ومطابقة الخزينة</span></td><td class="t">٦٠ث</td><td>صاحب المتجر</td></tr>
+      <tr><td class="t">٤</td><td><b>موظفوك وصلاحياتهم</b><br><span class="sub">الفروع والموظفين ← إضافة موظف + PIN + إخفاء الأرباح عن الكاشير ← إشعارات الهاتف</span></td><td class="t">٩٠ث</td><td>صاحب المتجر</td></tr>
+      <tr><td class="t">٥</td><td><b>تطبيق المتسوقين</b><br><span class="sub">السوق ← المتاجر ← طلب ← تتبع الطلب ← نقاط الولاء</span></td><td class="t">٦٠ث</td><td>الزبائن</td></tr>
+      <tr><td class="t">٦</td><td><b>المخزون من الهاتف (تدقيق)</b><br><span class="sub">تدقيق المخزون بالهاتف ← مسح الباركود ← تسوية الفرق</span></td><td class="t">٤٥ث</td><td>أمين المخزن</td></tr>
+    </table>
+    <p class="sub" style="margin-top:10px">ابدأ بالأول فقط. انشره. اجمع أسئلة الناس منها، ثم صوّر الباقي.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">٢</span> سكربت الفيديو الأول (جاهز للقراءة)</h2>
+    <p class="sub">صوّر شاشة الهاتف فقط (تسجيل شاشة) — بلا وجه، بلا صوت محيط. تكلم بهدوء ووضوح.</p>
+
+    <table>
+      <tr><th>الوقت</th><th>اللي تعمله بإيدك</th><th>اللي تقوله</th></tr>
+      <tr><td class="t">٠–٠٨ث</td><td>صفحة الدخول</td><td>«هذا تطبيق سند. بتدخل بكود متجرك اللي وصلك من سند، بيبدأ بـ SND»</td></tr>
+      <tr><td class="t">٠٨–١٨ث</td><td>شاشة «من يدخل الآن؟» ← اختيار الاسم ← PIN</td><td>«بعدها تختار اسمك وتكتب رمزك السري. كل واحد بيشوف اللي مسموح له بس»</td></tr>
+      <tr><td class="t">١٨–٢٨ث</td><td>الشريط العلوي: الفرع + المستخدم الحالي</td><td>«هنا بتختار الفرع. وفوق في زر للوضع الليلي والنهاري»</td></tr>
+      <tr><td class="t">٢٨–٥٠ث</td><td>الكاشير (POS) ← بحث صنف ← إضافة للسلة ← الدفع</td><td>«الكاشير: تكتب اسم الصنف أو تمسح الباركود، تحدد الكمية، تضغط دفع. الفاتورة تتطبع أو تترسل واتساب»</td></tr>
+      <tr><td class="t">٥٠–٦٥ث</td><td>سجل المبيعات ← تقرير اليوم</td><td>«وكل فاتورة محفوظة. الرئيسية بتوريك مبيعات اليوم وأرباحك فوراً»</td></tr>
+      <tr><td class="t">٦٥–٩٠ث</td><td>الجرس 🔔 ← «تفعيل إشعارات الهاتف» ← السماح</td><td>«آخر حاجة مهمة: فعّل إشعارات الهاتف مرة واحدة، عشان يوصلك تنبيه الطلب والنواقص على الشاشة الرئيسية»</td></tr>
+    </table>
+
+    <div class="say">
+      <b>افتتاحية مقترحة (٥ ثوانٍ):</b> «سند — بتقدر تبيع أول فاتورة في أقل من دقيقة. خليني أوريك كيف.»
+    </div>
+    <div class="say">
+      <b>خاتمة مقترحة:</b> «ده كل شي. أي مشكلة، راسلنا على واتساب — نخليك تكمل نفس المكالمة.»
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">٣</span> قبل ما تضغط تصوير</h2>
+    <div class="grid">
+      <div class="tip">
+        <h3>تجهيز الشاشة</h3>
+        <ul class="check">
+          <li><span class="box"></span> استخدم متجراً تجريبياً بأصناف مفهومة (شاي، سكر، زيت)</li>
+          <li><span class="box"></span> امسح إشعارات النظام والرسائل الخاصة قبل التسجيل</li>
+          <li><span class="box"></span> لا تُظهر أرقام زبائن أو أسماء موظفين حقيقيين</li>
+          <li><span class="box"></span> ابدأ من شاشة نظيفة (بلا نوافذ مفتوحة)</li>
+          <li><span class="box"></span> الوضع النهاري أسهل للتصوير (الشمس ☀️ في مبدّل الثيم)</li>
+        </ul>
+      </div>
+      <div class="tip">
+        <h3>التصوير</h3>
+        <ul class="check">
+          <li><span class="box"></span> أندرويد: لوحة التنبيهات ← «تسجيل الشاشة» + المايك</li>
+          <li><span class="box"></span> آيفون: مركز التحكم ← تسجيل الشاشة (شغّل المايك بالضغط المطول)</li>
+          <li><span class="box"></span> صوّر بالطول (عمودي) لأن الجمهور على الجوال</li>
+          <li><span class="box"></span> حرّك إيدك ببطء — كل نقرة تستغرق ثانية</li>
+          <li><span class="box"></span> سجّل مرة واحدة كاملة، لا تقطّع</li>
+        </ul>
+      </div>
+    </div>
+    <div class="tip" style="margin-top:12px">
+      <h3>بعد التصوير</h3>
+      <ul class="check">
+        <li><span class="box"></span> اكتب عنواناً واضحاً: «كيف تصدر أول فاتورة في سند»</li>
+        <li><span class="box"></span> أضف ترجمة نصية (أغلب الناس تشاهد بلا صوت)</li>
+        <li><span class="box"></span> أول ٣ ثوانٍ = أهم جزء: ابدأ بالنتيجة لا بالمقدمة</li>
+        <li><span class="box"></span> انشره في واتساب + فيسبوك + داخل التطبيق (زر «كيف أستخدم؟»)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">٤</span> قواعد ذهبية (مهمة)</h2>
+    <ul>
+      <li><b>فيديو واحد = مهمة واحدة.</b> لا تخلط الموظفين مع التقارير.</li>
+      <li><b>٩٠ ثانية حد أقصى</b> — الطول يقتل المشاهدة.</li>
+      <li><b>بلا مصطلحات.</b> «فاتورة، صنف، مخزون» — لا «POS» ولا «RBAC» ولا «API».</li>
+      <li><b>لهجة سودانية بسيطة</b> — نفس لهجة الدعم في واتساب.</li>
+      <li><b>الصوت أهم من الصورة.</b> سجّل في غرفة هادئة، والمايك قريب.</li>
+      <li><b>أعد التسجيل بلا حرج.</b> ثلاث محاولات عادية جداً.</li>
+      <li><b>رابط في الوصف</b> + «للاشتراك راسلنا واتساب».</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">٥</span> تكملة الخطة بعد الفيديو الأول</h2>
+    <ul>
+      <li>أسبوع ١: فيديوهات ١–٣ (الدخول والبيع، الأصناف، الأرباح).</li>
+      <li>أسبوع ٢: فيديوهات ٤–٦ (الموظفين والإشعارات، تطبيق المتسوقين، تدقيق الهاتف).</li>
+      <li>بعدها: فيديوهات قصيرة ٣٠ ثانية لكل مشكلة يتكرر سؤالها في واتساب.</li>
+      <li>احتفظ بكل فيديو في مجلد + أضف نصه في ملف، ليصير مكتبة دعم جاهزة.</li>
+    </ul>
+    <div class="tip" style="margin-bottom:12px">
+      <h3>ملفات جاهزة للاستخدام</h3>
+      <ul class="check">
+        <li><span class="box"></span> <b>فيديو ١ — الترجمة النصية:</b> <span class="kbd">docs/فيديو-١-أول-فاتورة.srt</span> (ارفعها في يوتيوب/فيسبوك أو استخدمها كـ captions في المحرر)</li>
+        <li><span class="box"></span> <b>فيديو ٢ — سكربت إضافة الأصناف:</b> <span class="kbd">docs/فيديو-٢-إضافة-الأصناف.md</span> (جدول بالتوقيتات + تجهيز + نسخة مختصرة)</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>سند — دليل تصوير فيديوهات الاستخدام · يُحدَّث مع كل ميزة جديدة</footer>
+</div>
+</body>
+</html>

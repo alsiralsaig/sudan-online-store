@@ -20,6 +20,8 @@ import {
   Store,
   Image as ImageIcon,
   Tag,
+  Menu,
+  ChevronDown,
 } from 'lucide-react';
 import type { AuditLog, Product } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
@@ -32,6 +34,8 @@ import { NotificationBell } from '../Common/NotificationBell.tsx';
 
 export const CentralAdminView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads' | 'tenant_requests' | 'banners'>('merchants');
+  const [navOpen, setNavOpen] = useState(false);
+
 
   // Notification taps can open a specific admin tab via ?tab=
   useEffect(() => {
@@ -131,6 +135,18 @@ export const CentralAdminView: React.FC = () => {
     }
   };
 
+  /* أقسام المنصة في مكان واحد — تُستخدم في القائمة المنسدلة */
+  const adminNavItems: { id: string; label: string; count: number | null }[] = [
+    { id: 'merchants', label: 'سجل المنشآت والتجار', count: tenants.length },
+    { id: 'payments_queue', label: 'طابور تدقيق السداد', count: payments.filter((p) => p.status === 'pending_review').length },
+    { id: 'audit_trail', label: 'سجل التدقيق الأمني الشامل', count: null },
+    { id: 'receipt_settings', label: 'إعدادات الفاتورة الحرارية', count: null },
+    { id: 'promotions', label: 'نظام العروض الترويجية', count: null },
+    { id: 'market_ads', label: 'إعلانات السوق', count: null },
+    { id: 'tenant_requests', label: 'طلبات المتاجر', count: null },
+    { id: 'banners', label: 'بانرات السوق', count: null },
+  ];
+
   return (
     <div className="p-3 sm:p-6 max-w-7xl mx-auto space-y-6 overflow-x-hidden">
       {/* Title */}
@@ -151,79 +167,57 @@ export const CentralAdminView: React.FC = () => {
             onNavigate={(tab) => setActiveTab(tab as any)}
           />
 
-        {/* Tab switcher — swipe scrolls the strip only, never the page */}
-        <div
-          className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-semibold overflow-x-auto overscroll-x-contain w-full sm:w-auto sm:max-w-full min-w-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-          style={{ touchAction: 'pan-x' }}
-        >
+        {/*
+          * التنقل بين أقسام المنصة — قائمة منسدلة أعلى اليمين.
+          * الشريط الأفقي المنسحب كان يُخفي أقساماً على الجوال والناس ما تعرف
+          * إنه فيه المزيد. القائمة تُظهر كل الأقسام مرة واحدة مع عدّاداتها.
+          */}
+        <div className="relative w-full sm:w-auto">
           <button
-            onClick={() => setActiveTab('merchants')}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors ${
-              activeTab === 'merchants' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'
-            }`}
+            onClick={() => setNavOpen((v) => !v)}
+            aria-expanded={navOpen}
+            aria-haspopup="menu"
+            className="w-full sm:w-auto flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold border border-slate-700"
           >
-            سجل المنشآت والتجار ({tenants.length})
+            <span className="flex items-center gap-2">
+              <Menu className="w-4 h-4 text-sky-400" />
+              {adminNavItems.find((i) => i.id === activeTab)?.label || 'أقسام المنصة'}
+            </span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${navOpen ? 'rotate-180' : ''}`} />
           </button>
-          <button
-            onClick={() => setActiveTab('payments_queue')}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors ${
-              activeTab === 'payments_queue' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            طابور تدقيق السداد ({payments.filter((p) => p.status === 'pending_review').length})
-          </button>
-          <button
-            onClick={() => setActiveTab('audit_trail')}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors ${
-              activeTab === 'audit_trail' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            سجل التدقيق الأمني الشامل
-          </button>
-          <button
-            onClick={() => setActiveTab('receipt_settings')}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
-              activeTab === 'receipt_settings' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
-            }`}
-          >
-            <span>إعدادات الفاتورة الحرارية</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('promotions')}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
-              activeTab === 'promotions' ? 'bg-white text-orange-700 shadow-sm font-bold' : 'text-slate-600'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-orange-600" />
-            <span>نظام العروض الترويجية</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('market_ads')}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 relative ${
-              activeTab === 'market_ads' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
-            }`}
-          >
-            <Megaphone className="w-3.5 h-3.5 text-emerald-600" />
-            <span>إعلانات السوق</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('tenant_requests')}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
-              activeTab === 'tenant_requests' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
-            }`}
-          >
-            <Store className="w-3.5 h-3.5 text-emerald-600" />
-            <span>طلبات المتاجر</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('banners')}
-            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
-              activeTab === 'banners' ? 'bg-white text-emerald-700 shadow-sm font-bold' : 'text-slate-600'
-            }`}
-          >
-            <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
-            <span>بانرات السوق</span>
-          </button>
+
+          {navOpen && (
+            <>
+              <div className="fixed inset-0 z-[60]" onClick={() => setNavOpen(false)} />
+              <div
+                role="menu"
+                className="absolute top-full start-0 mt-1 z-[61] w-[min(92vw,22rem)] max-h-[70vh] overflow-y-auto bg-white border border-slate-200 rounded-2xl shadow-2xl p-1.5 space-y-0.5"
+              >
+                {adminNavItems.map((item) => (
+                  <button
+                    key={item.id}
+                    role="menuitem"
+                    onClick={() => {
+                      setActiveTab(item.id as any);
+                      setNavOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-right text-xs transition-colors ${
+                      activeTab === item.id
+                        ? 'bg-sky-50 text-sky-700 font-bold border border-sky-200'
+                        : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="truncate">{item.label}</span>
+                    {item.count !== null && (
+                      <span className="shrink-0 bg-slate-100 text-slate-700 rounded-lg px-2 py-0.5 font-mono font-bold">
+                        {item.count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
         </div>
       </div>
