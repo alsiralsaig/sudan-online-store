@@ -31,6 +31,7 @@ import {
   CloudUpload,
   Menu,
   ChevronDown,
+  X,
 } from 'lucide-react';
 import type { InventoryAlert } from '../types/index.ts';
 import { SanadLogo } from './Common/SanadLogo.tsx';
@@ -467,29 +468,49 @@ export const Header: React.FC<HeaderProps> = ({
 
         {isNavOpen && (
           <>
-            <div className="fixed inset-0 z-[60]" onClick={() => setIsNavOpen(false)} />
+            {/* Bottom Sheet على الجوال (أسهل للوصول بالإبهام) — وقائمة منسدلة على الديسكتوب */}
+            <div
+              className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-[2px] sm:hidden"
+              onClick={() => setIsNavOpen(false)}
+            />
+            <div className="fixed inset-0 z-[60] hidden sm:block" onClick={() => setIsNavOpen(false)} />
+
             <div
               role="menu"
-              className="absolute top-full start-0 mt-1 z-[61] w-[min(92vw,20rem)] max-h-[70vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-1.5 space-y-0.5"
+              className="fixed bottom-0 inset-x-0 z-[61] sm:absolute sm:top-full sm:start-0 sm:inset-x-auto sm:bottom-auto sm:mt-1 sm:w-[min(92vw,20rem)] bg-slate-900 border-t sm:border border-slate-700 rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[78vh] sm:max-h-[70vh] overflow-y-auto"
             >
-              {MERCHANT_NAV.map((item) => (
+              <div className="sm:hidden sticky top-0 bg-slate-900 pt-2 pb-1 px-3 flex items-center justify-between border-b border-slate-800">
+                <span className="w-10 h-1.5 rounded-full bg-slate-600 mx-auto absolute start-1/2 -translate-x-1/2 top-2" />
+                <span className="text-[11px] font-bold text-slate-400 mt-2">الوحدات</span>
                 <button
-                  key={item.id}
-                  role="menuitem"
-                  onClick={() => {
-                    onTabChange(item.id);
-                    setIsNavOpen(false);
-                  }}
-                  className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-right transition-colors ${
-                    currentTab === item.id
-                      ? 'bg-sky-600/20 text-sky-300 font-bold border border-sky-500/40'
-                      : 'text-slate-300 hover:bg-slate-800'
-                  }`}
+                  onClick={() => setIsNavOpen(false)}
+                  className="text-slate-400 hover:text-white p-1 mt-1"
+                  aria-label="إغلاق"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-600 shrink-0" />
-                  <span className="truncate">{item.label}</span>
+                  <X className="w-4 h-4" />
                 </button>
-              ))}
+              </div>
+              <div className="grid grid-cols-1 sm:block p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] space-y-0.5">
+                {MERCHANT_NAV.map((item) => (
+                  <button
+                    key={item.id}
+                    role="menuitem"
+                    onClick={() => {
+                      onTabChange(item.id);
+                      setIsNavOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-2 px-3 py-3 sm:py-2.5 rounded-xl text-right transition-colors ${
+                      currentTab === item.id
+                        ? 'bg-sky-600/20 text-sky-300 font-bold border border-sky-500/40'
+                        : 'text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-600 shrink-0" />
+                    <span className="truncate flex-1">{item.label}</span>
+                    {currentTab === item.id && <CheckCircle className="w-4 h-4 text-sky-400 shrink-0" />}
+                  </button>
+                ))}
+              </div>
             </div>
           </>
         )}
