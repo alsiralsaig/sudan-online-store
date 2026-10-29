@@ -426,7 +426,37 @@ export const PosView: React.FC<PosViewProps> = ({
   });
 
   // Update item quantity
+  /**
+   * كتابة الكمية يدوياً (كيلو / نصف كيلو / دستة).
+   * ليه: أزرار + و − تعمل خطوة واحدة، وبيع ٢٥ كيلو بالضغط ٢٥ مرة غير عملي.
+   */
+  const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
+
+  const setQuantity = (productId: string, value: string) => {
+    /* نُبقي النص كما كتبه المستخدم (يسمح بـ «1.5» و«0.») ونحدّث السلة إن صحّ */
+    setQtyDraft((prev) => ({ ...prev, [productId]: value }));
+    const parsed = Number(value.replace(',', '.'));
+    if (!value.trim() || !Number.isFinite(parsed) || parsed <= 0) return;
+    setCart((prev) =>
+      prev.map((item) => (item.product.id === productId ? { ...item, quantity: parsed } : item))
+    );
+  };
+
+  const commitQuantity = (productId: string) => {
+    /* عند مغادرة الحقل: نُنظّف المسودة فيظهر الرقم الحقيقي من السلة */
+    setQtyDraft((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+  };
+
   const updateQuantity = (productId: string, delta: number) => {
+    setQtyDraft((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
     setCart((prev) => {
       return prev
         .map((item) => {
@@ -1238,9 +1268,20 @@ export const PosView: React.FC<PosViewProps> = ({
                   >
                     <Minus className="w-3 h-3" />
                   </button>
-                  <span className="w-7 text-center font-mono font-semibold tabular-nums">
-                    {item.quantity}
-                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    aria-label="الكمية"
+                    value={qtyDraft[item.product.id] ?? String(item.quantity)}
+                    onChange={(e) => setQuantity(item.product.id, e.target.value)}
+                    onBlur={() => commitQuantity(item.product.id)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { commitQuantity(item.product.id); e.currentTarget.blur(); }
+                    }}
+                    dir="ltr"
+                    className="w-12 py-0.5 text-center font-mono font-semibold tabular-nums bg-transparent border-0 border-x border-slate-200 focus:outline-none focus:bg-sky-50 rounded-none"
+                  />
                   <button
                     onClick={() => updateQuantity(item.product.id, 1)}
                     className="p-1 hover:bg-slate-100 text-slate-600"
