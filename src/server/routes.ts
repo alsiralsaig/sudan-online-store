@@ -176,7 +176,23 @@ apiRouter.post('/auth/merchant/login', (req, res) => {
     return res.status(500).json({ error: 'AUTH_NOT_CONFIGURED', message: 'مفتاح الجلسات غير مُهيأ في الخادم.' });
   }
   const hash = merchantCodeHash(rawCode);
-  if (!hash) return res.status(401).json({ error: 'INVALID_CODE', message: 'رمز المتجر غير صالح — تأكد من النسخ الكامل.' });
+  if (!hash) {
+    /*
+     * كود قصير (SND-XXXX-XXXX) = كود طلب/تفعيل، لا كود دخول متجر.
+     * نرشد التاجر لاستخدام زر التفعيل بدل «رمز غير صالح» المبهمة.
+     */
+    const appCode = db.getTenantApplications().find((a) => (a.activationCode || '').toUpperCase() === rawCode.toUpperCase());
+    if (appCode) {
+      return res.status(400).json({
+        error: 'ACTIVATION_CODE_NOT_LOGIN_CODE',
+        message:
+          appCode.status === 'approved'
+            ? 'هذا كود الطلب (للتفعيل مرة واحدة) وليس كود دخول المتجر. اضغط «تفعيل متجر بكود الدخول» في التطبيق بهذا الكود لتحصل على كود الدخول الخاص بك.'
+            : 'هذا كود الطلب ولم يُعتمد بعد — تواصل مع إدارة سند.',
+      });
+    }
+    return res.status(401).json({ error: 'INVALID_CODE', message: 'رمز المتجر غير صالح — تأكد من النسخ الكامل (يبدأ بـ SND- وفيه ١١ مقطعاً).' });
+  }
   // Prefer tenant lookup by hash (code itself identifies the store)
   let tenant = db.findTenantByMerchantCodeHash(hash);
   // If slug/tenantId supplied, enforce exact match (prevents cross-store confusion)
@@ -193,7 +209,24 @@ apiRouter.post('/auth/merchant/login', (req, res) => {
       tenant = hinted;
     }
   }
-  if (!tenant) return res.status(401).json({ error: 'INVALID_CODE', message: 'الرمز غير صالح.' });
+  if (!tenant) {
+    /*
+     * الحالة اللي أوقفت التاجر: أدخل كود الطلب (SND-XXXX-XXXX) الذي وصله من
+     * المنصة، لا كود المتجر. بدل رسالة «الرمز غير صالح» المبهمة، نبحث عن طلب
+     * معتمد بهذا الكود ونرشده لاستخدام زر التفعيل/استرجاع الكود.
+     */
+    const app = db.getTenantApplications().find((a) => (a.activationCode || '').toUpperCase() === rawCode.toUpperCase());
+    if (app) {
+      return res.status(400).json({
+        error: 'ACTIVATION_CODE_NOT_LOGIN_CODE',
+        message:
+          app.status === 'approved'
+            ? 'هذا كود الطلب (للتفعيل مرة واحدة) وليس كود دخول المتجر. اضغط «تفعيل متجر بكود الدخول» في التطبيق بهذا الكود لتحصل على كود الدخول الخاص بك.'
+            : 'هذا كود الطلب ولم يُعتمد بعد — تواصل مع إدارة سند.',
+      });
+    }
+    return res.status(401).json({ error: 'INVALID_CODE', message: 'الكود غير صحيح أو ليس كود دخول متجر — تأكد أنك نسخت كود المتجر (SND-…) كاملاً.' });
+  }
   if ((tenant as any).status === 'suspended') return res.status(403).json({ error: 'TENANT_SUSPENDED', message: 'المتجر موقوف.' });
   const token = issueMerchantSession(tenant.id, hash, res);
   if (!token) return res.status(500).json({ error: 'ISSUE_FAILED', message: 'تعذر إنشاء الجلسة.' });
@@ -4527,6 +4560,102 @@ function ensureOwnerEmployee(tenantId: string, ownerName: string, phone: string)
  * (فروع، إعدادات افتراضية، اشتراك ٣٠ يوماً) ويصبح قابلاً للاختيار في تطبيق
  * التاجر. العملية idempotent: إدخال الكود مرتين لا ينشئ متجرين.
  */
+/* =========================================================================
+   إنقاذ المتاجر التي فُعّلت ولم يُصدر لها كود دخول
+   =========================================================================
+   ليه: قبل الإصلاح كان التفعيل ينشئ المتجر بلا كود (SND-…) وبلا أي زر في
+   المنصة يستطيع إصداره للمتجر الجديد، فيبقى التاجر خارج التطبيق نهائياً.
+   هذا المسار يعالج كل الحالات القديمة بأمان: لا يولّد كوداً لمتجر سليم،
+   ويعيد الكود لتاجر يملك كود طبعة الموافقة (إثبات ملكية)، ويُظهر تقريراً
+   للمدير المركزي.
+   ========================================================================= */
+
+/** كود المتجر هو نص 44 خانة (SND- + 40 hex) — كود الطلب قصير (SND-XXXX-XXXX). */
+function withIssuedCode<T extends Record<string, any>>(tenant: T, issued: string | null) {
+  return {
+    ...tenant,
+    merchantCode: issued,
+    merchantCodeMessage: issued
+      ? 'هذا كود دخول متجرك — احفظه الآن، لن يظهر مرة أخرى.'
+      : 'هذا المتجر له كود دخول مُصدر من قبل — اطلبه من إدارة سند عبر واتساب (أو أعد إصداره من المنصة).',
+  };
+}
+
+apiRouter.post('/tenant-applications/access-code', (req, res) => {
+  const code = String(req.body?.code || '').trim().toUpperCase();
+  if (!code) return res.status(400).json({ error: 'CODE_REQUIRED', message: 'أدخل كود الطلب (SND-XXXX-XXXX).' });
+
+  const application = db.getTenantApplications().find((a) => (a.activationCode || '').toUpperCase() === code);
+  if (!application) return res.status(404).json({ error: 'NOT_FOUND', message: 'لا يوجد طلب بهذا الكود.' });
+  if (application.status !== 'approved') {
+    return res.status(400).json({ error: 'NOT_APPROVED', message: 'الطلب لم يُعتمد بعد — تواصل مع إدارة سند.' });
+  }
+
+  const tenant =
+    (application.tenantId ? db.getTenant(application.tenantId) : null) ||
+    db.getSchema().tenants.find((t) => t.phone === application.phone && t.name === application.storeName) ||
+    db.getSchema().tenants.find((t) => t.phone === application.phone);
+
+  /* لم يُفعّل بعد: نُفعّله الآن (نفس منطق شاشة التفعيل) */
+  if (!tenant) {
+    return res.status(409).json({
+      error: 'NOT_ACTIVATED',
+      message: 'هذا الطلب لم يُفعّل بعد — استخدم زر «تفعيل متجر بكود الدخول» في التطبيق.',
+    });
+  }
+
+  const hash = String((tenant as any).merchantCodeHash || '');
+  if (/^[0-9a-f]{64}$/.test(hash)) {
+    /* المتجر سليم ولديه كود — لا نولّد كوداً جديداً بلا إذن (يلغي كود التاجر الحالي) */
+    const { merchantCodeHash: _h, ...safe } = tenant as any;
+    return res.json({ success: true, issued: false, tenant: safe, ...withIssuedCode({}, null) });
+  }
+
+  const fresh = newMerchantCode();
+  const freshHash = merchantCodeHash(fresh);
+  if (!freshHash) return res.status(500).json({ error: 'CODE_GEN_FAILED', message: 'تعذّر توليد الكود — حاول مرة أخرى.' });
+  db.setMerchantCode(tenant.id, freshHash, 'self_activation_repair');
+  db.commit();
+  db.logAudit({
+    tenantId: tenant.id,
+    actorId: 'applicant',
+    actorName: application.ownerName || 'صاحب المتجر',
+    action: 'ISSUE_MERCHANT_CODE',
+    entity: 'Tenant',
+    entityId: tenant.id,
+    details: 'إصدار كود دخول لمتجر فُعّل قبل الإصلاح ولم يكن له كود',
+  });
+  const { merchantCodeHash: _h2, ...safeTenant } = tenant as any;
+  res.json({ success: true, issued: true, tenant: safeTenant, ...withIssuedCode({}, fresh) });
+});
+
+/**
+ * إصلاح شامل (مدير المنصة): يصدر كوداً لكل متجر نشط بلا كود.
+ * يُستخدم مرة واحدة بعد النشر لتنظيف كل المتاجر القديمة عالقة بلا دخول.
+ */
+apiRouter.post('/admin/tenants/repair-codes', adminAuthMiddleware, (_req, res) => {
+  const repaired: { tenantId: string; name: string; code: string }[] = [];
+  for (const tenant of db.getSchema().tenants) {
+    const hash = String((tenant as any).merchantCodeHash || '');
+    if (/^[0-9a-f]{64}$/.test(hash)) continue;
+    if (tenant.status === 'suspended') continue;
+    const fresh = newMerchantCode();
+    const freshHash = merchantCodeHash(fresh);
+    if (!freshHash) continue;
+    db.setMerchantCode(tenant.id, freshHash, 'saas_admin_repair');
+    repaired.push({ tenantId: tenant.id, name: tenant.tradeName || tenant.name, code: fresh });
+  }
+  if (repaired.length) db.commit();
+  res.json({
+    success: true,
+    count: repaired.length,
+    repaired,
+    message: repaired.length
+      ? `تم إصدار كود دخول لـ ${repaired.length} متجراً. انسخها الآن — لن تظهر مرة أخرى.`
+      : 'كل المتاجر لديها كود دخول بالفعل.',
+  });
+});
+
 apiRouter.post('/tenant-applications/activate', (req, res) => {
   const code = String(req.body?.code || '').trim().toUpperCase();
   if (!code) {

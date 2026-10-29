@@ -190,7 +190,27 @@ export default function App() {
     setActivateState('working');
     setActivateMsg('');
     try {
-      const res: any = await api.activateTenantStore(code);
+      let res: any;
+      try {
+        res = await api.activateTenantStore(code);
+      } catch (firstErr: any) {
+        /*
+         * تفعيل سابق بلا كود (متاجر قبل الإصلاح): كود الطلب معتمد والمتجر
+         * موجود لكن بلا كود دخول — نسترجع الكود بدل عرض خطأ.
+         */
+        try {
+          const recovered: any = await api.getStoreAccessCode(code);
+          if (recovered?.merchantCode) {
+            res = { success: true, created: false, tenant: recovered.tenant, merchantCode: recovered.merchantCode };
+          } else if (recovered?.tenant) {
+            res = { success: true, created: false, tenant: recovered.tenant };
+          } else {
+            throw firstErr;
+          }
+        } catch {
+          throw firstErr;
+        }
+      }
       setActivateState('ok');
       if (res.merchantCode) setIssuedMerchantCode(res.merchantCode);
       setActivateMsg(
@@ -661,9 +681,10 @@ export default function App() {
             </div>
 
             <p className="text-[11px] leading-relaxed text-slate-600">
-              اكتب الكود الذي أرسلته لك إدارة سند بعد الموافقة على طلب المتجر
-              (يبدأ بـ <span className="font-mono font-bold">SND-</span>). التفعيل ينشئ متجرك
-              وفروعه ويفتح لك تطبيق التاجر فوراً.
+              اكتب <b>كود الطلب</b> الذي وصلك بعد الموافقة
+              (<span className="font-mono font-bold">SND-XXXX-XXXX</span> — قصير).
+              بعد التفعيل يظهر لك <b>كود الدخول</b> الطويل
+              (<span className="font-mono font-bold">SND-…</span> ٤٤ خانة) — ذاك هو اللي تستخدمه في شاشة «دخول المتجر».
             </p>
 
             <input

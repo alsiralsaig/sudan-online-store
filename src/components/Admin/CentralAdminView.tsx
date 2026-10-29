@@ -88,6 +88,19 @@ export const CentralAdminView: React.FC = () => {
 
   const [codeFor, setCodeFor] = useState<{ tenantId: string; name: string; code: string } | null>(null);
 
+  const [repairResult, setRepairResult] = useState<{ name: string; code: string }[] | null>(null);
+  const handleRepairCodes = async () => {
+    if (!confirm('إصدار كود دخول لكل متجر نشط لا يملك كوداً؟\nالمتاجر التي لديها كود لن تتأثر.')) return;
+    try {
+      const res = await api.repairMerchantCodes();
+      setRepairResult(res.repaired.map((r) => ({ name: r.name, code: r.code })));
+      if (!res.count) alert(res.message);
+      loadAll();
+    } catch (e: any) {
+      alert('تعذّر الإصلاح: ' + (e.message || ''));
+    }
+  };
+
   const handleIssueCode = async (tenantId: string, name: string) => {
     if (!confirm(`توليد رمز جديد للمتجر «${name}»؟\nالرمز القديم سيُلغى فوراً. انسخ الجديد وأرسله للتاجر عبر واتساب آمن.`)) return;
     try {
@@ -234,6 +247,44 @@ export const CentralAdminView: React.FC = () => {
         </div>
         </div>
       </div>
+
+      {/* متاجر بلا كود دخول — كانت تبقى عالقة بلا وصول للتطبيق */}
+      {tenants.some((t) => !t.hasMerchantCode) && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[12px] font-bold text-amber-900">
+            ⚠️ {tenants.filter((t) => !t.hasMerchantCode).length} متجر بلا كود دخول — أصحابها لا يستطيعون الدخول للتطبيق.
+          </p>
+          <button
+            onClick={handleRepairCodes}
+            className="rounded-xl bg-amber-600 px-3 py-2 text-[11px] font-black text-white"
+          >
+            إصدار أكواد الدخول الآن
+          </button>
+        </div>
+      )}
+
+      {repairResult && repairResult.length > 0 && (
+        <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[12px] font-black text-emerald-900">✅ تم إصدار الأكواد — انسخها الآن (لن تظهر مرة أخرى)</p>
+            <button onClick={() => setRepairResult(null)} className="text-[11px] font-bold text-emerald-800 underline">إغلاق</button>
+          </div>
+          <div className="space-y-1.5 max-h-60 overflow-y-auto">
+            {repairResult.map((r) => (
+              <div key={r.code} className="flex items-center gap-2 bg-white rounded-xl border border-emerald-200 p-2">
+                <span className="text-[11px] font-bold text-slate-700 truncate flex-1">{r.name}</span>
+                <code dir="ltr" className="font-mono text-[10.5px] text-slate-900 break-all">{r.code}</code>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(r.code).catch(() => {})}
+                  className="shrink-0 rounded-lg bg-emerald-700 px-2 py-1 text-[10px] font-bold text-white"
+                >
+                  نسخ
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Platform KPI Stats */}
       {stats && (

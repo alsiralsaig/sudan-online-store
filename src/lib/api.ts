@@ -201,6 +201,14 @@ class ApiClient {
   public async merchantLogin(code: string, hint?: string): Promise<{ success: boolean; token: string; tenant: any }> {
     return this.request('/auth/merchant/login', { method: 'POST', body: JSON.stringify({ code, slug: hint, tenantId: hint }) });
   }
+  /** يسترجع/يصدر كود دخول المتجر لتاجر يملك كود الطلب المعتمد. */
+  public async getStoreAccessCode(applicationCode: string): Promise<{ success: boolean; issued?: boolean; tenant?: any; merchantCode: string | null; merchantCodeMessage?: string }> {
+    return this.request('/tenant-applications/access-code', {
+      method: 'POST',
+      body: JSON.stringify({ code: applicationCode }),
+    });
+  }
+
   public async merchantMe(): Promise<{ authenticated: boolean; tenant: Tenant }> {
     return this.request('/auth/merchant/me');
   }
@@ -234,6 +242,11 @@ class ApiClient {
   public async adminLogout(): Promise<{ success: boolean }> {
     return this.request('/auth/admin/logout', { method: 'POST', body: '{}' });
   }
+  /** إصلاح شامل: إصدار كود دخول لكل متجر نشط بلا كود (بعد النشر). */
+  public async repairMerchantCodes(): Promise<{ success: boolean; count: number; repaired: { tenantId: string; name: string; code: string }[]; message: string }> {
+    return this.request('/admin/tenants/repair-codes', { method: 'POST', body: '{}' });
+  }
+
   public async issueMerchantCode(tenantId: string): Promise<{ success: boolean; code: string; tenantId: string }> {
     return this.request(`/admin/tenants/${encodeURIComponent(tenantId)}/merchant-code`, { method: 'POST', body: '{}' });
   }
