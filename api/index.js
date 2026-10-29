@@ -6189,6 +6189,21 @@ apiRouter.get("/auth/merchant/me", merchantAuthMiddleware, (req, res) => {
   const { merchantCodeHash: _h, ...safe } = tenant;
   res.json({ authenticated: true, role: "merchant", tenant: safe });
 });
+apiRouter.get("/market/stores", (req, res) => {
+  const schema = db.getSchema();
+  const tenants = schema.tenants.filter((t) => t.status !== "suspended").map((t) => ({
+    id: t.id,
+    name: t.name,
+    tradeName: t.tradeName,
+    slug: t.slug,
+    status: t.status,
+    city: t.city,
+    logo: t.logo,
+    category: t.category || ""
+  }));
+  res.setHeader("Cache-Control", "public, max-age=60");
+  res.json({ tenants });
+});
 apiRouter.get("/tenants/list", adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   res.json({

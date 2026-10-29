@@ -369,6 +369,11 @@ class ApiClient {
   }
 
   /* Tenant endpoints */
+  /** قائمة المتاجر العامة لتطبيق الجمهور (بلا بيانات حساسة). */
+  public async getPublicStores(): Promise<{ tenants: any[] }> {
+    return this.request('/market/stores');
+  }
+  /** قائمة المتاجر الكاملة — للإدارة فقط. */
   public async getTenantsList(): Promise<{ tenants: any[] }> {
     return this.request('/tenants/list');
   }

@@ -106,4 +106,30 @@ if (launchQueue && typeof launchQueue.setConsumer === 'function') {
   });
 }
 
+/*
+ * إخفاء شاشة التحميل بعد أن يرسم التطبيق أول إطار كامل.
+ * ننتظر إطارين (requestAnimationFrame) ثم خطوة قصيرة، مع سقف زمني (~8 ثوانٍ)
+ * حتى لا تعلق الشاشة لو تعطّل شيء في التحميل.
+ */
+function hideBootSplash() {
+  const el = document.getElementById('sanad-boot');
+  if (!el) return;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        el.classList.add('sanad-boot--hide');
+        setTimeout(() => el.remove(), 450);
+      }, 160);
+    });
+  });
+}
+
 createRoot(document.getElementById('root')!).render(<ThemeProvider><App /></ThemeProvider>);
+hideBootSplash();
+setTimeout(() => {
+  const el = document.getElementById('sanad-boot');
+  if (el && !el.classList.contains('sanad-boot--hide')) {
+    el.classList.add('sanad-boot--hide');
+    setTimeout(() => el.remove(), 450);
+  }
+}, 8000);

@@ -108,7 +108,7 @@ export const ClientMarketBrowseView: React.FC<Props> = ({
         const [l, s, t] = await Promise.all([
           api.getAlbandarListings({}),
           mode === 'showrooms' ? api.getAlbandarShowrooms() : Promise.resolve({ showrooms: [] as AlbandarShowroom[] }),
-          wantStores ? api.getTenantsList() : Promise.resolve({ tenants: [] as MarketStore[] }),
+          wantStores ? api.getPublicStores() : Promise.resolve({ tenants: [] as MarketStore[] }),
         ]);
         if (cancelled) return;
         setListings(l.listings || []);

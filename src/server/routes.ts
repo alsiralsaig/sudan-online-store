@@ -347,6 +347,32 @@ apiRouter.get('/auth/merchant/me', merchantAuthMiddleware, (req, res) => {
    ========================================================================= */
 
 // Platform tenant registry — ADMIN ONLY. Merchant app must use /auth/merchant/me and /tenants/current (authenticated).
+/*
+ * قائمة المتاجر — نسخة عامة لواجهة السوق (تطبيق الجمهور).
+ * ------------------------------------------------------------------
+ * كان المسار الوحيد `/tenants/list` محمياً بـadminAuthMiddleware، فيظهر
+ * للمتسوّق خطأ «يجب تسجيل دخول الإدارة أولاً» عند فتح «متاجر السوق».
+ * هنا نسخة عامة للقراءة فقط: لا هواتف ولا عناوين ولا أكواد، فقط ما تحتاجه
+ * بطاقة المتجر في السوق (اسم، شعار، مدينة، نوع النشاط).
+ */
+apiRouter.get('/market/stores', (req, res) => {
+  const schema = db.getSchema();
+  const tenants = schema.tenants
+    .filter((t) => t.status !== 'suspended')
+    .map((t) => ({
+      id: t.id,
+      name: t.name,
+      tradeName: t.tradeName,
+      slug: t.slug,
+      status: t.status,
+      city: t.city,
+      logo: t.logo,
+      category: (t as any).category || '',
+    }));
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json({ tenants });
+});
+
 apiRouter.get('/tenants/list', adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   res.json({
