@@ -335,3 +335,64 @@ textarea::placeholder {
 /* النص الثانوي على خلفية داكنة (بدون بطاقة) */
 [data-theme='dark'] .merchant-shell p.text-slate-500,
 [data-theme='dark'] .merchant-shell span.text-slate-500 { color: #cbd5e1 !important; }
+
+/* 7) البطاقات الملوّنة الفاتحة (sky/emerald/amber/rose 50-100) في الوضع الداكن
+      كانت تبقى فاتحة جداً مع نص فاتح = غير مقروءة. نُغمّقها بدرجاتها ونُفتّح نصها. */
+[data-theme='dark'] .merchant-shell .bg-sky-50,
+[data-theme='dark'] .merchant-shell .bg-sky-100 {
+  background-color: #082f49 !important;
+  border-color: #0e7490 !important;
+  color: #e0f2fe !important;
+}
+[data-theme='dark'] .merchant-shell .bg-emerald-50,
+[data-theme='dark'] .merchant-shell .bg-emerald-100 {
+  background-color: #052e26 !important;
+  border-color: #047857 !important;
+  color: #d1fae5 !important;
+}
+[data-theme='dark'] .merchant-shell .bg-amber-50,
+[data-theme='dark'] .merchant-shell .bg-amber-100 {
+  background-color: #3b2a06 !important;
+  border-color: #b45309 !important;
+  color: #fef3c7 !important;
+}
+[data-theme='dark'] .merchant-shell .bg-rose-50,
+[data-theme='dark'] .merchant-shell .bg-rose-100 {
+  background-color: #3f0d16 !important;
+  border-color: #9f1239 !important;
+  color: #ffe4e6 !important;
+}
+
+/* نصوص هذه البطاقات: كل الرمادي/الأخضر/الأزرق الغامق يصبح واضحاً */
+[data-theme='dark'] .merchant-shell .bg-sky-50 *,
+[data-theme='dark'] .merchant-shell .bg-sky-100 * {
+  color: #e0f2fe !important;
+}
+[data-theme='dark'] .merchant-shell .bg-emerald-50 *,
+[data-theme='dark'] .merchant-shell .bg-emerald-100 * {
+  color: #d1fae5 !important;
+}
+[data-theme='dark'] .merchant-shell .bg-amber-50 *,
+[data-theme='dark'] .merchant-shell .bg-amber-100 * {
+  color: #fef3c7 !important;
+}
+[data-theme='dark'] .merchant-shell .bg-rose-50 *,
+[data-theme='dark'] .merchant-shell .bg-rose-100 * {
+  color: #ffe4e6 !important;
+}
+/* أيقونات داخل هذه البطاقات تبقى بلونها المميز */
+[data-theme='dark'] .merchant-shell .bg-sky-50 svg,
+[data-theme='dark'] .merchant-shell .bg-emerald-50 svg,
+[data-theme='dark'] .merchant-shell .bg-amber-50 svg,
+[data-theme='dark'] .merchant-shell .bg-rose-50 svg {
+  color: currentColor !important;
+}
+
+/* 8) أي سطح فاتح داخل شاشة المنصة (super-admin) في الوضع الداكن — نفس المعالجة */
+[data-theme='dark'] .super-admin-shell .bg-white { background-color: #0f172a !important; color: #e2e8f0 !important; }
+[data-theme='dark'] .super-admin-shell .bg-white .text-slate-400,
+[data-theme='dark'] .super-admin-shell .bg-white .text-slate-500,
+[data-theme='dark'] .super-admin-shell .bg-white .text-slate-600,
+[data-theme='dark'] .super-admin-shell .bg-white .text-slate-700,
+[data-theme='dark'] .super-admin-shell .bg-white .text-slate-800,
+[data-theme='dark'] .super-admin-shell .bg-white .text-slate-900 { color: #e2e8f0 !important; }
