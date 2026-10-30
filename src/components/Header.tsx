@@ -112,11 +112,15 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="shrink-0">
             <SanadLogo size="sm" variant="icon" theme="dark" onClick={() => onTabChange('welcome')} />
           </div>
+          {/*
+            اسم المحل هو أهم معلومة في الشريط: صار أكبر (15px على الجوال)
+            وله سطران كاملان بعد إزالة صف الأدوات السفلي، مع قصّ أنيق إن طال.
+          */}
           <div className="flex flex-col min-w-0 flex-1 pr-1">
-            <span className="text-[12px] sm:text-sm font-black text-white leading-snug break-words [overflow-wrap:anywhere]">
+            <span className="text-[15px] sm:text-base font-black text-white leading-snug line-clamp-2 break-words [overflow-wrap:anywhere]">
               {tenantName}
             </span>
-            <span className="text-[10px] sm:text-[11px] text-slate-400 leading-snug">
+            <span className="text-[11px] sm:text-xs text-slate-400 leading-snug truncate">
               {branchName}
             </span>
           </div>
@@ -176,23 +180,6 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
           {/* إدارة المنصة المركزية — لا تظهر داخل تطبيق التاجر؛ للإدارة فقط عبر ?app=super_admin */}
         </nav>
-
-        {/*
-          صف أدوات سفلي: الإشعارات (وسحابة الحالة) تحت الشريط الرئيسي بدل
-          التزاحم مع الأزرار العلوية على شاشة الجوال.
-        */}
-        <div className="flex items-center justify-end gap-2 pb-1 -mt-0.5">
-          <div className="relative flex items-center">
-            <NotificationBell
-              app="merchant"
-              theme="dark"
-              onNavigate={(tab) => onTabChange(tab as any)}
-            />
-            <span className="hidden sm:inline pl-2 pr-1 text-[11px] font-bold text-slate-300">
-              الإشعارات
-            </span>
-          </div>
-        </div>
 
         {/* Zone 3: Primary Action & Quick Tools */}
         {/* كانت shrink-0 بلا wrap فكانت الأزرار الأخيرة (جرس الإشعارات) تخرج
@@ -277,6 +264,15 @@ export const Header: React.FC<HeaderProps> = ({
               </>
             )}
           </button>
+
+          {/* جرس الإشعارات: ملاصق لزر الاتصال في نفس الصف — يوفّر صفاً كاملاً */}
+          <div className="relative flex items-center">
+            <NotificationBell
+              app="merchant"
+              theme="dark"
+              onNavigate={(tab) => onTabChange(tab as any)}
+            />
+          </div>
 
           {/* Pending Sync Button if any */}
           {pendingOfflineCount > 0 && (
