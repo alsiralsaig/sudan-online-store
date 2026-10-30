@@ -496,7 +496,13 @@ const INITIAL_CURRENCIES: CurrencyConfig[] = [
   { code: 'SDG', name: 'جنيه سوداني', symbol: 'ج.س', rateToSdg: 1, isBase: true, isActive: true, lastUpdated: new Date().toISOString() },
   { code: 'USD', name: 'دولار أمريكي', symbol: '$', rateToSdg: 2750, isBase: false, isActive: true, lastUpdated: new Date().toISOString() },
   { code: 'SAR', name: 'ريال سعودي', symbol: 'ر.س', rateToSdg: 733.33, isBase: false, isActive: true, lastUpdated: new Date().toISOString() },
-  { code: 'TRY', name: 'ليرة تركية', symbol: '₺', rateToSdg: 82.5, isBase: false, isActive: true, lastUpdated: new Date().toISOString() },
+  /*
+   * الليرة التركية: لا ينشرها جدول السوق الموازي في المصدرين، وقيمتها
+   * السابقة (82.5) كانت بيانات تجريبية قديمة تُنتج حسبات خاطئة (150 ليرة
+   * = 12,375 ج.س فقط). القيمة الحقيقية تُشتق من سعر صرف الليرة مقابل
+   * الدولار (≈ 42 ليرة) × سعر الدولار في السوق الموازي.
+   */
+  { code: 'TRY', name: 'ليرة تركية', symbol: '₺', rateToSdg: 245, isBase: false, isActive: true, lastUpdated: new Date().toISOString() },
   { code: 'EGP', name: 'جنيه مصري', symbol: 'ج.م', rateToSdg: 56.8, isBase: false, isActive: true, lastUpdated: new Date().toISOString() },
   { code: 'AED', name: 'درهم إماراتي', symbol: 'د.إ', rateToSdg: 748.5, isBase: false, isActive: true, lastUpdated: new Date().toISOString() },
   { code: 'EUR', name: 'يورو أوروبي', symbol: '€', rateToSdg: 2980, isBase: false, isActive: true, lastUpdated: new Date().toISOString() },

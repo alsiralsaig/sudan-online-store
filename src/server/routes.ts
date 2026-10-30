@@ -4015,6 +4015,17 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
          * ينشرها جدول السوق الموازي) — نستخدم آخر سعر محفوظ في المنصة مع
          * تنويه صريح، ولا نقدّمه كسعر سوق.
          */
+        /*
+         * الليرة التركية تُشتق حياً: الدولار ÷ 42 ليرة = سعر الليرة بالجنيه.
+         * بهذا تتحرك مع سعر الدولار بدل رقم ثابت قديم.
+         */
+        if (c === 'TRY') {
+          const usd = snap?.rates?.find((x: any) => x.code === 'USD');
+          const usdSell = usd?.parallel ?? usd?.sell ?? usd?.official ?? null;
+          if (typeof usdSell === 'number' && usdSell > 0) {
+            return { rate: Math.round((usdSell / 42) * 100) / 100, live: true };
+          }
+        }
         const local = db.getSchema().currencies.find((x) => x.code === c);
         return local && local.rateToSdg > 0 ? { rate: local.rateToSdg, live: false } : null;
       };
@@ -4056,16 +4067,18 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
         return res.json({ reply: lines.join('\n'), model: 'calc-local' });
       }
 
-      if (sell && isConversionQuery(message)) {
-        const amount = amountFromMessage(message) || 0;
-        const total = amount * sell;
-        return res.json({
-          reply:
-            `${amount.toLocaleString('en-US')} ${name} × ${sell.toLocaleString('en-US')} = ` +
-            `${Math.round(total).toLocaleString('en-US')} ج.س\n` +
-            `(بسعر السوق الموازي: ${sell.toLocaleString('en-US')} ج.س)`,
-          model: 'convert-local',
-        });
+      if (isConversionQuery(message) && amount > 0) {
+        const conv = rateFor(code);
+        if (conv) {
+          const total = amount * conv.rate;
+          return res.json({
+            reply:
+              `${amount.toLocaleString('en-US')} ${name} × ${conv.rate.toLocaleString('en-US')} = ` +
+              `${Math.round(total).toLocaleString('en-US')} ج.س\n` +
+              `(بسعر السوق الموازي: ${conv.rate.toLocaleString('en-US')} ج.س)`,
+            model: 'convert-local',
+          });
+        }
       }
       /* ما في سعر متاح؟ نكمل للنموذج بدل اختراع رقم */
     }

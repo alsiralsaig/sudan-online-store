@@ -1453,7 +1453,13 @@ var INITIAL_CURRENCIES = [
   { code: "SDG", name: "\u062C\u0646\u064A\u0647 \u0633\u0648\u062F\u0627\u0646\u064A", symbol: "\u062C.\u0633", rateToSdg: 1, isBase: true, isActive: true, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() },
   { code: "USD", name: "\u062F\u0648\u0644\u0627\u0631 \u0623\u0645\u0631\u064A\u0643\u064A", symbol: "$", rateToSdg: 2750, isBase: false, isActive: true, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() },
   { code: "SAR", name: "\u0631\u064A\u0627\u0644 \u0633\u0639\u0648\u062F\u064A", symbol: "\u0631.\u0633", rateToSdg: 733.33, isBase: false, isActive: true, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() },
-  { code: "TRY", name: "\u0644\u064A\u0631\u0629 \u062A\u0631\u0643\u064A\u0629", symbol: "\u20BA", rateToSdg: 82.5, isBase: false, isActive: true, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() },
+  /*
+   * الليرة التركية: لا ينشرها جدول السوق الموازي في المصدرين، وقيمتها
+   * السابقة (82.5) كانت بيانات تجريبية قديمة تُنتج حسبات خاطئة (150 ليرة
+   * = 12,375 ج.س فقط). القيمة الحقيقية تُشتق من سعر صرف الليرة مقابل
+   * الدولار (≈ 42 ليرة) × سعر الدولار في السوق الموازي.
+   */
+  { code: "TRY", name: "\u0644\u064A\u0631\u0629 \u062A\u0631\u0643\u064A\u0629", symbol: "\u20BA", rateToSdg: 245, isBase: false, isActive: true, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() },
   { code: "EGP", name: "\u062C\u0646\u064A\u0647 \u0645\u0635\u0631\u064A", symbol: "\u062C.\u0645", rateToSdg: 56.8, isBase: false, isActive: true, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() },
   { code: "AED", name: "\u062F\u0631\u0647\u0645 \u0625\u0645\u0627\u0631\u0627\u062A\u064A", symbol: "\u062F.\u0625", rateToSdg: 748.5, isBase: false, isActive: true, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() },
   { code: "EUR", name: "\u064A\u0648\u0631\u0648 \u0623\u0648\u0631\u0648\u0628\u064A", symbol: "\u20AC", rateToSdg: 2980, isBase: false, isActive: true, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() },
@@ -9282,6 +9288,13 @@ apiRouter.post("/assistant/chat", async (req, res) => {
         const r = snap?.rates?.find((x) => x.code === c);
         const v = r?.parallel ?? r?.sell ?? r?.official ?? null;
         if (typeof v === "number" && v > 0) return { rate: v, live: true };
+        if (c === "TRY") {
+          const usd = snap?.rates?.find((x) => x.code === "USD");
+          const usdSell = usd?.parallel ?? usd?.sell ?? usd?.official ?? null;
+          if (typeof usdSell === "number" && usdSell > 0) {
+            return { rate: Math.round(usdSell / 42 * 100) / 100, live: true };
+          }
+        }
         const local = db.getSchema().currencies.find((x) => x.code === c);
         return local && local.rateToSdg > 0 ? { rate: local.rateToSdg, live: false } : null;
       };
@@ -9318,14 +9331,16 @@ apiRouter.post("/assistant/chat", async (req, res) => {
         );
         return res.json({ reply: lines.join("\n"), model: "calc-local" });
       }
-      if (sell && isConversionQuery(message)) {
-        const amount2 = amountFromMessage(message) || 0;
-        const total = amount2 * sell;
-        return res.json({
-          reply: `${amount2.toLocaleString("en-US")} ${name} \xD7 ${sell.toLocaleString("en-US")} = ${Math.round(total).toLocaleString("en-US")} \u062C.\u0633
-(\u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A: ${sell.toLocaleString("en-US")} \u062C.\u0633)`,
-          model: "convert-local"
-        });
+      if (isConversionQuery(message) && amount > 0) {
+        const conv = rateFor(code);
+        if (conv) {
+          const total = amount * conv.rate;
+          return res.json({
+            reply: `${amount.toLocaleString("en-US")} ${name} \xD7 ${conv.rate.toLocaleString("en-US")} = ${Math.round(total).toLocaleString("en-US")} \u062C.\u0633
+(\u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A: ${conv.rate.toLocaleString("en-US")} \u062C.\u0633)`,
+            model: "convert-local"
+          });
+        }
       }
     }
     if (asksAboutRates) {
