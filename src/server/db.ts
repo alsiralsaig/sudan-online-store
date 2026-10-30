@@ -167,12 +167,12 @@ const INITIAL_TENANTS: Tenant[] = [
     slug: 'alrowad-trade',
     name: 'شركة الرواد للتجارة والمحاصيل',
     tradeName: 'الرواد ماركت وتوزيع الجملة',
-    /* بذرة تجريبية للتوزيع بالجملة: لا تُعرض في السوق العام (تطبيق الجمهور) */
-    accountSegment: 'wholesaler',
     phone: '+249 91 234 5678',
     city: 'الخرطوم',
     address: 'السوق العربي - عمارة الرواد - الخرطوم',
     currency: 'SDG',
+    /* بذرة تجريبية للتوزيع بالجملة: لا تُعرض في السوق العام (تطبيق الجمهور) */
+    accountSegment: 'wholesaler',
     status: 'active',
     subscriptionPlanId: 'plan_growth',
     subscriptionExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
