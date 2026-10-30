@@ -3582,12 +3582,13 @@ apiRouter.get('/diagnostics/segments', async (_req, res) => {
               COALESCE(t."tradeName", t."name", t."storeName") AS name
          FROM "sanad_tenants" t ORDER BY t."id" LIMIT 20`,
     );
+    const { rows: ping } = await query(`SELECT current_database() AS db, current_user AS usr, COUNT(*)::int AS n FROM "sanad_tenants"`);
     const { rows: appRows } = await query(
       `SELECT "id", COALESCE(to_jsonb(t)->>'accountSegment', '—') AS segment,
               COALESCE(to_jsonb(t)->>'storeName', to_jsonb(t)->>'name', '—') AS name
          FROM "sanad_tenant_applications" t ORDER BY t."id" LIMIT 20`,
     );
-    res.json({ tenants: tenantRows, applications: appRows });
+    res.json({ ping: ping[0], tenants: tenantRows, applications: appRows });
   } catch (err) {
     res.status(500).json({ error: 'DIAG_FAILED', message: (err as Error).message });
   }
