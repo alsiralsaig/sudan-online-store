@@ -7181,6 +7181,52 @@ apiRouter.get("/links", merchantAuthMiddleware, (req, res) => {
   });
   res.json({ links, count: links.length });
 });
+apiRouter.get("/links/incoming", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (syncItemLinks(db.getSchema()) > 0) db.commit();
+  const myLinks = (db.getSchema().itemLinks || []).filter((l) => l.sourceTenantId === me.id);
+  const buyers = /* @__PURE__ */ new Map();
+  for (const l of myLinks) {
+    const buyer = db.getTenant(l.retailerId);
+    if (!buyer) continue;
+    const source = db.getSchema().products.find((p) => p.id === l.sourceItemId);
+    const theirItem = db.getSchema().products.find((p) => p.id === l.retailerItemId);
+    if (!buyers.has(buyer.id)) {
+      buyers.set(buyer.id, {
+        tenantId: buyer.id,
+        name: buyer.tradeName || buyer.name,
+        city: buyer.city,
+        accountSegment: buyer.accountSegment || "retailer",
+        phone: buyer.phone,
+        items: [],
+        lastLinkedAt: l.createdAt
+      });
+    }
+    const entry = buyers.get(buyer.id);
+    entry.items.push({
+      linkId: l.id,
+      myItemName: source?.name || "\u2014",
+      myPriceSdg: Number(source?.sellingPriceSdg) || l.lastSourcePriceSdg,
+      theirItemName: theirItem?.name || source?.name || "\u2014",
+      theirPriceSdg: Number(theirItem?.sellingPriceSdg) || l.lastSyncedPriceSdg,
+      marginPercent: l.marginPercent,
+      priceMode: l.priceMode,
+      expiryDate: theirItem?.expiryDate || source?.expiryDate || null,
+      linkedAt: l.createdAt
+    });
+    if (Date.parse(l.createdAt) > Date.parse(entry.lastLinkedAt)) entry.lastLinkedAt = l.createdAt;
+  }
+  const list2 = [...buyers.values()].sort((a, b) => Date.parse(b.lastLinkedAt) - Date.parse(a.lastLinkedAt));
+  res.json({
+    buyers: list2,
+    totals: {
+      buyers: list2.length,
+      links: myLinks.length,
+      itemsLinked: new Set(myLinks.map((l) => l.sourceItemId)).size
+    }
+  });
+});
 apiRouter.post("/links", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);
   if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
@@ -7332,7 +7378,9 @@ apiRouter.post("/products", merchantAuthMiddleware, (req, res) => {
     imageUrl,
     videoUrl,
     isTaxExempt,
-    customTaxRate
+    customTaxRate,
+    description,
+    expiryDate
   } = req.body;
   if (!name || !sellingPriceSdg) {
     return res.status(400).json({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u062A\u062C \u0648\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u0628\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
@@ -7352,6 +7400,9 @@ apiRouter.post("/products", merchantAuthMiddleware, (req, res) => {
     minimumStock: Number(minStockAlert) || 5,
     imageUrl: imageUrl ? String(imageUrl) : void 0,
     videoUrl: videoUrl ? String(videoUrl) : void 0,
+    /* الوصف وتاريخ الصلاحية: يُنسخان تلقائياً لكل من يربط هذا الصنف */
+    description: description ? String(description).slice(0, 1200) : void 0,
+    expiryDate: expiryDate && !Number.isNaN(Date.parse(String(expiryDate))) ? String(expiryDate) : void 0,
     isTaxExempt: Boolean(isTaxExempt),
     customTaxRate: customTaxRate !== void 0 && customTaxRate !== "" ? Number(customTaxRate) : void 0,
     isActive: true,
@@ -7384,7 +7435,7 @@ apiRouter.put("/products/:id", merchantAuthMiddleware, requireProductEditor, (re
   const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
   if (!product) return res.status(404).json({ error: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u062A\u062C\u0631\u0643." });
   const body = req.body || {};
-  const textFields = ["name", "sku", "barcode", "category", "unit", "costCurrency", "imageUrl", "videoUrl"];
+  const textFields = ["name", "sku", "barcode", "category", "unit", "costCurrency", "imageUrl", "videoUrl", "description", "expiryDate"];
   for (const field of textFields) {
     if (field in body && (typeof body[field] !== "string" || body[field].length > (field === "imageUrl" || field === "videoUrl" ? 2048 : 250)))
       return res.status(400).json({ error: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });

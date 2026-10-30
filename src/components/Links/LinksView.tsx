@@ -20,6 +20,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   const [sources, setSources] = useState<any[]>([]);
   const [viewer, setViewer] = useState<{ accountSegment: string; isVip: boolean }>({ accountSegment: 'retailer', isVip: false });
   const [links, setLinks] = useState<any[]>([]);
+  const [incoming, setIncoming] = useState<{ buyers: any[]; totals: { buyers: number; links: number; itemsLinked: number } }>({ buyers: [], totals: { buyers: 0, links: 0, itemsLinked: 0 } });
 
   /* البحث والربط */
   const [openSource, setOpenSource] = useState<any | null>(null);
@@ -37,10 +38,15 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
     setLoading(true);
     setError('');
     try {
-      const [src, lnk] = await Promise.all([api.getLinkSources(), api.getItemLinks()]);
+      const [src, lnk, inc] = await Promise.all([
+        api.getLinkSources(),
+        api.getItemLinks(),
+        api.getIncomingLinks().catch(() => ({ buyers: [], totals: { buyers: 0, links: 0, itemsLinked: 0 } })),
+      ]);
       setSources(src.sources || []);
       setViewer(src.viewer);
       setLinks(lnk.links || []);
+      setIncoming(inc as any);
     } catch (e: any) {
       setError(e.message || 'تعذّر تحميل بيانات الربط.');
     } finally {
@@ -203,10 +209,12 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
         </div>
 
         {viewer.accountSegment === 'supplier' ? (
-          <p className="text-[11px] text-slate-600 leading-6 bg-sky-50 border border-sky-200 rounded-xl p-3">
-            <ShieldCheck className="w-3.5 h-3.5 inline ml-1 text-sky-700" />
-            أنت <b>مورد</b>: بضاعتك تظهر لتجار الجملة فقط، ولا تربط أنت بأحد. أي تاجر جملة يربط صنفه بصنفك سيتحدث سعره تلقائياً عندما تعدّل سعرك.
-          </p>
+          <div className="rounded-xl bg-sky-50 border border-sky-200 p-3 space-y-2">
+            <p className="text-[11px] text-slate-700 leading-6">
+              <ShieldCheck className="w-3.5 h-3.5 inline ml-1 text-sky-700" />
+              أنت <b>مورد</b>: بضاعتك تظهر لتجار الجملة فقط، ولا تربط أنت بأحد. كل تاجر جملة يربط صنفه بصنفك يظهر في «من ربط بأصنافي» بالأسفل.
+            </p>
+          </div>
         ) : sources.length === 0 ? (
           <p className="text-[11px] text-slate-500 leading-6">
             لا توجد متاجر في طبقتك الأعلى بعد.
@@ -327,6 +335,53 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                 </button>
                 <button onClick={() => setPicked(null)} className="rounded-xl bg-slate-200 text-slate-700 px-3 text-[11.5px] font-bold">إلغاء</button>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* من ربط بأصنافي — للطبقة الأعلى (مورد/جملة) */}
+      {(viewer.accountSegment === 'supplier' || viewer.accountSegment === 'wholesaler') && (
+        <div className="rounded-2xl bg-white border border-slate-200 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[12.5px] font-black text-slate-800 flex items-center gap-1.5">
+              <Store className="w-4 h-4 text-emerald-700" /> من ربط بأصنافي
+            </h3>
+            <span className="text-[10.5px] font-bold text-slate-500">
+              {incoming.totals.buyers} تاجر • {incoming.totals.itemsLinked} صنف
+            </span>
+          </div>
+
+          {incoming.buyers.length === 0 ? (
+            <p className="py-4 text-center text-[11.5px] text-slate-500 leading-6">
+              لا أحد ربط بأصنافك بعد. عندما يربط تاجر صنفه بصنفك سيظهر هنا مع سعره وهامشه.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {incoming.buyers.map((b: any) => (
+                <div key={b.tenantId} className="rounded-xl border border-slate-200 p-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[12px] font-black text-slate-800 truncate">{b.name}</span>
+                    <span className={`shrink-0 rounded-lg px-1.5 py-0.5 text-[10px] font-black ${b.accountSegment === 'wholesaler' ? 'bg-sky-100 text-sky-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                      {segmentLabel(b.accountSegment)}
+                    </span>
+                  </div>
+                  <div className="text-[10.5px] text-slate-500">
+                    {b.city || '—'} • {b.items.length} صنف مربوط
+                    {b.phone ? ` • ${b.phone}` : ''}
+                  </div>
+                  <div className="space-y-1 pt-1 border-t border-slate-100">
+                    {b.items.map((it: any) => (
+                      <div key={it.linkId} className="flex items-center justify-between gap-2 text-[10.5px]">
+                        <span className="text-slate-700 truncate">{it.myItemName}</span>
+                        <span className="font-mono text-slate-500 shrink-0">
+                          {Number(it.myPriceSdg).toLocaleString('en-US')} → <b className="text-emerald-700">{Number(it.theirPriceSdg).toLocaleString('en-US')}</b> (+{it.marginPercent}%)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

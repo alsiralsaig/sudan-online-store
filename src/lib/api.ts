@@ -395,6 +395,11 @@ class ApiClient {
     return this.request(`/links/catalog/${encodeURIComponent(tenantId)}${query}`);
   }
 
+  /** للطبقة الأعلى: من ربط بأصنافي وبأي هامش وسعر. */
+  public async getIncomingLinks(): Promise<{ buyers: any[]; totals: { buyers: number; links: number; itemsLinked: number } }> {
+    return this.request('/links/incoming');
+  }
+
   /** روابطي (تزامن فوري عند الفتح). */
   public async getItemLinks(): Promise<{ links: any[]; count: number }> {
     return this.request('/links');

@@ -1146,6 +1146,64 @@ apiRouter.get('/links', merchantAuthMiddleware, (req, res) => {
   res.json({ links, count: links.length });
 });
 
+/**
+ * «من ربط بأصنافي» — للطبقة الأعلى (مورد/جملة):
+ * مين من التجار ربط أصنافه بأصنافي، وبأي هامش، وبأي سعر يبيع.
+ * ليه: المورد كان لا يرى أثر بضاعته بعد أن تربط بها الجملة.
+ */
+apiRouter.get('/links/incoming', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+
+  /* مزامنة أولاً حتى تكون الأسعار المعروضة محدثة */
+  if (syncItemLinks(db.getSchema()) > 0) db.commit();
+
+  const myLinks = (db.getSchema().itemLinks || []).filter((l) => l.sourceTenantId === me.id);
+  const buyers = new Map<string, any>();
+
+  for (const l of myLinks) {
+    const buyer = db.getTenant(l.retailerId);
+    if (!buyer) continue;
+    const source = db.getSchema().products.find((p) => p.id === l.sourceItemId);
+    const theirItem = db.getSchema().products.find((p) => p.id === l.retailerItemId);
+
+    if (!buyers.has(buyer.id)) {
+      buyers.set(buyer.id, {
+        tenantId: buyer.id,
+        name: buyer.tradeName || buyer.name,
+        city: buyer.city,
+        accountSegment: (buyer as any).accountSegment || 'retailer',
+        phone: buyer.phone,
+        items: [] as any[],
+        lastLinkedAt: l.createdAt,
+      });
+    }
+    const entry = buyers.get(buyer.id);
+    entry.items.push({
+      linkId: l.id,
+      myItemName: source?.name || '—',
+      myPriceSdg: Number(source?.sellingPriceSdg) || l.lastSourcePriceSdg,
+      theirItemName: theirItem?.name || source?.name || '—',
+      theirPriceSdg: Number(theirItem?.sellingPriceSdg) || l.lastSyncedPriceSdg,
+      marginPercent: l.marginPercent,
+      priceMode: l.priceMode,
+      expiryDate: theirItem?.expiryDate || source?.expiryDate || null,
+      linkedAt: l.createdAt,
+    });
+    if (Date.parse(l.createdAt) > Date.parse(entry.lastLinkedAt)) entry.lastLinkedAt = l.createdAt;
+  }
+
+  const list = [...buyers.values()].sort((a, b) => Date.parse(b.lastLinkedAt) - Date.parse(a.lastLinkedAt));
+  res.json({
+    buyers: list,
+    totals: {
+      buyers: list.length,
+      links: myLinks.length,
+      itemsLinked: new Set(myLinks.map((l) => l.sourceItemId)).size,
+    },
+  });
+});
+
 /** ربط سلعة: ينشئ صنفاً عندي (أو يربط صنفاً موجوداً) + يحسب السعر فوراً. */
 apiRouter.post('/links', merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant((req as AuthenticatedRequest).tenantId);
