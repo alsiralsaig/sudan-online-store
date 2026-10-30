@@ -4366,7 +4366,7 @@ var parseSudanAkhbarArticle = (html) => {
   for (const { re, code } of AR_LABEL_TO_CODE) {
     if (seen.has(code)) continue;
     let value = null;
-    const bs = buySellFor(scope, re) || buySellFor(text2, re);
+    const bs = buySellFor(text2, re) || buySellFor(scope, re);
     if (bs) {
       rates.push({ code, official: null, parallel: bs.sell, buy: bs.buy, sell: bs.sell });
       seen.add(code);
@@ -4528,12 +4528,20 @@ var fetchSudanAkhbarViaApi = async (diag) => {
         diag.push({ method: `wp-json:${q2}`, ok: false, detail: "empty list" });
         continue;
       }
+      const marketScore = (p) => {
+        const t = String(p?.title?.rendered || "");
+        if (/السوق\s*(الموازي|السوداء)/.test(t)) return 0;
+        if (/الدولار|العملات/.test(t)) return 1;
+        return 2;
+      };
       const sorted = [...posts].sort(
-        (a, b) => Date.parse(b?.date_gmt || 0) - Date.parse(a?.date_gmt || 0)
+        (a, b) => marketScore(a) - marketScore(b) || Date.parse(b?.date_gmt || 0) - Date.parse(a?.date_gmt || 0)
       );
       const currencyPosts = sorted.filter((p) => {
         const t = String(p?.title?.rendered || "");
-        return /(العملات|الدولار|السوق\s*(الموازي|السوداء)|اسعار|أسعار)/.test(t);
+        const isCurrency = /(العملات|الدولار|السوق\s*(الموازي|السوداء)|اسعار|أسعار)/.test(t);
+        const isBankOnly = /بنوك|مصارف/.test(t) && !/الموازي|السوداء/.test(t);
+        return isCurrency && !isBankOnly;
       });
       const picked = pickArticleFromPosts(currencyPosts.length ? currencyPosts : sorted, `wp-json:${q2}`, diag) || null;
       if (picked) return picked;

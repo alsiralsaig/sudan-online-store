@@ -306,7 +306,12 @@ export const parseSudanAkhbarArticle = (
      * الأولوية لصيغة «شراء … مقابل … للبيع» — هي الصيغة الفعلية للمقال.
      * السعر المعتمد للتداول هو سعر البيع، والشراء يُحفظ للعرض فقط.
      */
-    const bs = buySellFor(scope, re) || buySellFor(text, re);
+    /*
+     * نص المقال أولاً ثم الجدول: جملة «شراء … مقابل … للبيع» تسبق جدول
+     * «متوسط اسعار العملات»، فلو بحثنا في الجدول وحده نأخذ رقم المتوسط
+     * (10300) ونخسر سعر البيع الحقيقي (10500).
+     */
+    const bs = buySellFor(text, re) || buySellFor(scope, re);
     if (bs) {
       rates.push({ code, official: null, parallel: bs.sell, buy: bs.buy, sell: bs.sell });
       seen.add(code);
@@ -546,12 +551,26 @@ const fetchSudanAkhbarViaApi = async (
        * «أبرز عناوين الصحف» (يذكر سعر الدولار عرضاً) بدل مقال أسعار اليوم.
        * نستبعد أيضاً المقالات التي لا تحتوي جدول عملات حقيقياً.
        */
+      const marketScore = (p: any) => {
+        const t = String(p?.title?.rendered || '');
+        if (/السوق\s*(الموازي|السوداء)/.test(t)) return 0;
+        if (/الدولار|العملات/.test(t)) return 1;
+        return 2;
+      };
       const sorted = [...posts].sort(
-        (a, b) => Date.parse(b?.date_gmt || 0) - Date.parse(a?.date_gmt || 0)
+        (a, b) =>
+          marketScore(a) - marketScore(b) ||
+          Date.parse(b?.date_gmt || 0) - Date.parse(a?.date_gmt || 0)
       );
       const currencyPosts = sorted.filter((p) => {
         const t = String(p?.title?.rendered || '');
-        return /(العملات|الدولار|السوق\s*(الموازي|السوداء)|اسعار|أسعار)/.test(t);
+        const isCurrency = /(العملات|الدولار|السوق\s*(الموازي|السوداء)|اسعار|أسعار)/.test(t);
+        /*
+         * مقال «أسعار البنوك» يعطي سعر البنك (5,843) لا سعر السوق (10,500).
+         * نستبعده إلا لو كان يتحدث عن السوق الموازي أيضاً.
+         */
+        const isBankOnly = /بنوك|مصارف/.test(t) && !/الموازي|السوداء/.test(t);
+        return isCurrency && !isBankOnly;
       });
       const picked =
         pickArticleFromPosts(currencyPosts.length ? currencyPosts : sorted, `wp-json:${q}`, diag) ||
