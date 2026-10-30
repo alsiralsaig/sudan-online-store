@@ -5030,10 +5030,23 @@ apiRouter.get('/notifications', (req, res) => {
   const app = notificationAppOf(req.query.app);
   const ownerToken = (req.headers['x-owner-token'] as string) || undefined;
   const limit = Math.min(Number(req.query.limit) || 50, 200);
+  /*
+   * كل متجر يرى إشعاراته فقط.
+   * ------------------------------------------------------------------
+   * إشعارات نقص المخزون تُنشأ لكل متجر على حدة (tenantId على الإشعار)،
+   * لكن الواجهة كانت تطلب القائمة بدون هوية، فيعود كل شيء لكل متجر
+   * (متجر ملابس يرى «بن حبشي» و«سكر»). الآن: للتاجر نقيّد بالمتجر،
+   * وللإدارة نظل نعرض الكل حتى تبقى على اطلاع.
+   */
+  const headerTenant = String(req.headers['x-tenant-id'] || '').trim();
+  const tenantFilter =
+    app === 'merchant'
+      ? String(req.query.tenantId || headerTenant || '').trim() || undefined
+      : undefined;
 
-  const rows = db.getNotifications({ app, ownerToken, limit });
+  const rows = db.getNotifications({ app, ownerToken, tenantId: tenantFilter, limit });
   const unread = db
-    .getNotifications({ app, ownerToken })
+    .getNotifications({ app, ownerToken, tenantId: tenantFilter })
     .filter((n) => !n.read).length;
 
   res.json({ notifications: rows, unreadCount: unread, app });

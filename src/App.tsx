@@ -839,7 +839,6 @@ export default function App() {
         isSyncing={isSyncing}
         onOpenStorefront={() => setCurrentTab('store_orders')}
         onSwitchToClientApp={() => switchAppMode('client')}
-        onOpenActivateStore={() => setIsActivateOpen(true)}
         onOpenCloud={() => setIsCloudOpen(true)}
       />
 

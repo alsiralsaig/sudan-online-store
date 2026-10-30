@@ -24,8 +24,6 @@ import {
   CheckCircle,
   Sparkles,
   LayoutDashboard,
-  PlusCircle,
-  KeyRound,
   Cloud,
   CloudOff,
   CloudUpload,
@@ -35,7 +33,6 @@ import {
 } from 'lucide-react';
 import type { InventoryAlert } from '../types/index.ts';
 import { SanadLogo } from './Common/SanadLogo.tsx';
-import { TenantApplicationModal } from './Common/TenantApplicationModal.tsx';
 import { NotificationBell } from './Common/NotificationBell.tsx';
 import { ThemeSwitcher } from './Common/ThemeSwitcher.tsx';
 
@@ -104,7 +101,6 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [isNavOpen, setIsNavOpen] = React.useState(false);
   const [isAlertsOpen, setIsAlertsOpen] = React.useState(false);
-  const [isTenantModalOpen, setIsTenantModalOpen] = React.useState(false);
 
   return (
     <>
@@ -181,6 +177,23 @@ export const Header: React.FC<HeaderProps> = ({
           {/* إدارة المنصة المركزية — لا تظهر داخل تطبيق التاجر؛ للإدارة فقط عبر ?app=super_admin */}
         </nav>
 
+        {/*
+          صف أدوات سفلي: الإشعارات (وسحابة الحالة) تحت الشريط الرئيسي بدل
+          التزاحم مع الأزرار العلوية على شاشة الجوال.
+        */}
+        <div className="flex items-center justify-end gap-2 pb-1 -mt-0.5">
+          <div className="relative flex items-center">
+            <NotificationBell
+              app="merchant"
+              theme="dark"
+              onNavigate={(tab) => onTabChange(tab as any)}
+            />
+            <span className="hidden sm:inline pl-2 pr-1 text-[11px] font-bold text-slate-300">
+              الإشعارات
+            </span>
+          </div>
+        </div>
+
         {/* Zone 3: Primary Action & Quick Tools */}
         {/* كانت shrink-0 بلا wrap فكانت الأزرار الأخيرة (جرس الإشعارات) تخرج
             خارج الشاشة على الجوال ولا تُرى أصلاً */}
@@ -215,17 +228,6 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          <div className="relative flex items-center">
-            <NotificationBell
-              app="merchant"
-              theme="dark"
-              onNavigate={(tab) => onTabChange(tab as any)}
-            />
-            <span className="hidden sm:inline pl-2 pr-1 text-[11px] font-bold text-rose-200">
-              الإشعارات
-            </span>
-          </div>
-
           {/* Dual-App Switcher Pill */}
           <div className="hidden sm:flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
             <button
@@ -246,27 +248,12 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          {/* Store application — same entry point as the shopper app */}
-          <button
-            onClick={() => setIsTenantModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-500 transition-all whitespace-nowrap"
-            title="طلب فتح متجر جديد على منصة سند"
-          >
-            <PlusCircle className="w-3.5 h-3.5 text-white" />
-            <span>طلب متجر</span>
-          </button>
-
-          {/* تفعيل متجر موافَق عليه بكود الدخول — زر ظاهر في الشريط الأبيض */}
-          {onOpenActivateStore && (
-            <button
-              onClick={onOpenActivateStore}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border border-amber-300 bg-amber-500 text-slate-950 hover:bg-amber-400 transition-all whitespace-nowrap"
-              title="عندك كود دخول من الإدارة؟ فعّل متجرك هنا"
-            >
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>تفعيل بالكود</span>
-            </button>
-          )}
+          {/*
+            «طلب متجر» و«تفعيل بالكود» أُزيلا من شريط التاجر:
+            التاجر داخل متجره بالفعل، فلا معنى لطلب متجر جديد أو تفعيل كود
+            من هنا. الطلب والتفعيل يبقيان في تطبيق الجمهور (شاشة الدخول)
+            وفي شاشة «أول مرة؟ فعّل متجري» داخل بوابة الدخول.
+          */}
           <ThemeSwitcher compact />
           {/* Offline indicator & simulation button */}
           <button
@@ -469,11 +456,6 @@ export const Header: React.FC<HeaderProps> = ({
 
       </div>
 
-      <TenantApplicationModal
-        isOpen={isTenantModalOpen}
-        onClose={() => setIsTenantModalOpen(false)}
-        source="merchant"
-      />
     </header>
       {isNavOpen && (
           <>

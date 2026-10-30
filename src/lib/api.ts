@@ -973,10 +973,17 @@ class ApiClient {
   }
 
   /* Notifications + web push */
+  /**
+   * إشعارات تطبيق معيّن.
+   * ------------------------------------------------------------------
+   * تمرّر هوية المتجر (tenantId) لتطبيق التاجر، حتى تظهر إشعارات هذا
+   * المتجر فقط — كانت إشعارات نقص مخزون كل المتاجر تظهر في متجر واحد.
+   */
   public async getNotifications(app: string, ownerToken?: string, limit = 50): Promise<{
     notifications: any[]; unreadCount: number; app: string;
   }> {
-    return this.request(`/notifications?app=${encodeURIComponent(app)}&limit=${limit}`, {
+    const tenantHint = app === 'merchant' && this.tenantId ? `&tenantId=${encodeURIComponent(this.tenantId)}` : '';
+    return this.request(`/notifications?app=${encodeURIComponent(app)}&limit=${limit}${tenantHint}`, {
       headers: ownerToken ? { 'x-owner-token': ownerToken } : {},
     });
   }

@@ -9890,8 +9890,10 @@ apiRouter.get("/notifications", (req, res) => {
   const app = notificationAppOf(req.query.app);
   const ownerToken = req.headers["x-owner-token"] || void 0;
   const limit = Math.min(Number(req.query.limit) || 50, 200);
-  const rows = db.getNotifications({ app, ownerToken, limit });
-  const unread = db.getNotifications({ app, ownerToken }).filter((n) => !n.read).length;
+  const headerTenant = String(req.headers["x-tenant-id"] || "").trim();
+  const tenantFilter = app === "merchant" ? String(req.query.tenantId || headerTenant || "").trim() || void 0 : void 0;
+  const rows = db.getNotifications({ app, ownerToken, tenantId: tenantFilter, limit });
+  const unread = db.getNotifications({ app, ownerToken, tenantId: tenantFilter }).filter((n) => !n.read).length;
   res.json({ notifications: rows, unreadCount: unread, app });
 });
 apiRouter.post("/notifications/:id/read", (req, res) => {
