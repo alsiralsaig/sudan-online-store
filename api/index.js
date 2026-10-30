@@ -1118,6 +1118,8 @@ var INITIAL_TENANTS = [
     slug: "alrowad-trade",
     name: "\u0634\u0631\u0643\u0629 \u0627\u0644\u0631\u0648\u0627\u062F \u0644\u0644\u062A\u062C\u0627\u0631\u0629 \u0648\u0627\u0644\u0645\u062D\u0627\u0635\u064A\u0644",
     tradeName: "\u0627\u0644\u0631\u0648\u0627\u062F \u0645\u0627\u0631\u0643\u062A \u0648\u062A\u0648\u0632\u064A\u0639 \u0627\u0644\u062C\u0645\u0644\u0629",
+    /* بذرة تجريبية للتوزيع بالجملة: لا تُعرض في السوق العام (تطبيق الجمهور) */
+    accountSegment: "wholesaler",
     phone: "+249 91 234 5678",
     city: "\u0627\u0644\u062E\u0631\u0637\u0648\u0645",
     address: "\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0639\u0631\u0628\u064A - \u0639\u0645\u0627\u0631\u0629 \u0627\u0644\u0631\u0648\u0627\u062F - \u0627\u0644\u062E\u0631\u0637\u0648\u0645",
@@ -6744,7 +6746,9 @@ apiRouter.get("/market/stores", (req, res) => {
 });
 apiRouter.get("/market/catalog", (req, res) => {
   const schema = db.getSchema();
-  const activeTenants = schema.tenants.filter((t) => t.status !== "suspended");
+  const activeTenants = schema.tenants.filter(
+    (t) => t.status !== "suspended" && (t.accountSegment || "retailer") === "retailer"
+  );
   const tenantById = new Map(activeTenants.map((t) => [t.id, t]));
   const category = String(req.query.category || "").trim();
   const search = String(req.query.search || "").trim().toLowerCase();
@@ -8340,6 +8344,9 @@ apiRouter.get("/storefront/:slug", (req, res) => {
   const tenant = db.getTenantBySlug(req.params.slug);
   if (!tenant || tenant.status !== "active") {
     return res.status(404).json({ error: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u062A\u0627\u062D \u0623\u0648 \u0642\u064A\u062F \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0629" });
+  }
+  if ((tenant.accountSegment || "retailer") !== "retailer") {
+    return res.status(404).json({ error: "\u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u062E\u0635\u0635 \u0644\u0628\u064A\u0639 \u0627\u0644\u062C\u0645\u0644\u0629/\u0627\u0644\u062A\u0648\u0631\u064A\u062F \u0648\u0644\u064A\u0633 \u0644\u0644\u062C\u0645\u0647\u0648\u0631" });
   }
   const products = db.getSchema().products.filter((p) => p.tenantId === tenant.id && p.isActive !== false).map((p) => ({
     id: p.id,

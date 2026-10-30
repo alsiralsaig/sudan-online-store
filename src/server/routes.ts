@@ -580,7 +580,14 @@ apiRouter.get('/market/stores', (req, res) => {
  */
 apiRouter.get('/market/catalog', (req, res) => {
   const schema = db.getSchema();
-  const activeTenants = schema.tenants.filter((t) => t.status !== 'suspended');
+  /**
+   * طبقات: تطبيق الجمهور (السوق العام) للقطاعي فقط.
+   * المورد بضاعته لتاجر الجملة فقط، والجملة لا يبيع للجمهور — فلا يظهر أي منهما هنا.
+   * المتاجر القديمة بلا نوع = retailer (حتى لا تختفي من كان يظهر بالأمس).
+   */
+  const activeTenants = schema.tenants.filter(
+    (t) => t.status !== 'suspended' && ((t as any).accountSegment || 'retailer') === 'retailer',
+  );
   const tenantById = new Map(activeTenants.map((t) => [t.id, t]));
 
   const category = String(req.query.category || '').trim();
@@ -2578,6 +2585,10 @@ apiRouter.get('/storefront/:slug', (req, res) => {
   const tenant = db.getTenantBySlug(req.params.slug);
   if (!tenant || tenant.status !== 'active') {
     return res.status(404).json({ error: 'المتجر غير متاح أو قيد المراجعة' });
+  }
+  /* طبقات: صفحة المتجر العامة للجمهور للقطاعي فقط — لا مورد ولا جملة */
+  if (((tenant as any).accountSegment || 'retailer') !== 'retailer') {
+    return res.status(404).json({ error: 'هذا المتجر مخصص لبيع الجملة/التوريد وليس للجمهور' });
   }
 
   const products = db
