@@ -3056,7 +3056,9 @@ var Database = class {
       pushSubscriptions: [],
       pushKeys: [],
       ownerApprovals: [],
-      marketBanners: INITIAL_MARKET_BANNERS
+      marketBanners: INITIAL_MARKET_BANNERS,
+      /* جدول جديد: يُنشأ تلقائياً عند أول تشغيل بعد النشر */
+      itemLinks: []
     };
   }
   /** Mark the snapshot as changed; the request pipeline flushes it. */
@@ -5896,6 +5898,80 @@ function welcomeMessage(input) {
   ].join("\n");
 }
 
+// src/server/itemSync.ts
+var MAX_MARGIN_PERCENT = 500;
+function clampMargin(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(MAX_MARGIN_PERCENT, Math.round(n * 100) / 100);
+}
+function priceWithMargin(sourcePriceSdg, marginPercent) {
+  const base = Number(sourcePriceSdg) || 0;
+  const margin = clampMargin(marginPercent);
+  const price = base * (1 + margin / 100);
+  return Math.max(0, Math.round(price));
+}
+function canSeeCatalogOf(viewer, owner) {
+  const viewerSegment = viewer?.accountSegment || "retailer";
+  const ownerSegment = owner?.accountSegment || "retailer";
+  if (viewerSegment === "retailer") {
+    if (ownerSegment === "wholesaler") return true;
+    if (ownerSegment === "supplier") return Boolean(viewer?.isVip);
+    return false;
+  }
+  if (viewerSegment === "wholesaler") return ownerSegment === "supplier";
+  return false;
+}
+function syncItemLinks(data, retailerId) {
+  const links = data.itemLinks || [];
+  if (!links.length) return 0;
+  let changed = 0;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  for (const link of links) {
+    if (retailerId && link.retailerId !== retailerId) continue;
+    const source = data.products.find((p) => p.id === link.sourceItemId && p.isActive !== false);
+    const target = data.products.find((p) => p.id === link.retailerItemId);
+    if (!source || !target) continue;
+    const sourcePrice = Number(source.sellingPriceSdg) || 0;
+    const autoPrice = priceWithMargin(sourcePrice, link.marginPercent);
+    let touched = false;
+    const copyFields = ["name", "category", "unit", "imageUrl", "videoUrl", "expiryDate"];
+    for (const field of copyFields) {
+      const incoming = source[field];
+      if (incoming === void 0 || incoming === null || incoming === "") continue;
+      if (target[field] !== incoming) {
+        target[field] = incoming;
+        touched = true;
+      }
+    }
+    if (source.description && target.description !== source.description) {
+      target.description = source.description;
+      touched = true;
+    }
+    const priceMoved = Number(link.lastSourcePriceSdg) !== sourcePrice;
+    if (link.priceMode === "manual" && priceMoved) {
+      link.lastSourcePriceSdg = sourcePrice;
+      touched = true;
+    } else if (link.priceMode !== "manual" && Number(target.sellingPriceSdg) !== autoPrice) {
+      target.sellingPriceSdg = autoPrice;
+      target.purchaseCost = sourcePrice;
+      touched = true;
+    }
+    target.linkedToItemId = source.id;
+    target.linkId = link.id;
+    if (touched || Number(link.lastSyncedPriceSdg) !== autoPrice || link.lastSyncedAt !== now) {
+      link.lastSourcePriceSdg = sourcePrice;
+      link.lastSyncedPriceSdg = autoPrice;
+      link.lastSyncedAt = now;
+      changed += 1;
+    }
+  }
+  return changed;
+}
+function findLink(data, retailerId, sourceItemId) {
+  return (data.itemLinks || []).find((l) => l.retailerId === retailerId && l.sourceItemId === sourceItemId);
+}
+
 // src/server/ownerApproval.ts
 import crypto from "node:crypto";
 var TTL_MS = 2 * 60 * 60 * 1e3;
@@ -7031,6 +7107,209 @@ apiRouter.delete("/employees/:id", merchantAuthMiddleware, (req, res) => {
   });
   res.json({ success: true });
 });
+apiRouter.get("/links/sources", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const viewer = { accountSegment: me.accountSegment, isVip: me.isVip };
+  const sources = db.getSchema().tenants.filter((t) => t.id !== me.id && t.status === "active" && canSeeCatalogOf(viewer, t)).map((t) => ({
+    id: t.id,
+    name: t.tradeName || t.name,
+    city: t.city,
+    accountSegment: t.accountSegment || "retailer",
+    productCount: db.getSchema().products.filter((p) => p.tenantId === t.id && p.isActive !== false).length
+  }));
+  res.json({ sources, viewer: { accountSegment: viewer.accountSegment || "retailer", isVip: Boolean(viewer.isVip) } });
+});
+apiRouter.get("/links/catalog/:tenantId", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const owner = db.getTenant(req.params.tenantId);
+  if (!owner) return res.status(404).json({ error: "SOURCE_NOT_FOUND", message: "\u0645\u062A\u062C\u0631 \u0627\u0644\u0645\u0635\u062F\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const viewer = { accountSegment: me.accountSegment, isVip: me.isVip };
+  if (owner.id !== me.id && !canSeeCatalogOf(viewer, owner)) {
+    return res.status(403).json({
+      error: "NOT_ALLOWED",
+      message: (viewer.accountSegment || "retailer") === "retailer" && (owner.accountSegment || "retailer") === "supplier" ? "\u0627\u0644\u062A\u0639\u0627\u0645\u0644 \u0645\u0639 \u0627\u0644\u0645\u0648\u0631\u062F \u0645\u062A\u0627\u062D \u0644\u0628\u0627\u0642\u0629 VIP \u2014 \u0631\u0642\u0650\u0651 \u0627\u0634\u062A\u0631\u0627\u0643\u0643 \u0644\u0644\u0648\u0635\u0648\u0644 \u0644\u0628\u0636\u0627\u0639\u0629 \u0627\u0644\u0645\u0648\u0631\u062F." : "\u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631 \u0644\u064A\u0633 \u0641\u064A \u0637\u0628\u0642\u0629 \u062A\u0633\u0645\u062D \u0644\u0643 \u0628\u0627\u0644\u0631\u0628\u0637 \u0645\u0639\u0647."
+    });
+  }
+  const query2 = String(req.query.q || "").trim();
+  const products = db.getSchema().products.filter((p) => p.tenantId === owner.id && p.isActive !== false).filter((p) => query2 ? p.name.includes(query2) || String(p.barcode || "").includes(query2) : true).slice(0, 200).map((p) => {
+    const link = findLink(db.getSchema(), me.id, p.id);
+    return {
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      unit: p.unit,
+      imageUrl: p.imageUrl,
+      expiryDate: p.expiryDate,
+      sellingPriceSdg: p.sellingPriceSdg,
+      linked: Boolean(link),
+      linkedPriceSdg: link ? priceWithMargin(p.sellingPriceSdg, link.marginPercent) : null
+    };
+  });
+  res.json({
+    source: { id: owner.id, name: owner.tradeName || owner.name, city: owner.city, accountSegment: owner.accountSegment || "retailer" },
+    products
+  });
+});
+apiRouter.get("/links", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (syncItemLinks(db.getSchema(), me.id) > 0) db.commit();
+  const links = (db.getSchema().itemLinks || []).filter((l) => l.retailerId === me.id).map((l) => {
+    const source = db.getSchema().products.find((p) => p.id === l.sourceItemId);
+    const sourceTenant = db.getTenant(l.sourceTenantId);
+    const mine = db.getSchema().products.find((p) => p.id === l.retailerItemId);
+    return {
+      id: l.id,
+      marginPercent: l.marginPercent,
+      priceMode: l.priceMode,
+      createdAt: l.createdAt,
+      sourceItemId: l.sourceItemId,
+      sourceStoreName: sourceTenant ? sourceTenant.tradeName || sourceTenant.name : "",
+      sourceStoreSegment: sourceTenant ? sourceTenant.accountSegment || "retailer" : "retailer",
+      sourcePriceSdg: source ? source.sellingPriceSdg : l.lastSourcePriceSdg,
+      sourceExpiryDate: source?.expiryDate || null,
+      autoPriceSdg: priceWithMargin(source ? source.sellingPriceSdg : l.lastSourcePriceSdg, l.marginPercent),
+      myItemId: l.retailerItemId,
+      myItemName: mine?.name || source?.name || "",
+      myPriceSdg: mine?.sellingPriceSdg ?? l.lastSyncedPriceSdg,
+      imageUrl: mine?.imageUrl || source?.imageUrl,
+      expiryDate: mine?.expiryDate || source?.expiryDate || null,
+      lastSyncedAt: l.lastSyncedAt
+    };
+  });
+  res.json({ links, count: links.length });
+});
+apiRouter.post("/links", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const sourceItemId = String(req.body?.sourceItemId || "");
+  const marginPercent = clampMargin(req.body?.marginPercent);
+  const myItemId = req.body?.myItemId ? String(req.body.myItemId) : "";
+  const source = db.getSchema().products.find((p) => p.id === sourceItemId && p.isActive !== false);
+  if (!source) return res.status(404).json({ error: "ITEM_NOT_FOUND", message: "\u0635\u0646\u0641 \u0627\u0644\u0645\u0635\u062F\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const owner = db.getTenant(source.tenantId);
+  if (!owner) return res.status(404).json({ error: "SOURCE_NOT_FOUND", message: "\u0645\u062A\u062C\u0631 \u0627\u0644\u0645\u0635\u062F\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const viewer = { accountSegment: me.accountSegment, isVip: me.isVip };
+  if (!canSeeCatalogOf(viewer, owner)) {
+    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0647\u0630\u0627 \u0627\u0644\u0635\u0646\u0641 \u0644\u064A\u0633 \u0641\u064A \u0637\u0628\u0642\u0629 \u062A\u0633\u0645\u062D \u0644\u0643 \u0628\u0627\u0644\u0631\u0628\u0637 \u0645\u0639\u0647\u0627." });
+  }
+  if (findLink(db.getSchema(), me.id, source.id)) {
+    return res.status(409).json({ error: "ALREADY_LINKED", message: "\u0647\u0630\u0627 \u0627\u0644\u0635\u0646\u0641 \u0645\u0631\u0628\u0648\u0637 \u0628\u0627\u0644\u0641\u0639\u0644 \u2014 \u0639\u062F\u0651\u0644 \u0627\u0644\u0647\u0627\u0645\u0634 \u0645\u0646 \u062C\u062F\u0648\u0644 \u0631\u0648\u0627\u0628\u0637\u064A." });
+  }
+  let mine = myItemId ? db.getSchema().products.find((p) => p.id === myItemId && p.tenantId === me.id) : void 0;
+  if (!mine) {
+    mine = {
+      id: newId("prod"),
+      tenantId: me.id,
+      name: source.name,
+      sku: newCode("SKU"),
+      barcode: String(Math.floor(1e11 + Math.random() * 9e11)),
+      category: source.category || "\u0639\u0627\u0645",
+      unit: source.unit || "\u062D\u0628\u0629",
+      purchaseCost: Number(source.sellingPriceSdg) || 0,
+      costCurrency: "SDG",
+      sellingPriceSdg: priceWithMargin(Number(source.sellingPriceSdg) || 0, marginPercent),
+      minStockAlert: 5,
+      minimumStock: 5,
+      imageUrl: source.imageUrl,
+      videoUrl: source.videoUrl,
+      expiryDate: source.expiryDate,
+      linkedToItemId: source.id,
+      isActive: true,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    db.getSchema().products.push(mine);
+  }
+  const link = {
+    id: newId("lnk"),
+    retailerId: me.id,
+    sourceItemId: source.id,
+    sourceTenantId: owner.id,
+    retailerItemId: mine.id,
+    marginPercent,
+    priceMode: "auto",
+    lastSourcePriceSdg: Number(source.sellingPriceSdg) || 0,
+    lastSyncedPriceSdg: priceWithMargin(Number(source.sellingPriceSdg) || 0, marginPercent),
+    lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    createdBy: req.actorName
+  };
+  db.getSchema().itemLinks = [link, ...db.getSchema().itemLinks || []];
+  syncItemLinks(db.getSchema(), me.id);
+  db.commit();
+  db.logAudit({
+    tenantId: me.id,
+    actorId: req.actorId,
+    actorName: req.actorName,
+    action: "LINK_ITEM",
+    entity: "Product",
+    entityId: mine.id,
+    details: `\u0631\u0628\u0637 \xAB${source.name}\xBB \u0645\u0646 ${owner.tradeName || owner.name} \u0628\u0647\u0627\u0645\u0634 ${marginPercent}%`
+  });
+  res.json({
+    success: true,
+    link,
+    item: mine,
+    priceSdg: priceWithMargin(Number(source.sellingPriceSdg) || 0, marginPercent),
+    message: `\u062A\u0645 \u0627\u0644\u0631\u0628\u0637 \u2014 \u0633\u0639\u0631\u0643 \u0627\u0644\u0622\u0646 ${priceWithMargin(Number(source.sellingPriceSdg) || 0, marginPercent).toLocaleString("en-US")} \u062C.\u0633 \u0648\u064A\u062A\u062D\u062F\u062B \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B.`
+  });
+});
+apiRouter.patch("/links/:id", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const link = (db.getSchema().itemLinks || []).find((l) => l.id === req.params.id && l.retailerId === me.id);
+  if (!link) return res.status(404).json({ error: "LINK_NOT_FOUND", message: "\u0627\u0644\u0631\u0628\u0637 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (req.body?.marginPercent !== void 0) {
+    link.marginPercent = clampMargin(req.body.marginPercent);
+    link.priceMode = "auto";
+  }
+  syncItemLinks(db.getSchema(), me.id);
+  db.commit();
+  const mine = db.getSchema().products.find((p) => p.id === link.retailerItemId);
+  res.json({ success: true, link, priceSdg: mine?.sellingPriceSdg, message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0647\u0627\u0645\u0634 \u0648\u0627\u0644\u0633\u0639\u0631." });
+});
+apiRouter.patch("/links/:id/price", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const link = (db.getSchema().itemLinks || []).find((l) => l.id === req.params.id && l.retailerId === me.id);
+  if (!link) return res.status(404).json({ error: "LINK_NOT_FOUND", message: "\u0627\u0644\u0631\u0628\u0637 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const price = Number(req.body?.sellingPriceSdg);
+  if (!Number.isFinite(price) || price <= 0) {
+    return res.status(400).json({ error: "BAD_PRICE", message: "\u0627\u0643\u062A\u0628 \u0633\u0639\u0631\u0627\u064B \u0635\u062D\u064A\u062D\u0627\u064B \u0623\u0643\u0628\u0631 \u0645\u0646 \u0635\u0641\u0631." });
+  }
+  const mine = db.getSchema().products.find((p) => p.id === link.retailerItemId);
+  if (!mine) return res.status(404).json({ error: "ITEM_NOT_FOUND", message: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  mine.sellingPriceSdg = Math.round(price);
+  link.priceMode = "manual";
+  db.commit();
+  res.json({ success: true, priceSdg: mine.sellingPriceSdg, message: "\u062A\u0645 \u062D\u0641\u0638 \u0633\u0639\u0631\u0643 \u2014 \u0644\u0646 \u064A\u064F\u062F\u0647\u0633 \u062D\u062A\u0649 \u064A\u063A\u064A\u0651\u0631 \u0627\u0644\u0645\u0635\u062F\u0631 \u0633\u0639\u0631\u0647." });
+});
+apiRouter.post("/links/:id/reset-price", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const link = (db.getSchema().itemLinks || []).find((l) => l.id === req.params.id && l.retailerId === me.id);
+  if (!link) return res.status(404).json({ error: "LINK_NOT_FOUND", message: "\u0627\u0644\u0631\u0628\u0637 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  link.priceMode = "auto";
+  syncItemLinks(db.getSchema(), me.id);
+  db.commit();
+  const mine = db.getSchema().products.find((p) => p.id === link.retailerItemId);
+  res.json({ success: true, priceSdg: mine?.sellingPriceSdg, message: "\u0631\u062C\u0639 \u0627\u0644\u0633\u0639\u0631 \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B \u0644\u0644\u0645\u0635\u062F\u0631 + \u0647\u0627\u0645\u0634\u0643." });
+});
+apiRouter.delete("/links/:id", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const before = (db.getSchema().itemLinks || []).length;
+  db.getSchema().itemLinks = (db.getSchema().itemLinks || []).filter(
+    (l) => !(l.id === req.params.id && l.retailerId === me.id)
+  );
+  if (db.getSchema().itemLinks.length === before) {
+    return res.status(404).json({ error: "LINK_NOT_FOUND", message: "\u0627\u0644\u0631\u0628\u0637 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  }
+  db.commit();
+  res.json({ success: true, message: "\u062A\u0645 \u0641\u0643 \u0627\u0644\u0631\u0628\u0637 \u2014 \u0627\u0644\u0635\u0646\u0641 \u0628\u0642\u064A \u0641\u064A \u0645\u062A\u062C\u0631\u0643 \u0628\u0633\u0639\u0631\u0647 \u0627\u0644\u062D\u0627\u0644\u064A." });
+});
 apiRouter.get("/products", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
   const products = db.getProducts(authReq.tenantId).filter((p) => p.isActive !== false);
@@ -7141,9 +7420,10 @@ apiRouter.put("/products/:id", merchantAuthMiddleware, requireProductEditor, (re
   if ("minStockAlert" in body) product.minimumStock = body.minStockAlert;
   if ("isTaxExempt" in body) product.isTaxExempt = body.isTaxExempt;
   if ("customTaxRate" in body) product.customTaxRate = body.customTaxRate === null ? void 0 : body.customTaxRate;
+  const repriced = syncItemLinks(db.getSchema());
   db.commit();
   db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: "UPDATE_PRODUCT", entity: "Product", entityId: product.id, details: `\u062A\u0639\u062F\u064A\u0644 \u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB` });
-  res.json({ success: true, product });
+  res.json({ success: true, product, syncedLinks: repriced });
 });
 apiRouter.delete("/products/:id", merchantAuthMiddleware, requireProductEditor, (req, res) => {
   const actor = req;

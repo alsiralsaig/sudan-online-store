@@ -16,6 +16,7 @@ import {
 import type {
   CurrencyRatesSnapshot,
   MarketAuction,
+  ItemLink,
   Tenant,
   SubscriptionPlan,
   SubscriptionPayment,
@@ -88,6 +89,8 @@ export interface DatabaseSchema {
   marketAds: MarketAd[];
   /** مزادات السوق — اختياري للتوافق مع ملفات البيانات القديمة */
   marketAuctions?: MarketAuction[];
+  /** روابط الأصناف بين الطبقات: مورد ← جملة ← قطاعي */
+  itemLinks: ItemLink[];
   tenantApplications: TenantApplication[];
   notifications: AppNotification[];
   pushSubscriptions: PushSubscriptionRecord[];
@@ -2316,6 +2319,8 @@ class Database {
       pushKeys: [],
       ownerApprovals: [],
       marketBanners: INITIAL_MARKET_BANNERS,
+      /* جدول جديد: يُنشأ تلقائياً عند أول تشغيل بعد النشر */
+      itemLinks: [],
     };
   }
 

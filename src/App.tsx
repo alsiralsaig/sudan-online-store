@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header.tsx';
 import { PosView } from './components/POS/PosView.tsx';
 import { ShiftsView } from './components/Shifts/ShiftsView.tsx';
+import { LinksView } from './components/Links/LinksView.tsx';
 import { InventoryView } from './components/Inventory/InventoryView.tsx';
 import { TransfersView } from './components/Transfers/TransfersView.tsx';
 import { SalesView } from './components/Sales/SalesView.tsx';
@@ -977,6 +978,10 @@ export default function App() {
             onRefresh={loadPrimaryData}
             actor={actor}
           />
+        )}
+
+        {currentTab === 'links' && (
+          <LinksView onRefresh={loadPrimaryData} />
         )}
 
         {currentTab === 'inventory' && (

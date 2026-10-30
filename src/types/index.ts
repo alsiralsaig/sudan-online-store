@@ -138,7 +138,47 @@ export interface Product {
   isPreOrderAllowed?: boolean;
   allowPreOrder?: boolean;
   costPriceSdg?: number;
+  /** وصف الصنف — يُنسخ من صنف المصدر عند الربط */
+  description?: string;
+  /** مدة الصلاحية — تُنسخ من صنف المصدر عند الربط */
+  expiryDate?: string;
+  /** للقطاعي: الصنف مرتبط بمصدر (يُدار تلقائياً) */
+  linkedToItemId?: string;
+  /** معرّف سجل الربط إن وُجد */
+  linkId?: string;
   createdAt: string;
+}
+
+/**
+ * ربط صنف بين طبقتين (B2B Item Sync)
+ * ---------------------------------------------------------------------------
+ * التاجر الأدنى (retailer) يربط صنفه بصنف عند تاجر أعلى (wholesaler/supplier)
+ * ويحدد هامش ربح نسبة %. بعد ذلك:
+ *   • الاسم/الوصف/الوحدة/التصنيف/الصورة/تاريخ الصلاحية تُنسخ من المصدر تلقائياً.
+ *   • سعر البيع = سعر المصدر + الهامش % (يتحدث مع أي تغيير عند المصدر).
+ *   • لو عدّل التاجر سعره بيده: يبقى تعديله (priceMode='manual') ولا يُدهس،
+ *     ويظهر له «معدّل يدوياً» مع زر إرجاع للسعر التلقائي.
+ */
+export type ItemLinkPriceMode = 'auto' | 'manual';
+
+export interface ItemLink {
+  id: string;
+  /** تاجر القطاعي (المستفيد من الربط) */
+  retailerId: string;
+  /** صنف المصدر عند الجملة/المورد */
+  sourceItemId: string;
+  /** متجر المصدر */
+  sourceTenantId: string;
+  /** الصنف عند التاجر الأدنى (يُنشأ تلقائياً عند أول ربط) */
+  retailerItemId: string;
+  /** هامش الربح % فوق سعر المصدر */
+  marginPercent: number;
+  priceMode: ItemLinkPriceMode;
+  lastSourcePriceSdg: number;
+  lastSyncedPriceSdg: number;
+  lastSyncedAt: string;
+  createdAt: string;
+  createdBy?: string;
 }
 
 export interface BranchInventory {

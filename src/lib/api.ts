@@ -382,6 +382,47 @@ class ApiClient {
     return this.request('/admin/tenants/repair-codes', { method: 'POST', body: JSON.stringify({ rotateAll: true }) });
   }
 
+  /* ---- الربط بين الطبقات (B2B Item Sync) ---- */
+
+  /** المتاجر التي يمكنني الربط بها (الطبقة الأعلى فقط). */
+  public async getLinkSources(): Promise<{ sources: any[]; viewer: { accountSegment: string; isVip: boolean } }> {
+    return this.request('/links/sources');
+  }
+
+  /** كتالوج أصناف متجر مصدر + حالة الربط لكل صنف. */
+  public async getLinkCatalog(tenantId: string, q = ''): Promise<{ source: any; products: any[] }> {
+    const query = q ? `?q=${encodeURIComponent(q)}` : '';
+    return this.request(`/links/catalog/${encodeURIComponent(tenantId)}${query}`);
+  }
+
+  /** روابطي (تزامن فوري عند الفتح). */
+  public async getItemLinks(): Promise<{ links: any[]; count: number }> {
+    return this.request('/links');
+  }
+
+  /** ربط سلعة بهامش نسبة %. */
+  public async linkItem(input: { sourceItemId: string; marginPercent: number; myItemId?: string }) {
+    return this.request('/links', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  public async updateLinkMargin(linkId: string, marginPercent: number) {
+    return this.request(`/links/${encodeURIComponent(linkId)}`, { method: 'PATCH', body: JSON.stringify({ marginPercent }) });
+  }
+
+  /** تعديل سعري يدوياً (مسموح). */
+  public async setLinkPrice(linkId: string, sellingPriceSdg: number) {
+    return this.request(`/links/${encodeURIComponent(linkId)}/price`, { method: 'PATCH', body: JSON.stringify({ sellingPriceSdg }) });
+  }
+
+  /** إرجاع السعر للحساب التلقائي. */
+  public async resetLinkPrice(linkId: string) {
+    return this.request(`/links/${encodeURIComponent(linkId)}/reset-price`, { method: 'POST', body: '{}' });
+  }
+
+  public async unlinkItem(linkId: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/links/${encodeURIComponent(linkId)}`, { method: 'DELETE' });
+  }
+
   /** المنصة: نوع الحساب (قطاعي/جملة/مورد) + تشغيل VIP. */
   public async setTenantSegment(
     tenantId: string,

@@ -57,6 +57,7 @@ import type {
 } from '../types/index.ts';
 import { getPublicKey as getPushPublicKey, notify as notifyUser, notifyLowStock, runNotificationScan } from './notifications.ts';
 import { codeOnlyMessage, welcomeMessage } from './storeMessages.ts';
+import { canSeeCatalogOf, clampMargin, priceWithMargin, syncItemLinks, findLink } from './itemSync.ts';
 import {
   createApprovalRequest,
   getApproval,
@@ -1041,6 +1042,262 @@ apiRouter.delete('/employees/:id', merchantAuthMiddleware, (req, res) => {
 /* =========================================================================
    4. PRODUCTS & INVENTORY
    ========================================================================= */
+/* =========================================================================
+   الربط بين الطبقات (B2B/B2C Item Sync): مورد ← جملة ← قطاعي
+   ========================================================================= */
+
+/** المتاجر التي يمكن لمتجري الربط بها (الطبقة الأعلى فقط، والمورد للـVIP). */
+apiRouter.get('/links/sources', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const viewer = { accountSegment: (me as any).accountSegment, isVip: (me as any).isVip };
+  const sources = db
+    .getSchema()
+    .tenants.filter((t) => t.id !== me.id && t.status === 'active' && canSeeCatalogOf(viewer, t as any))
+    .map((t) => ({
+      id: t.id,
+      name: t.tradeName || t.name,
+      city: t.city,
+      accountSegment: (t as any).accountSegment || 'retailer',
+      productCount: db.getSchema().products.filter((p) => p.tenantId === t.id && p.isActive !== false).length,
+    }));
+  res.json({ sources, viewer: { accountSegment: viewer.accountSegment || 'retailer', isVip: Boolean(viewer.isVip) } });
+});
+
+/** كتالوج أصناف متجر مصدر (أصناف فقط — بلا أي بيانات عملاء أو مبيعات). */
+apiRouter.get('/links/catalog/:tenantId', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const owner = db.getTenant(req.params.tenantId);
+  if (!owner) return res.status(404).json({ error: 'SOURCE_NOT_FOUND', message: 'متجر المصدر غير موجود.' });
+
+  const viewer = { accountSegment: (me as any).accountSegment, isVip: (me as any).isVip };
+  if (owner.id !== me.id && !canSeeCatalogOf(viewer, owner as any)) {
+    return res.status(403).json({
+      error: 'NOT_ALLOWED',
+      message:
+        (viewer.accountSegment || 'retailer') === 'retailer' && ((owner as any).accountSegment || 'retailer') === 'supplier'
+          ? 'التعامل مع المورد متاح لباقة VIP — رقِّ اشتراكك للوصول لبضاعة المورد.'
+          : 'هذا المتجر ليس في طبقة تسمح لك بالربط معه.',
+    });
+  }
+
+  const query = String(req.query.q || '').trim();
+  const products = db
+    .getSchema()
+    .products.filter((p) => p.tenantId === owner.id && p.isActive !== false)
+    .filter((p) => (query ? p.name.includes(query) || String(p.barcode || '').includes(query) : true))
+    .slice(0, 200)
+    .map((p) => {
+      const link = findLink(db.getSchema(), me.id, p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        unit: p.unit,
+        imageUrl: p.imageUrl,
+        expiryDate: p.expiryDate,
+        sellingPriceSdg: p.sellingPriceSdg,
+        linked: Boolean(link),
+        linkedPriceSdg: link ? priceWithMargin(p.sellingPriceSdg, link.marginPercent) : null,
+      };
+    });
+
+  res.json({
+    source: { id: owner.id, name: owner.tradeName || owner.name, city: owner.city, accountSegment: (owner as any).accountSegment || 'retailer' },
+    products,
+  });
+});
+
+/** روابطي: كل صنف مربوط عندي + السعر الحسابي والمعروض. */
+apiRouter.get('/links', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+
+  /* مزامنة فورية عند الفتح — والأسعار تُحدَّث قبل العرض */
+  if (syncItemLinks(db.getSchema(), me.id) > 0) db.commit();
+
+  const links = (db.getSchema().itemLinks || [])
+    .filter((l) => l.retailerId === me.id)
+    .map((l) => {
+      const source = db.getSchema().products.find((p) => p.id === l.sourceItemId);
+      const sourceTenant = db.getTenant(l.sourceTenantId);
+      const mine = db.getSchema().products.find((p) => p.id === l.retailerItemId);
+      return {
+        id: l.id,
+        marginPercent: l.marginPercent,
+        priceMode: l.priceMode,
+        createdAt: l.createdAt,
+        sourceItemId: l.sourceItemId,
+        sourceStoreName: sourceTenant ? sourceTenant.tradeName || sourceTenant.name : '',
+        sourceStoreSegment: sourceTenant ? (sourceTenant as any).accountSegment || 'retailer' : 'retailer',
+        sourcePriceSdg: source ? source.sellingPriceSdg : l.lastSourcePriceSdg,
+        sourceExpiryDate: source?.expiryDate || null,
+        autoPriceSdg: priceWithMargin(source ? source.sellingPriceSdg : l.lastSourcePriceSdg, l.marginPercent),
+        myItemId: l.retailerItemId,
+        myItemName: mine?.name || source?.name || '',
+        myPriceSdg: mine?.sellingPriceSdg ?? l.lastSyncedPriceSdg,
+        imageUrl: mine?.imageUrl || source?.imageUrl,
+        expiryDate: mine?.expiryDate || source?.expiryDate || null,
+        lastSyncedAt: l.lastSyncedAt,
+      };
+    });
+
+  res.json({ links, count: links.length });
+});
+
+/** ربط سلعة: ينشئ صنفاً عندي (أو يربط صنفاً موجوداً) + يحسب السعر فوراً. */
+apiRouter.post('/links', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+
+  const sourceItemId = String(req.body?.sourceItemId || '');
+  const marginPercent = clampMargin(req.body?.marginPercent);
+  const myItemId = req.body?.myItemId ? String(req.body.myItemId) : '';
+
+  const source = db.getSchema().products.find((p) => p.id === sourceItemId && p.isActive !== false);
+  if (!source) return res.status(404).json({ error: 'ITEM_NOT_FOUND', message: 'صنف المصدر غير موجود.' });
+  const owner = db.getTenant(source.tenantId);
+  if (!owner) return res.status(404).json({ error: 'SOURCE_NOT_FOUND', message: 'متجر المصدر غير موجود.' });
+
+  const viewer = { accountSegment: (me as any).accountSegment, isVip: (me as any).isVip };
+  if (!canSeeCatalogOf(viewer, owner as any)) {
+    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'هذا الصنف ليس في طبقة تسمح لك بالربط معها.' });
+  }
+  if (findLink(db.getSchema(), me.id, source.id)) {
+    return res.status(409).json({ error: 'ALREADY_LINKED', message: 'هذا الصنف مربوط بالفعل — عدّل الهامش من جدول روابطي.' });
+  }
+
+  /* الصنف عندي: موجود أو نُنسخه الآن */
+  let mine = myItemId ? db.getSchema().products.find((p) => p.id === myItemId && p.tenantId === me.id) : undefined;
+  if (!mine) {
+    mine = {
+      id: newId('prod'),
+      tenantId: me.id,
+      name: source.name,
+      sku: newCode('SKU'),
+      barcode: String(Math.floor(100000000000 + Math.random() * 900000000000)),
+      category: source.category || 'عام',
+      unit: source.unit || 'حبة',
+      purchaseCost: Number(source.sellingPriceSdg) || 0,
+      costCurrency: 'SDG',
+      sellingPriceSdg: priceWithMargin(Number(source.sellingPriceSdg) || 0, marginPercent),
+      minStockAlert: 5,
+      minimumStock: 5,
+      imageUrl: source.imageUrl,
+      videoUrl: source.videoUrl,
+      expiryDate: source.expiryDate,
+      linkedToItemId: source.id,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+    } as any;
+    db.getSchema().products.push(mine);
+  }
+
+  const link = {
+    id: newId('lnk'),
+    retailerId: me.id,
+    sourceItemId: source.id,
+    sourceTenantId: owner.id,
+    retailerItemId: mine.id,
+    marginPercent,
+    priceMode: 'auto' as const,
+    lastSourcePriceSdg: Number(source.sellingPriceSdg) || 0,
+    lastSyncedPriceSdg: priceWithMargin(Number(source.sellingPriceSdg) || 0, marginPercent),
+    lastSyncedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    createdBy: (req as AuthenticatedRequest).actorName,
+  };
+  db.getSchema().itemLinks = [link, ...(db.getSchema().itemLinks || [])];
+
+  /* مزامنة فورية: الاسم والوصف والصلاحية والسعر */
+  syncItemLinks(db.getSchema(), me.id);
+  db.commit();
+
+  db.logAudit({
+    tenantId: me.id,
+    actorId: (req as AuthenticatedRequest).actorId,
+    actorName: (req as AuthenticatedRequest).actorName,
+    action: 'LINK_ITEM',
+    entity: 'Product',
+    entityId: mine.id,
+    details: `ربط «${source.name}» من ${owner.tradeName || owner.name} بهامش ${marginPercent}%`,
+  });
+
+  res.json({
+    success: true,
+    link,
+    item: mine,
+    priceSdg: priceWithMargin(Number(source.sellingPriceSdg) || 0, marginPercent),
+    message: `تم الربط — سعرك الآن ${priceWithMargin(Number(source.sellingPriceSdg) || 0, marginPercent).toLocaleString('en-US')} ج.س ويتحدث تلقائياً.`,
+  });
+});
+
+/** تعديل الهامش (يعيد السعر تلقائياً). */
+apiRouter.patch('/links/:id', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const link = (db.getSchema().itemLinks || []).find((l) => l.id === req.params.id && l.retailerId === me.id);
+  if (!link) return res.status(404).json({ error: 'LINK_NOT_FOUND', message: 'الربط غير موجود.' });
+
+  if (req.body?.marginPercent !== undefined) {
+    link.marginPercent = clampMargin(req.body.marginPercent);
+    link.priceMode = 'auto';
+  }
+  syncItemLinks(db.getSchema(), me.id);
+  db.commit();
+  const mine = db.getSchema().products.find((p) => p.id === link.retailerItemId);
+  res.json({ success: true, link, priceSdg: mine?.sellingPriceSdg, message: 'تم تحديث الهامش والسعر.' });
+});
+
+/** تعديل سعري يدوياً (مسموح) — يبقى كما هو حتى يغيّر المصدر سعره. */
+apiRouter.patch('/links/:id/price', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const link = (db.getSchema().itemLinks || []).find((l) => l.id === req.params.id && l.retailerId === me.id);
+  if (!link) return res.status(404).json({ error: 'LINK_NOT_FOUND', message: 'الربط غير موجود.' });
+  const price = Number(req.body?.sellingPriceSdg);
+  if (!Number.isFinite(price) || price <= 0) {
+    return res.status(400).json({ error: 'BAD_PRICE', message: 'اكتب سعراً صحيحاً أكبر من صفر.' });
+  }
+  const mine = db.getSchema().products.find((p) => p.id === link.retailerItemId);
+  if (!mine) return res.status(404).json({ error: 'ITEM_NOT_FOUND', message: 'الصنف غير موجود.' });
+
+  mine.sellingPriceSdg = Math.round(price);
+  link.priceMode = 'manual';
+  db.commit();
+  res.json({ success: true, priceSdg: mine.sellingPriceSdg, message: 'تم حفظ سعرك — لن يُدهس حتى يغيّر المصدر سعره.' });
+});
+
+/** إرجاع السعر للحساب التلقائي (المصدر + الهامش). */
+apiRouter.post('/links/:id/reset-price', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const link = (db.getSchema().itemLinks || []).find((l) => l.id === req.params.id && l.retailerId === me.id);
+  if (!link) return res.status(404).json({ error: 'LINK_NOT_FOUND', message: 'الربط غير موجود.' });
+
+  link.priceMode = 'auto';
+  syncItemLinks(db.getSchema(), me.id);
+  db.commit();
+  const mine = db.getSchema().products.find((p) => p.id === link.retailerItemId);
+  res.json({ success: true, priceSdg: mine?.sellingPriceSdg, message: 'رجع السعر تلقائياً للمصدر + هامشك.' });
+});
+
+/** فك الربط — الصنف يبقى في متجري بسعره الحالي. */
+apiRouter.delete('/links/:id', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const before = (db.getSchema().itemLinks || []).length;
+  db.getSchema().itemLinks = (db.getSchema().itemLinks || []).filter(
+    (l) => !(l.id === req.params.id && l.retailerId === me.id)
+  );
+  if (db.getSchema().itemLinks.length === before) {
+    return res.status(404).json({ error: 'LINK_NOT_FOUND', message: 'الربط غير موجود.' });
+  }
+  db.commit();
+  res.json({ success: true, message: 'تم فك الربط — الصنف بقي في متجرك بسعره الحالي.' });
+});
+
 apiRouter.get('/products', merchantAuthMiddleware, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const products = db.getProducts(authReq.tenantId).filter((p) => p.isActive !== false);
@@ -1052,6 +1309,7 @@ apiRouter.post('/products', merchantAuthMiddleware, (req, res) => {
   const {
     name, sku, barcode, category, unit, purchaseCost, costCurrency, sellingPriceSdg,
     minStockAlert, initialStock, branchId, imageUrl, videoUrl, isTaxExempt, customTaxRate,
+    description, expiryDate,
   } = req.body;
 
   if (!name || !sellingPriceSdg) {
@@ -1073,6 +1331,9 @@ apiRouter.post('/products', merchantAuthMiddleware, (req, res) => {
     minimumStock: Number(minStockAlert) || 5,
     imageUrl: imageUrl ? String(imageUrl) : undefined,
     videoUrl: videoUrl ? String(videoUrl) : undefined,
+    /* الوصف وتاريخ الصلاحية: يُنسخان تلقائياً لكل من يربط هذا الصنف */
+    description: description ? String(description).slice(0, 1200) : undefined,
+    expiryDate: expiryDate && !Number.isNaN(Date.parse(String(expiryDate))) ? String(expiryDate) : undefined,
     isTaxExempt: Boolean(isTaxExempt),
     customTaxRate: customTaxRate !== undefined && customTaxRate !== '' ? Number(customTaxRate) : undefined,
     isActive: true,
@@ -1113,7 +1374,7 @@ apiRouter.put('/products/:id', merchantAuthMiddleware, requireProductEditor, (re
   const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
   if (!product) return res.status(404).json({ error: 'الصنف غير موجود في متجرك.' });
   const body = req.body || {};
-  const textFields = ['name', 'sku', 'barcode', 'category', 'unit', 'costCurrency', 'imageUrl', 'videoUrl'] as const;
+  const textFields = ['name', 'sku', 'barcode', 'category', 'unit', 'costCurrency', 'imageUrl', 'videoUrl', 'description', 'expiryDate'] as const;
   for (const field of textFields) {
     if (field in body && (typeof body[field] !== 'string' || body[field].length > (field === 'imageUrl' || field === 'videoUrl' ? 2048 : 250)))
       return res.status(400).json({ error: 'بيانات الصنف غير صالحة.' });
@@ -1153,9 +1414,15 @@ apiRouter.put('/products/:id', merchantAuthMiddleware, requireProductEditor, (re
   if ('minStockAlert' in body) product.minimumStock = body.minStockAlert;
   if ('isTaxExempt' in body) product.isTaxExempt = body.isTaxExempt;
   if ('customTaxRate' in body) product.customTaxRate = body.customTaxRate === null ? undefined : body.customTaxRate;
+
+  /*
+   * لو هذا الصنف مصدر لروابط (جملة/مورد)، سعر كل من ربط به يُعاد حسابه الآن
+   * — المزامنة الفورية «على مدار الساعة» تبدأ من هنا.
+   */
+  const repriced = syncItemLinks(db.getSchema());
   db.commit();
   db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: 'UPDATE_PRODUCT', entity: 'Product', entityId: product.id, details: `تعديل تفاصيل الصنف «${product.name}»` });
-  res.json({ success: true, product });
+  res.json({ success: true, product, syncedLinks: repriced });
 });
 
 apiRouter.delete('/products/:id', merchantAuthMiddleware, requireProductEditor, (req, res) => {

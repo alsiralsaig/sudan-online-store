@@ -48,6 +48,7 @@ const MERCHANT_NAV: { id: string; label: string }[] = [
   { id: 'reports', label: 'التقارير والأرباح' },
   { id: 'shifts', label: 'الورديات ومطابقة الخزينة' },
   { id: 'purchases_expenses', label: 'المشتريات والمصروفات' },
+  { id: 'links', label: 'الربط والموردون' },
   { id: 'inventory_audit', label: 'تدقيق المخزون (بالهاتف)' },
   { id: 'transfers', label: 'تحويلات الفروع' },
   { id: 'branches_employees', label: 'الفروع والموظفين' },
