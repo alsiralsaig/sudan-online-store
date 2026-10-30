@@ -12,6 +12,10 @@
  */
 
 export interface LiveRate {
+  /** سعر الشراء المعلن في المصدر (اختياري) */
+  buy?: number | null;
+  /** سعر البيع المعلن في المصدر (اختياري) */
+  sell?: number | null;
   code: string;
   official: number | null;
   parallel: number | null;
@@ -144,7 +148,8 @@ const htmlToText = (html: string): string =>
 
 const AR_LABEL_TO_CODE: Array<{ re: RegExp; code: string }> = [
   // NB: all groups are non-capturing — the captured number must stay at index 1
-  { re: /الدولار\s*(?:الأمريكي|الامريكي|الاميركي|الأميركي)/i, code: 'USD' },
+  /* «الدولار» وحدها كافية — المقال يكتب «سعر شراء الدولار» بلا صفة */
+  { re: /(?:الدولار|دولار)(?:\s*(?:الأمريكي|الامريكي|الاميركي|الأميركي))?/i, code: 'USD' },
   { re: /الريال\s*السعودي/i, code: 'SAR' },
   { re: /الدرهم\s*(?:الإماراتي|الاماراتي)/i, code: 'AED' },
   { re: /اليورو/i, code: 'EUR' },
@@ -156,11 +161,87 @@ const AR_LABEL_TO_CODE: Array<{ re: RegExp; code: string }> = [
 ];
 
 /**
- * Reads the «متوسط اسعار العملات في السوق الموازي» block of a Sudan Akhbar
- * article. Every currency is taken from the first plausible number that
- * follows its name (the article repeats itself in several tables, the first
- * one is the headline table of the day).
+ * سعرا الشراء والبيع كما هما في نص «أخبار السودان».
+ * ------------------------------------------------------------------
+ * المقال يكتب: «ارتفاع سعر شراء الدولار إلى 10300 جنيه، مقابل 10500 جنيه
+ * للبيع». القارئ القديم كان يأخذ أول رقم يجده (سوق السودان: 10310) أو
+ * الرقم الخطأ من داخل جملة طويلة، فيخرج السعر غير مطابق للمصدر.
+ * هذه الدالة تقرأ الجملة نفسها وتعطي (شراء، بيع) بالترتيب الصحيح.
  */
+const buySellFor = (scope: string, label: RegExp): { buy: number; sell: number } | null => {
+  const NUM = '([0-9][0-9,]{2,}(?:\\.[0-9]+)?)';
+  const num = (x?: string) => toNumber(x);
+  const ok = (n: number | null): n is number => n !== null && n >= 100 && n < 1_500_000;
+
+  /*
+   * نقسم النص جُمل. المقال يقارن أسعار اليوم بالأمس وبالسبت، فلو أخذنا أول
+   * رقم في الصفحة نقع على رقم قديم (10310 أو 10100 بدل 10500 الحقيقي).
+   * لذلك نستبعد جمل المقارنة أولاً.
+   */
+  /* لا نكسر الأرقام العشرية: النقطة تُعدّ نهاية جملة فقط لو بعدها مسافة */
+  const sentences = scope.split(/[!؟\n]+|\.\s+/).map((x) => x.trim()).filter(Boolean);
+  /*
+   * الجملة الواحدة قد تحمل «سعر اليوم … مقارنة بمستويات الأمس»؛ نُبقي الجزء
+   * الأول فقط (سعر اليوم) بدل رمي الجملة كلها — وإلا ضاع سعر الدولار الحقيقي.
+   */
+  const trimComparison = (t: string) =>
+    t.split(/مقارنة|مقابل مستويات|التي بلغت|الأربعاء|السبت|أمس|سابق/)[0].trim();
+  const current = sentences.map(trimComparison).filter(Boolean);
+  const pools = [current, sentences];
+
+  const attempts: Array<(t: string) => { buy: number; sell: number } | null> = [
+    // «ارتفاع سعر شراء الدولار إلى 10300 جنيه، مقابل 10500 جنيه للبيع»
+    (t) => {
+      const m = t.match(
+        new RegExp(
+          `شراء\\s*${label.source}[^.]{0,80}?${NUM}[^.]{0,120}?${NUM}\\s*(?:جنيه[اً]?)?\\s*للبيع`,
+          'i'
+        )
+      );
+      const a = num(m?.[1]);
+      const b = num(m?.[2]);
+      return ok(a) && ok(b) ? { buy: Math.min(a, b), sell: Math.max(a, b) } : null;
+    },
+    // «2745.64 جنيه للشراء و2798.96 جنيه للبيع» داخل جملة تخص العملة
+    (t) => {
+      if (!label.test(t)) return null;
+      const m = t.match(
+        new RegExp(`${NUM}\\s*(?:جنيه[اً]?)?\\s*للشراء\\s*و\\s*${NUM}\\s*(?:جنيه[اً]?)?\\s*للبيع`, 'i')
+      );
+      const a = num(m?.[1]);
+      const b = num(m?.[2]);
+      return ok(a) && ok(b) ? { buy: Math.min(a, b), sell: Math.max(a, b) } : null;
+    },
+    // «ارتفاع سعر بيع الدولار إلى 10500 جنيه» — سعر البيع وحده
+    (t) => {
+      if (!label.test(t)) return null;
+      const m = t.match(
+        new RegExp(`بيع\\s*${label.source}[^.]{0,60}?(?:إلى|الى)?\\s*${NUM}`, 'i')
+      );
+      const sell = num(m?.[1]);
+      return ok(sell) ? { buy: sell, sell } : null;
+    },
+    // «الدولار الأمريكي 10500 جنيه» — آخر ملاذ
+    (t) => {
+      if (!label.test(t)) return null;
+      const m = t.match(new RegExp(`${label.source}\\s*(?:جنيه[اً]?)?\\s*${NUM}`, 'i'));
+      const v = num(m?.[1]);
+      return ok(v) ? { buy: v, sell: v } : null;
+    },
+  ];
+
+  /* النمط الأقوى يُجرّب على كل الجُمل أولاً، ثم الأضعف — لا العكس */
+  for (const attempt of attempts) {
+    for (const pool of pools) {
+      for (const t of pool) {
+        const r = attempt(t);
+        if (r) return r;
+      }
+    }
+  }
+  return null;
+};
+
 export const parseSudanAkhbarArticle = (
   html: string
 ): { rates: LiveRate[]; publishedAt?: string; title?: string } => {
@@ -220,6 +301,17 @@ export const parseSudanAkhbarArticle = (
   for (const { re, code } of AR_LABEL_TO_CODE) {
     if (seen.has(code)) continue;
     let value: number | null = null;
+
+    /*
+     * الأولوية لصيغة «شراء … مقابل … للبيع» — هي الصيغة الفعلية للمقال.
+     * السعر المعتمد للتداول هو سعر البيع، والشراء يُحفظ للعرض فقط.
+     */
+    const bs = buySellFor(scope, re) || buySellFor(text, re);
+    if (bs) {
+      rates.push({ code, official: null, parallel: bs.sell, buy: bs.buy, sell: bs.sell });
+      seen.add(code);
+      continue;
+    }
 
     for (const { re: candidate, pick } of patternsFor(re.source)) {
       const m = scope.match(candidate) || text.match(candidate);
@@ -401,20 +493,69 @@ const fetchSudanAkhbarViaApi = async (
       const url =
         `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q)}` +
         `&per_page=5&_fields=id,date,date_gmt,link,title,content`;
-      const c = new AbortController();
-      const t = setTimeout(() => c.abort(), 9000);
-      const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
-      clearTimeout(t);
-      if (!res.ok) {
-        diag.push({ method: `wp-json:${q}`, ok: false, detail: `HTTP ${res.status}` });
+      /*
+       * الموقع يرفض طلبات مراكز البيانات (403) بشكل متقطّع، ومعه حجب مؤقت
+       * لأي طلب سريع يتكرر. نحاول مرتين مباشرة، ثم مرة عبر القارئ، ثم ننتقل
+       * لكلمة بحث أخرى — بدل الاستسلام وعرض أسعار المصدر الآخر فقط.
+       */
+      let posts: any[] | null = null;
+      for (const attempt of [1, 2]) {
+        try {
+          const c = new AbortController();
+          const t = setTimeout(() => c.abort(), 8000);
+          const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
+          clearTimeout(t);
+          if (res.ok) {
+            posts = await res.json().catch(() => null);
+            if (Array.isArray(posts) && posts.length) break;
+          } else {
+            diag.push({ method: `wp-json:${q}#${attempt}`, ok: false, detail: `HTTP ${res.status}` });
+          }
+        } catch (err) {
+          diag.push({ method: `wp-json:${q}#${attempt}`, ok: false, detail: (err as Error).name });
+        }
+        if (attempt === 1) await new Promise((r) => setTimeout(r, 400));
+      }
+
+      /* المسار البديل: نفس الـwp-json عبر نسخة القارئ */
+      if (!posts || !posts.length) {
+        const raw = await fetchViaReader(url, 12000);
+        if (raw) {
+          const a = raw.indexOf('[');
+          const b = raw.lastIndexOf(']');
+          if (a >= 0 && b > a) {
+            try {
+              posts = JSON.parse(raw.slice(a, b + 1));
+            } catch {
+              posts = null;
+            }
+          }
+        }
+      }
+
+      if (!posts || !posts.length) {
+        diag.push({ method: `wp-json:${q}`, ok: false, detail: 'empty list' });
         continue;
       }
-      const posts: any[] = await res.json().catch(() => []);
       if (!Array.isArray(posts) || !posts.length) {
         diag.push({ method: `wp-json:${q}`, ok: false, detail: 'empty list' });
         continue;
       }
-      const picked = pickArticleFromPosts(posts, `wp-json:${q}`, diag);
+      /*
+       * الأحدث أولاً: كانت النتائج تُؤخذ بترتيب البحث، فيُقرأ أحياناً مقال
+       * «أبرز عناوين الصحف» (يذكر سعر الدولار عرضاً) بدل مقال أسعار اليوم.
+       * نستبعد أيضاً المقالات التي لا تحتوي جدول عملات حقيقياً.
+       */
+      const sorted = [...posts].sort(
+        (a, b) => Date.parse(b?.date_gmt || 0) - Date.parse(a?.date_gmt || 0)
+      );
+      const currencyPosts = sorted.filter((p) => {
+        const t = String(p?.title?.rendered || '');
+        return /(العملات|الدولار|السوق\s*(الموازي|السوداء)|اسعار|أسعار)/.test(t);
+      });
+      const picked =
+        pickArticleFromPosts(currencyPosts.length ? currencyPosts : sorted, `wp-json:${q}`, diag) ||
+        null;
       if (picked) return picked;
     } catch (err) {
       diag.push({ method: `wp-json:${q}`, ok: false, detail: (err as Error).name });

@@ -4253,7 +4253,8 @@ var parseArabicPublishedAt = (text2) => {
 var htmlToText = (html) => html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 var AR_LABEL_TO_CODE = [
   // NB: all groups are non-capturing — the captured number must stay at index 1
-  { re: /الدولار\s*(?:الأمريكي|الامريكي|الاميركي|الأميركي)/i, code: "USD" },
+  /* «الدولار» وحدها كافية — المقال يكتب «سعر شراء الدولار» بلا صفة */
+  { re: /(?:الدولار|دولار)(?:\s*(?:الأمريكي|الامريكي|الاميركي|الأميركي))?/i, code: "USD" },
   { re: /الريال\s*السعودي/i, code: "SAR" },
   { re: /الدرهم\s*(?:الإماراتي|الاماراتي)/i, code: "AED" },
   { re: /اليورو/i, code: "EUR" },
@@ -4263,6 +4264,64 @@ var AR_LABEL_TO_CODE = [
   { re: /الريال\s*العماني/i, code: "OMR" },
   { re: /الدينار\s*الكويتي/i, code: "KWD" }
 ];
+var buySellFor = (scope, label) => {
+  const NUM = "([0-9][0-9,]{2,}(?:\\.[0-9]+)?)";
+  const num = (x) => toNumber(x);
+  const ok = (n) => n !== null && n >= 100 && n < 15e5;
+  const sentences = scope.split(/[!؟\n]+|\.\s+/).map((x) => x.trim()).filter(Boolean);
+  const trimComparison = (t) => t.split(/مقارنة|مقابل مستويات|التي بلغت|الأربعاء|السبت|أمس|سابق/)[0].trim();
+  const current = sentences.map(trimComparison).filter(Boolean);
+  const pools = [current, sentences];
+  const attempts = [
+    // «ارتفاع سعر شراء الدولار إلى 10300 جنيه، مقابل 10500 جنيه للبيع»
+    (t) => {
+      const m = t.match(
+        new RegExp(
+          `\u0634\u0631\u0627\u0621\\s*${label.source}[^.]{0,80}?${NUM}[^.]{0,120}?${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0628\u064A\u0639`,
+          "i"
+        )
+      );
+      const a = num(m?.[1]);
+      const b = num(m?.[2]);
+      return ok(a) && ok(b) ? { buy: Math.min(a, b), sell: Math.max(a, b) } : null;
+    },
+    // «2745.64 جنيه للشراء و2798.96 جنيه للبيع» داخل جملة تخص العملة
+    (t) => {
+      if (!label.test(t)) return null;
+      const m = t.match(
+        new RegExp(`${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0634\u0631\u0627\u0621\\s*\u0648\\s*${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0628\u064A\u0639`, "i")
+      );
+      const a = num(m?.[1]);
+      const b = num(m?.[2]);
+      return ok(a) && ok(b) ? { buy: Math.min(a, b), sell: Math.max(a, b) } : null;
+    },
+    // «ارتفاع سعر بيع الدولار إلى 10500 جنيه» — سعر البيع وحده
+    (t) => {
+      if (!label.test(t)) return null;
+      const m = t.match(
+        new RegExp(`\u0628\u064A\u0639\\s*${label.source}[^.]{0,60}?(?:\u0625\u0644\u0649|\u0627\u0644\u0649)?\\s*${NUM}`, "i")
+      );
+      const sell = num(m?.[1]);
+      return ok(sell) ? { buy: sell, sell } : null;
+    },
+    // «الدولار الأمريكي 10500 جنيه» — آخر ملاذ
+    (t) => {
+      if (!label.test(t)) return null;
+      const m = t.match(new RegExp(`${label.source}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*${NUM}`, "i"));
+      const v = num(m?.[1]);
+      return ok(v) ? { buy: v, sell: v } : null;
+    }
+  ];
+  for (const attempt of attempts) {
+    for (const pool2 of pools) {
+      for (const t of pool2) {
+        const r = attempt(t);
+        if (r) return r;
+      }
+    }
+  }
+  return null;
+};
 var parseSudanAkhbarArticle = (html) => {
   const text2 = htmlToText(html);
   const title = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -4307,6 +4366,12 @@ var parseSudanAkhbarArticle = (html) => {
   for (const { re, code } of AR_LABEL_TO_CODE) {
     if (seen.has(code)) continue;
     let value = null;
+    const bs = buySellFor(scope, re) || buySellFor(text2, re);
+    if (bs) {
+      rates.push({ code, official: null, parallel: bs.sell, buy: bs.buy, sell: bs.sell });
+      seen.add(code);
+      continue;
+    }
     for (const { re: candidate, pick } of patternsFor(re.source)) {
       const m = scope.match(candidate) || text2.match(candidate);
       if (!m) continue;
@@ -4423,20 +4488,54 @@ var fetchSudanAkhbarViaApi = async (diag) => {
   for (const q2 of queries) {
     try {
       const url = `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q2)}&per_page=5&_fields=id,date,date_gmt,link,title,content`;
-      const c = new AbortController();
-      const t = setTimeout(() => c.abort(), 9e3);
-      const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
-      clearTimeout(t);
-      if (!res.ok) {
-        diag.push({ method: `wp-json:${q2}`, ok: false, detail: `HTTP ${res.status}` });
+      let posts = null;
+      for (const attempt of [1, 2]) {
+        try {
+          const c = new AbortController();
+          const t = setTimeout(() => c.abort(), 8e3);
+          const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
+          clearTimeout(t);
+          if (res.ok) {
+            posts = await res.json().catch(() => null);
+            if (Array.isArray(posts) && posts.length) break;
+          } else {
+            diag.push({ method: `wp-json:${q2}#${attempt}`, ok: false, detail: `HTTP ${res.status}` });
+          }
+        } catch (err) {
+          diag.push({ method: `wp-json:${q2}#${attempt}`, ok: false, detail: err.name });
+        }
+        if (attempt === 1) await new Promise((r) => setTimeout(r, 400));
+      }
+      if (!posts || !posts.length) {
+        const raw = await fetchViaReader(url, 12e3);
+        if (raw) {
+          const a = raw.indexOf("[");
+          const b = raw.lastIndexOf("]");
+          if (a >= 0 && b > a) {
+            try {
+              posts = JSON.parse(raw.slice(a, b + 1));
+            } catch {
+              posts = null;
+            }
+          }
+        }
+      }
+      if (!posts || !posts.length) {
+        diag.push({ method: `wp-json:${q2}`, ok: false, detail: "empty list" });
         continue;
       }
-      const posts = await res.json().catch(() => []);
       if (!Array.isArray(posts) || !posts.length) {
         diag.push({ method: `wp-json:${q2}`, ok: false, detail: "empty list" });
         continue;
       }
-      const picked = pickArticleFromPosts(posts, `wp-json:${q2}`, diag);
+      const sorted = [...posts].sort(
+        (a, b) => Date.parse(b?.date_gmt || 0) - Date.parse(a?.date_gmt || 0)
+      );
+      const currencyPosts = sorted.filter((p) => {
+        const t = String(p?.title?.rendered || "");
+        return /(العملات|الدولار|السوق\s*(الموازي|السوداء)|اسعار|أسعار)/.test(t);
+      });
+      const picked = pickArticleFromPosts(currencyPosts.length ? currencyPosts : sorted, `wp-json:${q2}`, diag) || null;
       if (picked) return picked;
     } catch (err) {
       diag.push({ method: `wp-json:${q2}`, ok: false, detail: err.name });
@@ -4712,9 +4811,12 @@ var sourcesWanted = (msg) => {
   return "primary-first";
 };
 var priceLines = (snapshot) => sortRates((snapshot.rates || []).filter((r) => r.parallel || r.official)).map((r) => {
-  const price = money(r.parallel ?? r.official);
+  const any = r;
+  const buy = typeof any.buy === "number" ? any.buy : null;
+  const sell = r.parallel ?? r.official;
   const bank = r.official ? ` (\u0627\u0644\u0628\u0646\u0643: ${money(r.official)})` : "";
-  return `\u2022 ${AR_NAMES[r.code] || r.code}: ${price} \u062C.\u0633${bank}`;
+  const both = buy !== null && Math.abs(buy - sell) >= 0.01 ? `\u0634 ${money(buy)} \xB7 \u0628 ${money(sell)}` : money(sell);
+  return `\u2022 ${AR_NAMES[r.code] || r.code}: ${both} \u062C.\u0633${bank}`;
 });
 var formatRatesAnswer = (snapshot, opts = {}) => {
   if (!snapshot?.rates?.length) return null;
@@ -4744,6 +4846,7 @@ var formatMultiSourceAnswer = (sources, opts = {}) => {
 ` + (lines.length ? lines.join("\n") : "\u2022 \u0645\u0627 \u0644\u0642\u064A\u062A \u062C\u062F\u0648\u0644 \u0623\u0633\u0639\u0627\u0631 \u0641\u064A \u0627\u0644\u0635\u0641\u062D\u0629 \u0627\u0644\u0622\u0646") + `
 \u0633\u062D\u0628 \u0627\u0644\u0642\u0631\u0627\u0621\u0629: ${describeAgeAr(s.fetchedAt)}${published}`;
   });
+  const legend = "\n\n(\u0634 = \u0633\u0639\u0631 \u0627\u0644\u0634\u0631\u0627\u0621 \u0645\u0646 \u0627\u0644\u062A\u0627\u062C\u0631 \xB7 \u0628 = \u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639)";
   const perSource = sources.map((s) => ({
     name: s.source,
     map: new Map(s.rates.filter((r) => r.parallel).map((r) => [r.code, r.parallel]))
@@ -4773,7 +4876,7 @@ ${blocks.join("\n\n")}
 ${comparisons.join("\n")}
 
 ` : "") + (opts.storedAt ? `\u0622\u062E\u0631 \u0642\u0631\u0627\u0621\u0629 \u0645\u062D\u0641\u0648\u0638\u0629 \u0641\u064A \u0627\u0644\u0645\u0646\u0635\u0629 \u0643\u0627\u0646\u062A ${describeAgeAr(opts.storedAt)} \u2014 \u0648\u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0641\u0648\u0642 \u0647\u064A \u0627\u0644\u0623\u062D\u062F\u062B.
-` : "") + `\u0646\u0635\u064A\u062D\u0629: \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0628\u062A\u062A\u063A\u064A\u0651\u0631 \u0641\u064A \u0646\u0641\u0633 \u0627\u0644\u064A\u0648\u0645\u060C \u0641\u0623\u0643\u0651\u062F \u0645\u0639 \u0627\u0644\u062A\u0627\u062C\u0631 \u0648\u0642\u062A \u0627\u0644\u062A\u0646\u0641\u064A\u0630.`;
+` : "") + legend + `\u0646\u0635\u064A\u062D\u0629: \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0628\u062A\u062A\u063A\u064A\u0651\u0631 \u0641\u064A \u0646\u0641\u0633 \u0627\u0644\u064A\u0648\u0645\u060C \u0641\u0623\u0643\u0651\u062F \u0645\u0639 \u0627\u0644\u062A\u0627\u062C\u0631 \u0648\u0642\u062A \u0627\u0644\u062A\u0646\u0641\u064A\u0630.`;
 };
 
 // src/server/notifications.ts

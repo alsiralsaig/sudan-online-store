@@ -98,11 +98,22 @@ export const sourcesWanted = (msg: string): 'both' | 'primary' | 'backup' | 'pri
   return 'primary-first';
 };
 
+/**
+ * سطر لكل عملة. إن كان المصدر يعلن شراءً وبيعاً نعرضهما كما هما — الفرق
+ * بين 10300 و10500 هو هامش التاجر، وإخفاؤه يجعل الرقم يبدو «غير مطابق
+ * للمصدر» (وهو بالضبط ما شكا منه المستخدم).
+ */
 const priceLines = (snapshot: LiveRatesSnapshot): string[] =>
   sortRates((snapshot.rates || []).filter((r) => r.parallel || r.official)).map((r) => {
-    const price = money((r.parallel ?? r.official)!);
+    const any = r as any;
+    const buy = typeof any.buy === 'number' ? any.buy : null;
+    const sell = (r.parallel ?? r.official)!;
     const bank = r.official ? ` (البنك: ${money(r.official)})` : '';
-    return `• ${AR_NAMES[r.code] || r.code}: ${price} ج.س${bank}`;
+    const both =
+      buy !== null && Math.abs(buy - sell) >= 0.01
+        ? `ش ${money(buy)} · ب ${money(sell)}`
+        : money(sell);
+    return `• ${AR_NAMES[r.code] || r.code}: ${both} ج.س${bank}`;
   });
 
 /**
@@ -167,6 +178,9 @@ export const formatMultiSourceAnswer = (
     );
   });
 
+  /* سطر واحد يشرح الرموز، مرة واحدة في آخر الجواب */
+  const legend = '\n\n(ش = سعر الشراء من التاجر · ب = سعر البيع)';
+
   // Compare the currencies both sources publish
   const perSource = sources.map((s) => ({
     name: s.source,
@@ -199,6 +213,7 @@ export const formatMultiSourceAnswer = (
     (opts.storedAt
       ? `آخر قراءة محفوظة في المنصة كانت ${describeAgeAr(opts.storedAt)} — والأرقام فوق هي الأحدث.\n`
       : '') +
+    legend +
     `نصيحة: الأسعار بتتغيّر في نفس اليوم، فأكّد مع التاجر وقت التنفيذ.`
   );
 };
