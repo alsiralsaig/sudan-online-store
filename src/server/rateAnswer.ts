@@ -182,7 +182,7 @@ export const formatMultiSourceAnswer = (
   const hasBuySell = sources.some((s) =>
     (s.rates || []).some((r) => typeof (r as any).buy === 'number' && Math.abs((r as any).buy - (r.parallel ?? 0)) >= 0.01)
   );
-  const legend = hasBuySell ? '\n\n(ش = سعر الشراء من التاجر · ب = سعر البيع)' : '';
+  const legend = hasBuySell ? '(ش = سعر الشراء من التاجر · ب = سعر البيع)\n' : '';
 
   // Compare the currencies both sources publish
   const perSource = sources.map((s) => ({
@@ -215,7 +215,7 @@ export const formatMultiSourceAnswer = (
     (comparisons.length ? `مقارنة سريعة:\n${comparisons.join('\n')}\n\n` : '') +
     (opts.storedAt
       ? `آخر قراءة محفوظة في المنصة كانت ${describeAgeAr(opts.storedAt)} — والأرقام فوق هي الأحدث.\n`
-      : '') +
+      : '\n') +
     legend +
     `نصيحة: الأسعار بتتغيّر في نفس اليوم، فأكّد مع التاجر وقت التنفيذ.`
   );
