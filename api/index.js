@@ -2695,7 +2695,10 @@ var Database = class {
       if (n.recipientToken) return !!filter.ownerToken && n.recipientToken === filter.ownerToken;
       return true;
     }).filter((n) => {
-      if (!n.tenantId) return true;
+      if (!n.tenantId) {
+        if (filter.tenantId && String(n.id).startsWith("ntf_seed_")) return false;
+        return true;
+      }
       return !filter.tenantId || n.tenantId === filter.tenantId;
     }).sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
     return filter.limit ? rows.slice(0, filter.limit) : rows;

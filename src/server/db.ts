@@ -1862,7 +1862,16 @@ class Database {
         return true;
       })
       .filter((n) => {
-        if (!n.tenantId) return true;
+        /*
+         * إشعارات بدون متجر:
+         *  • إشعارات العرض التجريبية (ntf_seed_*) لا تُعرض لتاجر حقيقي — كانت
+         *    تظهر «إشعار تجريبي» و«طلب شراء جديد» في جرس كل متجر.
+         *  • أي إعلان عام حقيقي (system) يظل يظهر للجميع.
+         */
+        if (!n.tenantId) {
+          if (filter.tenantId && String(n.id).startsWith('ntf_seed_')) return false;
+          return true;
+        }
         return !filter.tenantId || n.tenantId === filter.tenantId;
       })
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
