@@ -18,6 +18,7 @@ import type {
   CurrencyRatesSnapshot,
   MarketAuction,
   ItemLink,
+  SupplyOrder,
   Tenant,
   SubscriptionPlan,
   SubscriptionPayment,
@@ -77,6 +78,7 @@ export interface DatabaseSchema {
   /** One row per currency per day that already triggered a move alert. */
   currencyRateAlerts: Array<{ id: string; code: string; day: string; percent: number; rate: number }>;
   storefrontOrders: StorefrontOrder[];
+  supplyOrders: SupplyOrder[];
   expenses: Expense[];
   purchases: Purchase[];
   auditLogs: AuditLog[];
@@ -2327,8 +2329,9 @@ class Database {
       pushKeys: [],
       ownerApprovals: [],
       marketBanners: INITIAL_MARKET_BANNERS,
-      /* جدول جديد: يُنشأ تلقائياً عند أول تشغيل بعد النشر */
+      /* جداول جديدة: تُنشأ تلقائياً عند أول تشغيل بعد النشر */
       itemLinks: [],
+      supplyOrders: [],
     };
   }
 

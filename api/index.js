@@ -3068,8 +3068,9 @@ var Database = class {
       pushKeys: [],
       ownerApprovals: [],
       marketBanners: INITIAL_MARKET_BANNERS,
-      /* جدول جديد: يُنشأ تلقائياً عند أول تشغيل بعد النشر */
-      itemLinks: []
+      /* جداول جديدة: تُنشأ تلقائياً عند أول تشغيل بعد النشر */
+      itemLinks: [],
+      supplyOrders: []
     };
   }
   /**
@@ -7255,6 +7256,117 @@ apiRouter.get("/links", merchantAuthMiddleware, (req, res) => {
     };
   });
   res.json({ links, count: links.length });
+});
+function supplyOrderNumber() {
+  const d = /* @__PURE__ */ new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  return `PO-${ymd}-${Math.floor(Math.random() * 9e3 + 1e3)}`;
+}
+apiRouter.get("/supply-orders", merchantAuthMiddleware, (req, res) => {
+  const me = req.tenantId;
+  const all = db.getSchema().supplyOrders || [];
+  const incoming = all.filter((o) => o.sellerTenantId === me).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const outgoing = all.filter((o) => o.buyerTenantId === me).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  res.json({
+    incoming,
+    outgoing,
+    totals: {
+      incomingPending: incoming.filter((o) => o.status === "pending").length,
+      outgoingPending: outgoing.filter((o) => o.status === "pending").length
+    }
+  });
+});
+apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const { sellerTenantId, items, note } = req.body || {};
+  const seller = db.getTenant(String(sellerTenantId || ""));
+  if (!seller) return res.status(404).json({ error: "SELLER_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0627\u0644\u0645\u064F\u0648\u0631\u0650\u0651\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (!canSeeCatalogOf(me, seller)) {
+    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0644\u0627 \u064A\u0645\u0643\u0646\u0643 \u0627\u0644\u0637\u0644\u0628 \u0645\u0646 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631 \u2014 \u0627\u0644\u0637\u0628\u0642\u0627\u062A \u0623\u0648 \u0627\u0644\u0628\u0627\u0642\u0629 \u0644\u0627 \u062A\u0633\u0645\u062D." });
+  }
+  const rows = Array.isArray(items) ? items : [];
+  if (rows.length === 0) {
+    return res.status(400).json({ error: "EMPTY_ORDER", message: "\u0623\u0636\u0641 \u0635\u0646\u0641\u0627\u064B \u0648\u0627\u062D\u062F\u0627\u064B \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644." });
+  }
+  const clean = [];
+  for (const row of rows) {
+    const product = db.getSchema().products.find((p) => p.id === String(row?.productId || ""));
+    if (!product || product.tenantId !== seller.id) {
+      return res.status(400).json({ error: "BAD_ITEM", message: "\u0623\u062D\u062F \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0644\u0627 \u064A\u062E\u0635 \u0647\u0630\u0627 \u0627\u0644\u0645\u0648\u0631\u062F." });
+    }
+    const quantity = Math.max(1, Math.round(Number(row?.quantity) || 0));
+    const unitPriceSdg = Number(product.sellingPriceSdg) || 0;
+    clean.push({
+      productId: product.id,
+      productName: product.name,
+      unit: product.unit,
+      quantity,
+      unitPriceSdg,
+      totalSdg: unitPriceSdg * quantity
+    });
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const order = {
+    id: newId("po"),
+    orderNumber: supplyOrderNumber(),
+    buyerTenantId: me.id,
+    buyerName: me.tradeName || me.name,
+    buyerPhone: me.phone,
+    sellerTenantId: seller.id,
+    sellerName: seller.tradeName || seller.name,
+    sellerSegment: seller.accountSegment || "retailer",
+    items: clean,
+    totalSdg: clean.reduce((sum, it) => sum + it.totalSdg, 0),
+    status: "pending",
+    note: typeof note === "string" ? note.slice(0, 400) : void 0,
+    createdAt: now,
+    updatedAt: now
+  };
+  db.getSchema().supplyOrders.unshift(order);
+  db.commit();
+  db.logAudit({
+    tenantId: me.id,
+    actorId: "merchant",
+    actorName: me.tradeName || me.name,
+    action: "SUPPLY_ORDER_CREATED",
+    entity: "SupplyOrder",
+    entityId: order.id,
+    details: `\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F ${order.orderNumber} \u0645\u0646 ${order.sellerName} \u0628\u0645\u0628\u0644\u063A ${order.totalSdg} \u062C.\u0633`
+  });
+  res.json({ success: true, order, message: `\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0637\u0644\u0628 ${order.orderNumber} \u0625\u0644\u0649 ${order.sellerName}.` });
+});
+apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, (req, res) => {
+  const me = req.tenantId;
+  const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const status = String(req.body?.status || "");
+  const allowed = ["accepted", "rejected", "fulfilled", "cancelled"];
+  if (!allowed.includes(status)) {
+    return res.status(400).json({ error: "BAD_STATUS", message: "\u062D\u0627\u0644\u0629 \u063A\u064A\u0631 \u0645\u0639\u0631\u0648\u0641\u0629." });
+  }
+  const isSeller = order.sellerTenantId === me;
+  const isBuyer = order.buyerTenantId === me;
+  if (!isSeller && !isBuyer) {
+    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0644\u0627 \u064A\u062E\u0635\u0643." });
+  }
+  if (isBuyer && !isSeller && status !== "cancelled") {
+    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0627\u0644\u0645\u0634\u062A\u0631\u064A \u064A\u0642\u062F\u0631 \u064A\u0644\u063A\u064A \u0627\u0644\u0637\u0644\u0628 \u0641\u0642\u0637." });
+  }
+  order.status = status;
+  if (typeof req.body?.sellerNote === "string") order.sellerNote = req.body.sellerNote.slice(0, 400);
+  order.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  db.commit();
+  db.logAudit({
+    tenantId: me,
+    actorId: "merchant",
+    actorName: me,
+    action: "SUPPLY_ORDER_STATUS",
+    entity: "SupplyOrder",
+    entityId: order.id,
+    details: `\u0627\u0644\u0637\u0644\u0628 ${order.orderNumber} \u0623\u0635\u0628\u062D: ${status}`
+  });
+  res.json({ success: true, order });
 });
 apiRouter.get("/links/incoming", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);

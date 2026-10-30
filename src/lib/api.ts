@@ -395,6 +395,19 @@ class ApiClient {
     return this.request(`/links/catalog/${encodeURIComponent(tenantId)}${query}`);
   }
 
+  /** طلبات التوريد: الواردة (أنا المورد) والصادرة (أنا الطالب). */
+  public async getSupplyOrders(): Promise<{ incoming: any[]; outgoing: any[]; totals: { incomingPending: number; outgoingPending: number } }> {
+    return this.request('/supply-orders');
+  }
+
+  public async sendSupplyOrder(payload: { sellerTenantId: string; items: Array<{ productId: string; quantity: number }>; note?: string }) {
+    return this.request('/supply-orders', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  public async setSupplyOrderStatus(id: string, status: string, sellerNote?: string) {
+    return this.request(`/supply-orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status, sellerNote }) });
+  }
+
   /** للطبقة الأعلى: من ربط بأصنافي وبأي هامش وسعر. */
   public async getIncomingLinks(): Promise<{ buyers: any[]; totals: { buyers: number; links: number; itemsLinked: number } }> {
     return this.request('/links/incoming');

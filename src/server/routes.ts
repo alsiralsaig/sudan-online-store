@@ -34,6 +34,7 @@ import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, 
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
 import { ntfyStatus } from './ntfy.ts';
 import { newId, newCode } from './ids.ts';
+import type { SupplyOrder, SupplyOrderItem } from '../types/index.ts';
 import {
   saveMedia, getMedia, deleteMedia, buildMediaResponse, prepareForStreaming, HttpError, MAX_RAW_BYTES,
   MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
@@ -1152,6 +1153,141 @@ apiRouter.get('/links', merchantAuthMiddleware, (req, res) => {
     });
 
   res.json({ links, count: links.length });
+});
+
+/* ------------------------------------------------------------------ */
+/*  طلبات التوريد بين المتاجر (المورد ← الجملة ← القطاعي)              */
+/* ------------------------------------------------------------------ */
+
+function supplyOrderNumber(): string {
+  const d = new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  return `PO-${ymd}-${Math.floor(Math.random() * 9000 + 1000)}`;
+}
+
+/** قائمة طلباتي: الواردة (أنا البائع) والصادرة (أنا المشتري). */
+apiRouter.get('/supply-orders', merchantAuthMiddleware, (req, res) => {
+  const me = (req as AuthenticatedRequest).tenantId;
+  const all = db.getSchema().supplyOrders || [];
+  const incoming = all.filter((o) => o.sellerTenantId === me).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const outgoing = all.filter((o) => o.buyerTenantId === me).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  res.json({
+    incoming,
+    outgoing,
+    totals: {
+      incomingPending: incoming.filter((o) => o.status === 'pending').length,
+      outgoingPending: outgoing.filter((o) => o.status === 'pending').length,
+    },
+  });
+});
+
+/** إرسال طلب توريد إلى مورد/جملة أعلى مني فقط. */
+apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+
+  const { sellerTenantId, items, note } = req.body || {};
+  const seller = db.getTenant(String(sellerTenantId || ''));
+  if (!seller) return res.status(404).json({ error: 'SELLER_NOT_FOUND', message: 'المتجر المُورِّد غير موجود.' });
+
+  /* قواعد الطبقات: لا يُطلب إلا من طبقة أعلى، مع VIP للقطاعي←المورد */
+  if (!canSeeCatalogOf(me, seller)) {
+    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'لا يمكنك الطلب من هذا المتجر — الطبقات أو الباقة لا تسمح.' });
+  }
+
+  const rows = Array.isArray(items) ? items : [];
+  if (rows.length === 0) {
+    return res.status(400).json({ error: 'EMPTY_ORDER', message: 'أضف صنفاً واحداً على الأقل.' });
+  }
+
+  const clean: SupplyOrderItem[] = [];
+  for (const row of rows) {
+    const product = db.getSchema().products.find((p) => p.id === String(row?.productId || ''));
+    if (!product || product.tenantId !== seller.id) {
+      return res.status(400).json({ error: 'BAD_ITEM', message: 'أحد الأصناف لا يخص هذا المورد.' });
+    }
+    const quantity = Math.max(1, Math.round(Number(row?.quantity) || 0));
+    const unitPriceSdg = Number(product.sellingPriceSdg) || 0;
+    clean.push({
+      productId: product.id,
+      productName: product.name,
+      unit: product.unit,
+      quantity,
+      unitPriceSdg,
+      totalSdg: unitPriceSdg * quantity,
+    });
+  }
+
+  const now = new Date().toISOString();
+  const order: SupplyOrder = {
+    id: newId('po'),
+    orderNumber: supplyOrderNumber(),
+    buyerTenantId: me.id,
+    buyerName: me.tradeName || me.name,
+    buyerPhone: me.phone,
+    sellerTenantId: seller.id,
+    sellerName: seller.tradeName || seller.name,
+    sellerSegment: ((seller as any).accountSegment || 'retailer') as any,
+    items: clean,
+    totalSdg: clean.reduce((sum, it) => sum + it.totalSdg, 0),
+    status: 'pending',
+    note: typeof note === 'string' ? note.slice(0, 400) : undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  db.getSchema().supplyOrders.unshift(order);
+  db.commit();
+  db.logAudit({
+    tenantId: me.id,
+    actorId: 'merchant',
+    actorName: me.tradeName || me.name,
+    action: 'SUPPLY_ORDER_CREATED',
+    entity: 'SupplyOrder',
+    entityId: order.id,
+    details: `طلب توريد ${order.orderNumber} من ${order.sellerName} بمبلغ ${order.totalSdg} ج.س`,
+  });
+
+  res.json({ success: true, order, message: `تم إرسال الطلب ${order.orderNumber} إلى ${order.sellerName}.` });
+});
+
+/** رد المورد: قبول / رفض / تسليم (مع ملاحظة). */
+apiRouter.patch('/supply-orders/:id', merchantAuthMiddleware, (req, res) => {
+  const me = (req as AuthenticatedRequest).tenantId;
+  const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'الطلب غير موجود.' });
+
+  const status = String(req.body?.status || '');
+  const allowed = ['accepted', 'rejected', 'fulfilled', 'cancelled'];
+  if (!allowed.includes(status)) {
+    return res.status(400).json({ error: 'BAD_STATUS', message: 'حالة غير معروفة.' });
+  }
+  /* البائع يقرر القبول/الرفض/التسليم، والمشتري يقدر يلغي طلبه فقط */
+  const isSeller = order.sellerTenantId === me;
+  const isBuyer = order.buyerTenantId === me;
+  if (!isSeller && !isBuyer) {
+    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'هذا الطلب لا يخصك.' });
+  }
+  if (isBuyer && !isSeller && status !== 'cancelled') {
+    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'المشتري يقدر يلغي الطلب فقط.' });
+  }
+
+  order.status = status as SupplyOrder['status'];
+  if (typeof req.body?.sellerNote === 'string') order.sellerNote = req.body.sellerNote.slice(0, 400);
+  order.updatedAt = new Date().toISOString();
+  db.commit();
+
+  db.logAudit({
+    tenantId: me,
+    actorId: 'merchant',
+    actorName: me,
+    action: 'SUPPLY_ORDER_STATUS',
+    entity: 'SupplyOrder',
+    entityId: order.id,
+    details: `الطلب ${order.orderNumber} أصبح: ${status}`,
+  });
+
+  res.json({ success: true, order });
 });
 
 /**

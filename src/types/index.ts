@@ -523,6 +523,38 @@ export interface Purchase {
   createdAt: string;
 }
 
+/**
+ * طلب توريد بين متجرين (طبقات).
+ * من التاجر (الأدنى) إلى المورد/الجملة (الأعلى): أصناف + كميات + سعر لحظة الطلب.
+ * status: pending → accepted | rejected، ثم fulfilled عند وصول الطلب لمخزون الطالب.
+ */
+export interface SupplyOrderItem {
+  productId: string;
+  productName: string;
+  unit: string;
+  quantity: number;
+  unitPriceSdg: number;
+  totalSdg: number;
+}
+
+export interface SupplyOrder {
+  id: string;
+  orderNumber: string;
+  buyerTenantId: string;
+  buyerName: string;
+  buyerPhone: string;
+  sellerTenantId: string;
+  sellerName: string;
+  sellerSegment: AccountSegment;
+  items: SupplyOrderItem[];
+  totalSdg: number;
+  status: 'pending' | 'accepted' | 'rejected' | 'fulfilled' | 'cancelled';
+  note?: string;
+  sellerNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AuditLog {
   id: string;
   tenantId: string;

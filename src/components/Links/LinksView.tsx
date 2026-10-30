@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Link2, Search, Store, Percent, RefreshCw, Trash2, Pencil, CheckCircle2,
   AlertTriangle, Loader2, PackageSearch, ShieldCheck, ArrowRight, X, Sparkles,
+  ShoppingCart, ClipboardList, Minus, Plus, Truck, Check, Ban,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 
@@ -34,6 +35,14 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   const [editPriceFor, setEditPriceFor] = useState<any | null>(null);
   const [priceInput, setPriceInput] = useState('');
 
+  /* طلب توريد: سلة الكميات ثم إرسال الطلب + متابعة الوارد/الصادر */
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [orderNote, setOrderNote] = useState('');
+  const [orders, setOrders] = useState<{ incoming: any[]; outgoing: any[]; totals: { incomingPending: number; outgoingPending: number } }>({
+    incoming: [], outgoing: [], totals: { incomingPending: 0, outgoingPending: 0 },
+  });
+  const isupplierSide = viewer.accountSegment === 'supplier' || viewer.accountSegment === 'wholesaler';
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -47,6 +56,8 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
       setViewer(src.viewer);
       setLinks(lnk.links || []);
       setIncoming(inc as any);
+      const ord = await api.getSupplyOrders().catch(() => null);
+      if (ord) setOrders(ord as any);
     } catch (e: any) {
       setError(e.message || 'تعذّر تحميل بيانات الربط.');
     } finally {
@@ -164,6 +175,78 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
     const manual = links.filter((l) => l.priceMode === 'manual').length;
     return { count: links.length, manual };
   }, [links]);
+
+  /* ---------------- سلة طلب التوريد ---------------- */
+  const setQty = (productId: string, qty: number) =>
+    setCart((prev) => {
+      const next = { ...prev };
+      if (qty <= 0) delete next[productId];
+      else next[productId] = Math.min(qty, 100000);
+      return next;
+    });
+
+  const cartLines = useMemo(
+    () =>
+      Object.entries(cart)
+        .map(([productId, quantity]) => {
+          const product = catalog.find((p: any) => p.id === productId);
+          if (!product) return null;
+          const unitPriceSdg = Number(product.sellingPriceSdg) || 0;
+          return { product, quantity, unitPriceSdg, totalSdg: unitPriceSdg * quantity };
+        })
+        .filter(Boolean) as any[],
+    [cart, catalog],
+  );
+  const cartTotal = cartLines.reduce((sum, l) => sum + l.totalSdg, 0);
+
+  const clearCart = () => { setCart({}); setOrderNote(''); };
+
+  const sendOrder = async () => {
+    if (!openSource || cartLines.length === 0) return;
+    setBusy(true);
+    try {
+      const res: any = await api.sendSupplyOrder({
+        sellerTenantId: openSource.id,
+        items: cartLines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
+        note: orderNote.trim() || undefined,
+      });
+      setNote(res.message || 'تم إرسال الطلب.');
+      clearCart();
+      const ord = await api.getSupplyOrders().catch(() => null);
+      if (ord) setOrders(ord as any);
+    } catch (err: any) {
+      setError(err.message || 'تعذّر إرسال الطلب');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const respondOrder = async (order: any, status: string) => {
+    setBusy(true);
+    try {
+      await api.setSupplyOrderStatus(order.id, status);
+      const ord = await api.getSupplyOrders().catch(() => null);
+      if (ord) setOrders(ord as any);
+      setNote(`تم تحديث الطلب ${order.orderNumber}.`);
+    } catch (err: any) {
+      setError(err.message || 'تعذّر تحديث الطلب');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusLabel = (st: string) =>
+    st === 'pending' ? 'بانتظار الرد'
+      : st === 'accepted' ? 'مقبول — جارٍ التحضير'
+      : st === 'rejected' ? 'مرفوض'
+      : st === 'fulfilled' ? 'تم التسليم'
+      : 'ملغي';
+  const statusClass = (st: string) =>
+    st === 'pending' ? 'bg-amber-100 text-amber-900'
+      : st === 'accepted' ? 'bg-sky-100 text-sky-900'
+      : st === 'rejected' ? 'bg-rose-100 text-rose-900'
+      : st === 'fulfilled' ? 'bg-emerald-100 text-emerald-900'
+      : 'bg-slate-200 text-slate-700';
 
   return (
     <div className="space-y-4" dir="rtl">
@@ -294,18 +377,78 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                       {p.expiryDate ? ` • صلاحية ${String(p.expiryDate).slice(0, 10)}` : ''}
                     </div>
                   </div>
-                  {p.linked ? (
-                    <span className="shrink-0 rounded-lg bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-1">مربوط</span>
-                  ) : (
-                    <button
-                      onClick={() => { setPicked(p); setNote(''); }}
-                      className="shrink-0 rounded-lg bg-slate-900 text-white text-[10.5px] font-black px-2.5 py-1.5"
-                    >
-                      ربط السلعة
-                    </button>
-                  )}
+                  <div className="shrink-0 flex items-center gap-1">
+                    {cart[p.id] ? (
+                      <div className="flex items-center gap-1 rounded-lg border border-sky-300 bg-sky-50 px-1">
+                        <button onClick={() => setQty(p.id, (cart[p.id] || 0) - 1)} className="p-1 text-sky-800"><Minus className="w-3 h-3" /></button>
+                        <input
+                          value={cart[p.id]}
+                          onChange={(e) => setQty(p.id, Number(e.target.value.replace(/[^\d]/g, '')) || 0)}
+                          inputMode="numeric"
+                          className="w-10 bg-transparent text-center text-[11px] font-mono font-black text-sky-900 focus:outline-none"
+                        />
+                        <button onClick={() => setQty(p.id, (cart[p.id] || 0) + 1)} className="p-1 text-sky-800"><Plus className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setQty(p.id, 1)}
+                        title="أضف للطلب"
+                        className="rounded-lg border border-slate-300 text-slate-700 p-1.5"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    {p.linked ? (
+                      <span className="rounded-lg bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-1">مربوط</span>
+                    ) : (
+                      <button
+                        onClick={() => { setPicked(p); setNote(''); }}
+                        className="rounded-lg bg-slate-900 text-white text-[10.5px] font-black px-2.5 py-1.5"
+                      >
+                        ربط السلعة
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
+
+              {/* سلة الطلب من هذا المورد */}
+              {cartLines.length > 0 && (
+                <div className="rounded-xl border border-sky-300 bg-sky-50 p-2.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11.5px] font-black text-sky-900 flex items-center gap-1.5">
+                      <ShoppingCart className="w-3.5 h-3.5" /> طلب توريد: {cartLines.length} صنف
+                    </span>
+                    <span className="text-[12px] font-black text-sky-900">{cartTotal.toLocaleString('en-US')} ج.س</span>
+                  </div>
+                  <div className="space-y-1">
+                    {cartLines.map((l) => (
+                      <div key={l.product.id} className="flex items-center justify-between gap-2 text-[10.5px] text-sky-900">
+                        <span className="truncate">{l.product.name} × {l.quantity}</span>
+                        <span className="font-mono shrink-0">{l.totalSdg.toLocaleString('en-US')}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <textarea
+                    value={orderNote}
+                    onChange={(e) => setOrderNote(e.target.value)}
+                    rows={2}
+                    placeholder="ملاحظة للمورد (اختياري): مكان التسليم، موعد، طريقة الدفع…"
+                    className="w-full rounded-lg border border-sky-300 px-2 py-1.5 text-[11px] focus:outline-none focus:border-sky-600"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={sendOrder}
+                      disabled={busy}
+                      className="flex-1 rounded-lg bg-sky-700 text-white py-2 text-[11.5px] font-black disabled:opacity-60 flex items-center justify-center gap-1.5"
+                    >
+                      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Truck className="w-3.5 h-3.5" />}
+                      إرسال الطلب إلى {openSource?.name}
+                    </button>
+                    <button onClick={clearCart} className="rounded-lg bg-white border border-sky-300 text-sky-800 px-2.5 text-[11px] font-bold">تفريغ</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -457,6 +600,77 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* طلبات التوريد: الصادرة (أنا طالب) والواردة (أنا المورد) */}
+      <div className="rounded-2xl bg-white border border-slate-200 p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[12.5px] font-black text-slate-800 flex items-center gap-1.5">
+            <ClipboardList className="w-4 h-4 text-sky-700" /> طلبات التوريد
+          </h3>
+          <span className="text-[10.5px] font-bold text-slate-500">
+            واردة {orders.incoming.length} • صادرة {orders.outgoing.length}
+            {orders.totals.incomingPending > 0 ? ` • ${orders.totals.incomingPending} بانتظار ردّك` : ''}
+          </span>
+        </div>
+
+        {orders.incoming.length === 0 && orders.outgoing.length === 0 ? (
+          <p className="py-4 text-center text-[11.5px] text-slate-500 leading-6">
+            لا توجد طلبات بعد. {isupplierSide
+              ? 'عندما يطلب منك تاجر توريداً سيظهر هنا للقبول أو الرفض.'
+              : 'اضغط «+» بجانب أي صنف في كتالوج المورد ثم أرسل الطلب.'}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {[...orders.incoming.map((o) => ({ ...o, side: 'in' })), ...orders.outgoing.map((o) => ({ ...o, side: 'out' }))]
+              .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+              .map((o: any) => (
+                <div key={o.id} className="rounded-xl border border-slate-200 p-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11.5px] font-black text-slate-800 truncate">
+                      {o.side === 'in' ? `من ${o.buyerName}` : `إلى ${o.sellerName}`}
+                      <span className="text-slate-500 font-mono text-[10px]"> • {o.orderNumber}</span>
+                    </span>
+                    <span className={`shrink-0 rounded-lg px-1.5 py-0.5 text-[10px] font-black ${statusClass(o.status)}`}>
+                      {statusLabel(o.status)}
+                    </span>
+                  </div>
+                  <div className="text-[10.5px] text-slate-600">
+                    {o.items.map((it: any) => `${it.productName} × ${it.quantity}`).join(' • ')}
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11.5px] font-black text-emerald-700">{Number(o.totalSdg).toLocaleString('en-US')} ج.س</span>
+                    <div className="flex items-center gap-1">
+                      {o.side === 'in' && o.status === 'pending' && (
+                        <>
+                          <button onClick={() => respondOrder(o, 'accepted')} disabled={busy} className="rounded-lg bg-sky-700 text-white px-2 py-1 text-[10.5px] font-black flex items-center gap-1 disabled:opacity-60">
+                            <Check className="w-3 h-3" /> قبول
+                          </button>
+                          <button onClick={() => respondOrder(o, 'rejected')} disabled={busy} className="rounded-lg bg-rose-50 text-rose-700 px-2 py-1 text-[10.5px] font-black flex items-center gap-1 disabled:opacity-60">
+                            <Ban className="w-3 h-3" /> رفض
+                          </button>
+                        </>
+                      )}
+                      {o.side === 'in' && o.status === 'accepted' && (
+                        <button onClick={() => respondOrder(o, 'fulfilled')} disabled={busy} className="rounded-lg bg-emerald-700 text-white px-2 py-1 text-[10.5px] font-black flex items-center gap-1 disabled:opacity-60">
+                          <Truck className="w-3 h-3" /> تم التسليم
+                        </button>
+                      )}
+                      {o.side === 'out' && (o.status === 'pending' || o.status === 'accepted') && (
+                        <button onClick={() => respondOrder(o, 'cancelled')} disabled={busy} className="rounded-lg bg-slate-100 text-slate-700 px-2 py-1 text-[10.5px] font-bold disabled:opacity-60">
+                          إلغاء طلبي
+                        </button>
+                      )}
+                      {o.buyerPhone && o.side === 'in' && (
+                        <a href={`tel:${o.buyerPhone}`} className="rounded-lg bg-slate-900 text-white px-2 py-1 text-[10.5px] font-black">اتصال</a>
+                      )}
+                    </div>
+                  </div>
+                  {o.note ? <div className="text-[10px] text-slate-500">ملاحظة الطالب: {o.note}</div> : null}
+                </div>
+              ))}
           </div>
         )}
       </div>
