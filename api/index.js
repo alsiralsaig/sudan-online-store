@@ -4262,7 +4262,12 @@ var AR_LABEL_TO_CODE = [
   { re: /الريال\s*القطري/i, code: "QAR" },
   { re: /(?:الجنيه|الجنية)\s*(?:الإسترليني|الاسترليني|الاسترلينى)/i, code: "GBP" },
   { re: /الريال\s*العماني/i, code: "OMR" },
-  { re: /الدينار\s*الكويتي/i, code: "KWD" }
+  { re: /الدينار\s*الكويتي/i, code: "KWD" },
+  { re: /الدينار\s*البحريني/i, code: "BHD" },
+  /* الليرة التركية لا ترد في جدول «السوق الموازي» بل في جداول البنوك */
+  { re: /(?:الليرة|ليرة)\s*التركية/i, code: "TRY" },
+  { re: /الروبل\s*الروسي/i, code: "RUB" },
+  { re: /اليوان\s*الصيني/i, code: "CNY" }
 ];
 var buySellFor = (scope, label) => {
   const NUM = "([0-9][0-9,]{2,}(?:\\.[0-9]+)?)";
@@ -4765,10 +4770,13 @@ var AR_NAMES = {
   TRY: "\u0627\u0644\u0644\u064A\u0631\u0629 \u0627\u0644\u062A\u0631\u0643\u064A\u0629",
   GBP: "\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0625\u0633\u062A\u0631\u0644\u064A\u0646\u064A",
   OMR: "\u0627\u0644\u0631\u064A\u0627\u0644 \u0627\u0644\u0639\u0645\u0627\u0646\u064A",
-  KWD: "\u0627\u0644\u062F\u064A\u0646\u0627\u0631 \u0627\u0644\u0643\u0648\u064A\u062A\u064A"
+  KWD: "\u0627\u0644\u062F\u064A\u0646\u0627\u0631 \u0627\u0644\u0643\u0648\u064A\u062A\u064A",
+  BHD: "\u0627\u0644\u062F\u064A\u0646\u0627\u0631 \u0627\u0644\u0628\u062D\u0631\u064A\u0646\u064A",
+  RUB: "\u0627\u0644\u0631\u0648\u0628\u0644 \u0627\u0644\u0631\u0648\u0633\u064A",
+  CNY: "\u0627\u0644\u064A\u0648\u0627\u0646 \u0627\u0644\u0635\u064A\u0646\u064A"
 };
 var AR_CODES_RE = /دولار|ريال|درهم|يورو|جنيه\s*مصري|إسترليني|استرليني|ليرة|دينار/i;
-var CODE_ORDER = ["USD", "SAR", "AED", "EUR", "EGP", "QAR", "GBP", "OMR", "KWD", "TRY"];
+var CODE_ORDER = ["USD", "SAR", "AED", "EUR", "EGP", "QAR", "GBP", "OMR", "KWD", "BHD", "TRY", "RUB", "CNY"];
 var money = (n) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 var sortRates = (rates) => [...rates].sort(
   (a, b) => (CODE_ORDER.indexOf(a.code) + 1 || 99) - (CODE_ORDER.indexOf(b.code) + 1 || 99)
@@ -4819,14 +4827,31 @@ var isCalcQuery = (msg) => {
   return (margin || deal) && /\d/.test(msg);
 };
 var isConversionQuery = (msg) => /\d/.test(msg) && /(كم|بكم|بكام|يساوي|تساوي|حوّل|حول|بالجنيه|جنيه\s*سوداني)/i.test(msg) && AR_CODES_RE.test(msg) && !isCalcQuery(msg);
+var CURRENCY_KEYS = [
+  [["\u0631\u064A\u0627\u0644 \u0633\u0639\u0648\u062F\u064A", "\u0627\u0644\u0633\u0639\u0648\u062F\u064A"], "SAR"],
+  [["\u062F\u0631\u0647\u0645", "\u0627\u0644\u0625\u0645\u0627\u0631\u0627\u062A\u064A", "\u0627\u0644\u0627\u0645\u0627\u0631\u0627\u062A\u064A"], "AED"],
+  [["\u064A\u0648\u0631\u0648"], "EUR"],
+  [["\u0645\u0635\u0631\u064A", "\u0627\u0644\u0645\u0635\u0631\u064A"], "EGP"],
+  [["\u0642\u0637\u0631\u064A", "\u0627\u0644\u0642\u0637\u0631\u064A"], "QAR"],
+  [["\u0625\u0633\u062A\u0631\u0644\u064A\u0646\u064A", "\u0627\u0633\u062A\u0631\u0644\u064A\u0646\u064A", "\u0627\u0644\u0625\u0633\u062A\u0631\u0644\u064A\u0646\u064A"], "GBP"],
+  [["\u0639\u0645\u0627\u0646\u064A", "\u0627\u0644\u0639\u0645\u0627\u0646\u064A"], "OMR"],
+  [["\u0643\u0648\u064A\u062A\u064A", "\u0627\u0644\u0643\u0648\u064A\u062A\u064A"], "KWD"],
+  [["\u0628\u062D\u0631\u064A\u0646\u064A", "\u0627\u0644\u0628\u062D\u0631\u064A\u0646\u064A"], "BHD"],
+  [["\u0644\u064A\u0631\u0629", "\u0627\u0644\u062A\u0631\u0643\u064A\u0629", "\u062A\u0631\u0643\u064A"], "TRY"],
+  [["\u0631\u0648\u0628\u0644"], "RUB"],
+  [["\u064A\u0648\u0627\u0646"], "CNY"]
+];
 var codeFromMessage = (msg) => {
-  if (/ريال\s*سعودي|SAR/i.test(msg)) return "SAR";
-  if (/درهم|AED/i.test(msg)) return "AED";
-  if (/يورو|EUR/i.test(msg)) return "EUR";
-  if (/جنيه\s*مصري|EGP/i.test(msg)) return "EGP";
-  if (/ريال\s*قطري|QAR/i.test(msg)) return "QAR";
-  if (/إسترليني|استرليني|GBP/i.test(msg)) return "GBP";
+  const has = (w) => msg.includes(w);
+  for (const [keys, code] of CURRENCY_KEYS) {
+    if (keys.some(has)) return code;
+  }
   return "USD";
+};
+var isFollowUpCalc = (msg) => {
+  const ref = /(الحسبه|الحسبة|الحسابه|الحسابة|نفس الحسبة|نفس السؤال|نفس الحساب|الحسبه دي|دي بال)/i.test(msg);
+  const other = /(بدل|بال|بـ|في|على)/i.test(msg) && AR_CODES_RE.test(msg);
+  return ref || other && /(دي|de|دي\?)/i.test(msg) && AR_CODES_RE.test(msg);
 };
 var amountFromMessage = (msg) => {
   const m = msg.replace(/[,٬]/g, "").match(/(\d+(?:\.\d+)?)/);
@@ -8964,6 +8989,7 @@ var ASSISTANT_MODELS = [
   "gemini-flash-latest",
   "gemini-2.5-flash"
 ].filter(Boolean);
+var AR_CODES_RE_SERVER = /دولار|ريال|درهم|يورو|جنيه|ليرة|دينار|روبل|يوان|استرليني|إسترليني/;
 var isNewsQuery = (msg) => {
   const news = /(اخبار|أخبار|جريدة|صحيفة|عناوين|أحداث|احداث)/i.test(msg);
   const money2 = /(سعر|أسعار|اسعار|صرف|دولار|ريال|درهم|يورو|تحويل)/i.test(msg);
@@ -9187,6 +9213,24 @@ ${JSON.stringify(inventorySummary)}
     return res.json(pack("rule_engine_after_error", local));
   }
 });
+var lastCalcByDevice = /* @__PURE__ */ new Map();
+var LAST_CALC_TTL = 30 * 60 * 1e3;
+var buildCalcReply = (amount, pct, code, rate) => {
+  const name = AR_NAMES[code] || code;
+  const cost = amount * rate;
+  const lines = [
+    `\u0627\u0644\u062A\u0643\u0644\u0641\u0629: ${amount.toLocaleString("en-US")} ${name} \xD7 ${rate.toLocaleString("en-US")} = ${Math.round(cost).toLocaleString("en-US")} \u062C.\u0633`
+  ];
+  if (pct !== null) {
+    const profit = cost * pct / 100;
+    lines.push(
+      `\u0647\u0627\u0645\u0634 \u0627\u0644\u0631\u0628\u062D ${pct}% = ${Math.round(profit).toLocaleString("en-US")} \u062C.\u0633`,
+      `\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u0627\u0644\u0645\u0637\u0644\u0648\u0628 = ${Math.round(cost + profit).toLocaleString("en-US")} \u062C.\u0633`
+    );
+  }
+  lines.push(`(\u0639\u0644\u0649 \u0633\u0639\u0631 ${name} ${rate.toLocaleString("en-US")} \u062C.\u0633 \u2014 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A)`);
+  return lines.join("\n");
+};
 apiRouter.post("/assistant/chat", async (req, res) => {
   const { message, mode, context, history } = req.body || {};
   if (!message || typeof message !== "string" || !message.trim()) {
@@ -9203,29 +9247,63 @@ apiRouter.post("/assistant/chat", async (req, res) => {
     const isMath = isCalcQuery(message) || isConversionQuery(message);
     const asksAboutRates = isRateQuery(message) && !newsOnly && !isMath;
     const wantsSources = asksForSources(message);
-    if (isCalcQuery(message) || isConversionQuery(message)) {
+    const deviceKey = String(req.headers["x-device-id"] || req.ip || "anon");
+    const followUp = isFollowUpCalc(message);
+    if (isCalcQuery(message) || isConversionQuery(message) || followUp) {
       const usable = (snap2) => snap2?.rates?.length ? snap2 : null;
       let snap = usable(db.getRatesSnapshot());
       if (!snap) {
         snap = usable(await fetchLiveRates().catch(() => null));
       }
-      const code = codeFromMessage(message);
+      const prev = lastCalcByDevice.get(deviceKey);
+      const prevFresh = prev && Date.now() - prev.at < LAST_CALC_TTL ? prev : null;
+      let code = codeFromMessage(message);
+      let amount = amountFromMessage(message) || 0;
+      let pct = (() => {
+        const m = message.replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*(?:%|٪|في\s*المية|بالمية)/);
+        return m ? Number(m[1]) : null;
+      })();
+      if (followUp && prevFresh) {
+        amount = amount || prevFresh.amount;
+        pct = pct ?? prevFresh.pct;
+        if (!AR_CODES_RE_SERVER.test(message)) code = prevFresh.code;
+      }
       const rate = snap?.rates?.find((r) => r.code === code);
       const sell = rate?.parallel ?? rate?.sell ?? rate?.official ?? null;
       const name = AR_NAMES[code] || code;
+      if (followUp && !prevFresh) {
+        return res.json({
+          reply: "\u0623\u064A \u062D\u0633\u0628\u0629 \u062A\u0642\u0635\u062F\u061F \u0627\u0643\u062A\u0628\u0647\u0627 \u0645\u0631\u0629 \u0648\u0627\u062D\u062F\u0629 \u0643\u062F\u0647: \xAB\u0627\u0634\u062A\u0631\u064A\u062A \u0628\u0640150 \u062F\u0648\u0644\u0627\u0631 \u0648\u0647\u0627\u0645\u0634 \u0631\u0628\u062D 25%\xBB \u0648\u0623\u0646\u0627 \u0623\u062D\u0633\u0628\u0647\u0627 \u0628\u0623\u064A \u0639\u0645\u0644\u0629 \u062A\u062E\u062A\u0627\u0631\u0647\u0627.",
+          model: "calc-ask"
+        });
+      }
+      const rateFor = (c) => {
+        const r = snap?.rates?.find((x) => x.code === c);
+        const v = r?.parallel ?? r?.sell ?? r?.official ?? null;
+        if (typeof v === "number" && v > 0) return v;
+        const local = db.getSchema().currencies.find((x) => x.code === c);
+        return local && local.rateToSdg > 0 ? local.rateToSdg : null;
+      };
+      if ((isCalcQuery(message) || followUp) && amount > 0) {
+        const r1 = rateFor(code);
+        if (r1) {
+          if (!followUp) lastCalcByDevice.set(deviceKey, { amount, pct, code, at: Date.now() });
+          return res.json({ reply: buildCalcReply(amount, pct, code, r1), model: "calc-local" });
+        }
+      }
       if (sell && isCalcQuery(message)) {
-        const amount = amountFromMessage(message) || 0;
+        const amount2 = amountFromMessage(message) || 0;
         const pctMatch = message.replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*(?:%|٪|في\s*المية|بالمية)/);
-        const pct = pctMatch ? Number(pctMatch[1]) : null;
-        const costSdg = amount * sell;
-        const profit = pct !== null ? costSdg * pct / 100 : null;
+        const pct2 = pctMatch ? Number(pctMatch[1]) : null;
+        const costSdg = amount2 * sell;
+        const profit = pct2 !== null ? costSdg * pct2 / 100 : null;
         const total = profit !== null ? costSdg + profit : null;
         const lines = [
-          `\u0627\u0644\u062A\u0643\u0644\u0641\u0629: ${amount.toLocaleString("en-US")} ${name} \xD7 ${sell.toLocaleString("en-US")} = ${Math.round(costSdg).toLocaleString("en-US")} \u062C.\u0633`
+          `\u0627\u0644\u062A\u0643\u0644\u0641\u0629: ${amount2.toLocaleString("en-US")} ${name} \xD7 ${sell.toLocaleString("en-US")} = ${Math.round(costSdg).toLocaleString("en-US")} \u062C.\u0633`
         ];
-        if (pct !== null) {
+        if (pct2 !== null) {
           lines.push(
-            `\u0647\u0627\u0645\u0634 \u0627\u0644\u0631\u0628\u062D ${pct}% = ${Math.round(profit).toLocaleString("en-US")} \u062C.\u0633`,
+            `\u0647\u0627\u0645\u0634 \u0627\u0644\u0631\u0628\u062D ${pct2}% = ${Math.round(profit).toLocaleString("en-US")} \u062C.\u0633`,
             `\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u0627\u0644\u0645\u0637\u0644\u0648\u0628 = ${Math.round(total).toLocaleString("en-US")} \u062C.\u0633`
           );
         }
@@ -9235,10 +9313,10 @@ apiRouter.post("/assistant/chat", async (req, res) => {
         return res.json({ reply: lines.join("\n"), model: "calc-local" });
       }
       if (sell && isConversionQuery(message)) {
-        const amount = amountFromMessage(message) || 0;
-        const total = amount * sell;
+        const amount2 = amountFromMessage(message) || 0;
+        const total = amount2 * sell;
         return res.json({
-          reply: `${amount.toLocaleString("en-US")} ${name} \xD7 ${sell.toLocaleString("en-US")} = ${Math.round(total).toLocaleString("en-US")} \u062C.\u0633
+          reply: `${amount2.toLocaleString("en-US")} ${name} \xD7 ${sell.toLocaleString("en-US")} = ${Math.round(total).toLocaleString("en-US")} \u062C.\u0633
 (\u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A: ${sell.toLocaleString("en-US")} \u062C.\u0633)`,
           model: "convert-local"
         });

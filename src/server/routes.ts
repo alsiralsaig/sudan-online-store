@@ -23,6 +23,7 @@ import {
   isRateQuery,
   isCalcQuery,
   isConversionQuery,
+  isFollowUpCalc,
   amountFromMessage,
   codeFromMessage,
   asksForSources,
@@ -3601,6 +3602,10 @@ const ASSISTANT_MODELS = [
 ].filter(Boolean) as string[];
 
 /** «آخر الأخبار» / «عناوين اليوم» — ليس سؤال سعر صرف. */
+/** هل الرسالة تذكر عملة صريحة؟ */
+const AR_CODES_RE_SERVER =
+  /دولار|ريال|درهم|يورو|جنيه|ليرة|دينار|روبل|يوان|استرليني|إسترليني/;
+
 const isNewsQuery = (msg: string): boolean => {
   const news = /(اخبار|أخبار|جريدة|صحيفة|عناوين|أحداث|احداث)/i.test(msg);
   const money = /(سعر|أسعار|اسعار|صرف|دولار|ريال|درهم|يورو|تحويل)/i.test(msg);
@@ -3885,6 +3890,33 @@ ${JSON.stringify(inventorySummary)}
   }
 });
 
+/**
+ * آخر حسبة لكل جهاز — لسؤال «طيب لو عاوز الحسبة دي بالليرة التركية؟».
+ * في الذاكرة فقط (لا قاعدة بيانات): الحساب معلومة عابرة، ولو ضاعت بعد
+ * إعادة تشغيل الخادم فالمستخدم يعيد كتابة السؤال.
+ */
+type LastCalc = { amount: number; pct: number | null; code: string; at: number };
+const lastCalcByDevice = new Map<string, LastCalc>();
+const LAST_CALC_TTL = 30 * 60 * 1000;
+
+/** جواب حسبة واحدة بصيغة موحّدة. */
+const buildCalcReply = (amount: number, pct: number | null, code: string, rate: number): string => {
+  const name = AR_NAMES[code] || code;
+  const cost = amount * rate;
+  const lines = [
+    `التكلفة: ${amount.toLocaleString('en-US')} ${name} × ${rate.toLocaleString('en-US')} = ${Math.round(cost).toLocaleString('en-US')} ج.س`,
+  ];
+  if (pct !== null) {
+    const profit = (cost * pct) / 100;
+    lines.push(
+      `هامش الربح ${pct}% = ${Math.round(profit).toLocaleString('en-US')} ج.س`,
+      `سعر البيع المطلوب = ${Math.round(cost + profit).toLocaleString('en-US')} ج.س`
+    );
+  }
+  lines.push(`(على سعر ${name} ${rate.toLocaleString('en-US')} ج.س — السوق الموازي)`);
+  return lines.join('\n');
+};
+
 apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   const { message, mode, context, history } = req.body || {};
   if (!message || typeof message !== 'string' || !message.trim()) {
@@ -3933,18 +3965,61 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
      * غير مطابق للمصدر. الآن: المصدران دائماً، وأخبار السودان أولاً (لأنها
      * أحدث نشراً وأقرب لسعر التداول)، مع شراء/بيع كما هما منشوران.
      */
-    /* ==== حساب تجاري أو تحويل مبلغ: جواب رقمي مباشر، لا جدول عملات ==== */
-    if (isCalcQuery(message) || isConversionQuery(message)) {
+    /* ==== حساب تجاري أو تحويل مبلغ أو متابعة حسبة: جواب رقمي مباشر ==== */
+    const deviceKey = String(req.headers['x-device-id'] || req.ip || 'anon');
+    const followUp = isFollowUpCalc(message);
+    if (isCalcQuery(message) || isConversionQuery(message) || followUp) {
       const usable = (snap: any) =>
         snap?.rates?.length ? snap : null;
       let snap: any = usable(db.getRatesSnapshot());
       if (!snap) {
         snap = usable(await fetchLiveRates().catch(() => null));
       }
-      const code = codeFromMessage(message);
+      const prev = lastCalcByDevice.get(deviceKey);
+      const prevFresh = prev && Date.now() - prev.at < LAST_CALC_TTL ? prev : null;
+
+      let code = codeFromMessage(message);
+      let amount = amountFromMessage(message) || 0;
+      let pct: number | null = (() => {
+        const m = message.replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*(?:%|٪|في\s*المية|بالمية)/);
+        return m ? Number(m[1]) : null;
+      })();
+
+      if (followUp && prevFresh) {
+        /* «الحسبة دي بالليرة» → نفس المبلغ والهامش بعملة أخرى */
+        amount = amount || prevFresh.amount;
+        pct = pct ?? prevFresh.pct;
+        if (!AR_CODES_RE_SERVER.test(message)) code = prevFresh.code;
+      }
+
       const rate = snap?.rates?.find((r: any) => r.code === code);
       const sell = rate?.parallel ?? rate?.sell ?? rate?.official ?? null;
       const name = AR_NAMES[code] || code;
+
+      if (followUp && !prevFresh) {
+        return res.json({
+          reply:
+            'أي حسبة تقصد؟ اكتبها مرة واحدة كده: «اشتريت بـ150 دولار وهامش ربح 25%» وأنا أحسبها بأي عملة تختارها.',
+          model: 'calc-ask',
+        });
+      }
+
+      /* كل عملة متاحة في القراءة الحالية أو في عملات المنصة */
+      const rateFor = (c: string): number | null => {
+        const r = snap?.rates?.find((x: any) => x.code === c);
+        const v = r?.parallel ?? r?.sell ?? r?.official ?? null;
+        if (typeof v === 'number' && v > 0) return v;
+        const local = db.getSchema().currencies.find((x) => x.code === c);
+        return local && local.rateToSdg > 0 ? local.rateToSdg : null;
+      };
+
+      if ((isCalcQuery(message) || followUp) && amount > 0) {
+        const r1 = rateFor(code);
+        if (r1) {
+          if (!followUp) lastCalcByDevice.set(deviceKey, { amount, pct, code, at: Date.now() });
+          return res.json({ reply: buildCalcReply(amount, pct, code, r1), model: 'calc-local' });
+        }
+      }
 
       if (sell && isCalcQuery(message)) {
         /* أرقام المستخدم: مبلغ + نسبة ربح/خسارة */

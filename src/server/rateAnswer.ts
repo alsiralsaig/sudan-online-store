@@ -23,12 +23,15 @@ export const AR_NAMES: Record<string, string> = {
   GBP: 'الجنيه الإسترليني',
   OMR: 'الريال العماني',
   KWD: 'الدينار الكويتي',
+  BHD: 'الدينار البحريني',
+  RUB: 'الروبل الروسي',
+  CNY: 'اليوان الصيني',
 };
 
 /** Display order: what people actually trade first. */
 const AR_CODES_RE = /دولار|ريال|درهم|يورو|جنيه\s*مصري|إسترليني|استرليني|ليرة|دينار/i;
 
-const CODE_ORDER = ['USD', 'SAR', 'AED', 'EUR', 'EGP', 'QAR', 'GBP', 'OMR', 'KWD', 'TRY'];
+const CODE_ORDER = ['USD', 'SAR', 'AED', 'EUR', 'EGP', 'QAR', 'GBP', 'OMR', 'KWD', 'BHD', 'TRY', 'RUB', 'CNY'];
 
 const money = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
@@ -110,15 +113,42 @@ export const isConversionQuery = (msg: string): boolean =>
   AR_CODES_RE.test(msg) &&
   !isCalcQuery(msg);
 
-/** العملة المطلوبة في السؤال (USD افتراضاً). */
+const CURRENCY_KEYS: Array<[string[], string]> = [
+  [['ريال سعودي', 'السعودي'], 'SAR'],
+  [['درهم', 'الإماراتي', 'الاماراتي'], 'AED'],
+  [['يورو'], 'EUR'],
+  [['مصري', 'المصري'], 'EGP'],
+  [['قطري', 'القطري'], 'QAR'],
+  [['إسترليني', 'استرليني', 'الإسترليني'], 'GBP'],
+  [['عماني', 'العماني'], 'OMR'],
+  [['كويتي', 'الكويتي'], 'KWD'],
+  [['بحريني', 'البحريني'], 'BHD'],
+  [['ليرة', 'التركية', 'تركي'], 'TRY'],
+  [['روبل'], 'RUB'],
+  [['يوان'], 'CNY'],
+];
+
+/**
+ * العملة المطلوبة في السؤال.
+ * المقارنة بكلمات منفصلة لا بتعبير مركّب: النص العربي المخلوط بـ«\s»
+ * في تعبير واحد كان يفشل في المطابقة داخل هذه البيئة.
+ */
 export const codeFromMessage = (msg: string): string => {
-  if (/ريال\s*سعودي|SAR/i.test(msg)) return 'SAR';
-  if (/درهم|AED/i.test(msg)) return 'AED';
-  if (/يورو|EUR/i.test(msg)) return 'EUR';
-  if (/جنيه\s*مصري|EGP/i.test(msg)) return 'EGP';
-  if (/ريال\s*قطري|QAR/i.test(msg)) return 'QAR';
-  if (/إسترليني|استرليني|GBP/i.test(msg)) return 'GBP';
+  const has = (w: string) => msg.includes(w);
+  for (const [keys, code] of CURRENCY_KEYS) {
+    if (keys.some(has)) return code;
+  }
   return 'USD';
+};
+
+/**
+ * سؤال متابعة لحسبة سابقة: «طيب لو عاوز الحسبة دي بالليرة التركية؟»
+ * بلا أرقام — نستعيد آخر حسبة ونبدّل العملة فقط.
+ */
+export const isFollowUpCalc = (msg: string): boolean => {
+  const ref = /(الحسبه|الحسبة|الحسابه|الحسابة|نفس الحسبة|نفس السؤال|نفس الحساب|الحسبه دي|دي بال)/i.test(msg);
+  const other = /(بدل|بال|بـ|في|على)/i.test(msg) && AR_CODES_RE.test(msg);
+  return ref || (other && /(دي|de|دي\?)/i.test(msg) && AR_CODES_RE.test(msg));
 };
 
 /** الرقم المطلوب تحويله (أول رقم في الرسالة). */
