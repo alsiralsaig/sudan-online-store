@@ -103,7 +103,7 @@ export const CentralAdminView: React.FC = () => {
   };
 
   const handleIssueCode = async (tenantId: string, name: string) => {
-    if (!confirm(`توليد رمز جديد للمتجر «${name}»؟\nالرمز القديم سيُلغى فوراً. انسخ الجديد وأرسله للتاجر عبر واتساب آمن.`)) return;
+    if (!confirm(`توليد رمز جديد للمتجر «${name}»؟\nالرمز القديم سيتوقف فوراً — أرسل الجديد للتاجر في نفس اللحظة.\n(لتاجر يعمل الآن، لا حاجة لإعادة الإصدار — استخدم «عرض الرمز».)`)) return;
     try {
       const res = await api.issueMerchantCode(tenantId);
       setCodeFor({ tenantId, name, code: res.code });
@@ -392,6 +392,15 @@ export const CentralAdminView: React.FC = () => {
                           {t.hasMerchantCode ? 'إعادة إصدار رمز المتجر' : 'إصدار رمز المتجر'}
                         </button>
                         <span className={`text-[10px] ${t.hasMerchantCode ? 'text-emerald-600' : 'text-amber-600'}`}>{t.hasMerchantCode ? 'له رمز' : 'بلا رمز — أنشئه الآن'}</span>
+                        {/* كود المتجر متاح دائماً بعد الإصدار — لا يحتاج المدير إصدار كود جديد ليعطيه للتاجر */}
+                        {(t as any).merchantCode ? (
+                          <button
+                            onClick={() => setCodeFor({ tenantId: t.id, name: t.name, code: (t as any).merchantCode })}
+                            className="px-3 py-1 rounded text-[11px] font-bold bg-sky-600 text-white hover:bg-sky-700 whitespace-nowrap"
+                          >
+                            عرض الرمز
+                          </button>
+                        ) : null}
                         <button
                           onClick={() => handleToggleTenantStatus(t.id, t.status)}
                           className={`px-3 py-1 rounded text-xs font-semibold whitespace-nowrap transition-colors ${
@@ -639,7 +648,7 @@ export const CentralAdminView: React.FC = () => {
             <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-sm">رمز المتجر — {codeFor.name}</h3>
-                <p className="text-[11px] text-slate-400">يُعرض مرة واحدة فقط. انسخه وأرسله عبر واتساب آمن.</p>
+                <p className="text-[11px] text-slate-400">انسخه وأرسله للتاجر عبر واتساب آمن — ويبقى متاحاً في زر «عرض الرمز».</p>
               </div>
               <button onClick={() => setCodeFor(null)} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
@@ -650,7 +659,7 @@ export const CentralAdminView: React.FC = () => {
                 <button onClick={async()=>{ await navigator.clipboard.writeText(codeFor.code); alert('تم النسخ'); }} className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-black">نسخ الرمز</button>
                 <a href={`https://wa.me/?text=${encodeURIComponent(codeFor.code)}`} target="_blank" rel="noreferrer" className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black text-center">إرسال واتساب</a>
               </div>
-              <button onClick={()=>setCodeFor(null)} className="w-full py-2 text-xs text-slate-600">إغلاق — لن يظهر مرة أخرى</button>
+              <button onClick={()=>setCodeFor(null)} className="w-full py-2 text-xs text-slate-600">إغلاق</button>
             </div>
           </div>
         </div>

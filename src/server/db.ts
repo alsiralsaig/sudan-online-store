@@ -2455,8 +2455,16 @@ class Database {
     if (plainCode) {
       const compact = String(plainCode).toUpperCase().replace(/[^A-Z0-9]/g, '');
       (tenant as any).merchantCodePrefix = compact.slice(0, 16);
+      /*
+       * نحتفظ بالكود نفسه (لا البصمة فقط) لأن المنصة تحتاج إعادة إظهاره
+       * للتاجر. بدون ذلك: كل ضغطة على «إعادة إصدار رمز المتجر» تُلغي الكود
+       * الذي بيد التاجر ولا يوجد أي مكان يعرف الكود الجديد بعد إغلاق النافذة
+       * — فيبقى المتجر خارج التطبيق (هذا ما حدث فعلاً).
+       */
+      (tenant as any).merchantCodeDisplay = compact;
     } else {
       delete (tenant as any).merchantCodePrefix;
+      delete (tenant as any).merchantCodeDisplay;
     }
     this.save();
     return tenant;
@@ -2468,6 +2476,7 @@ class Database {
     delete (tenant as any).merchantCodeHash;
     delete (tenant as any).merchantCodeIssuedAt;
     delete (tenant as any).merchantCodeIssuedBy;
+    delete (tenant as any).merchantCodeDisplay;
     this.save();
     return true;
   }

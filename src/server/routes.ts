@@ -3028,6 +3028,11 @@ apiRouter.get('/admin/tenants', adminAuthMiddleware, (req, res) => {
     return {
       ...safe,
       hasMerchantCode: !!merchantCodeHash,
+      /*
+       * الكود نفسه يُعاد للمنصة دائماً (لو مُخزَّن) حتى لا يضيع: التاجر يطلبه
+       * واتسابياً، والمدير ينسخه من الجدول بدل إصدار كود جديد يقطع القديم.
+       */
+      merchantCode: (t as any).merchantCodeDisplay || null,
       branchCount: branches.length,
       employeeCount: employees.length,
       planName: plan?.name,
@@ -3076,7 +3081,13 @@ apiRouter.post('/admin/tenants/:id/merchant-code', adminAuthMiddleware, (req, re
     entityId: tenant.id,
     details: `إصدار/تجديد رمز دخول المتجر — أُظهر مرة واحدة ويجب إرساله للتاجر عبر قناة آمنة`,
   });
-  res.json({ success: true, tenantId: tenant.id, code: newCode, issuedAt: (tenant as any).merchantCodeIssuedAt, message: 'تم إنشاء الرمز — انسخه الآن وأرسله للتاجر عبر واتساب آمن. لن يظهر مرة أخرى.' });
+  res.json({
+    success: true,
+    tenantId: tenant.id,
+    code: newCode,
+    issuedAt: (tenant as any).merchantCodeIssuedAt,
+    message: 'تم إنشاء رمز جديد — أُرسل للتاجر الآن، والرمز القديم توقف.',
+  });
 });
 
 apiRouter.post('/admin/tenants/:id/merchant-code/clear', adminAuthMiddleware, (req, res) => {

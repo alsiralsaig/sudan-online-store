@@ -161,7 +161,13 @@ export function merchantAuthMiddleware(req: Request, res: Response, next: NextFu
   if (staffToken) {
     const staffClaims = verifySession(staffToken, secret, 'staff');
     if (!staffClaims || staffClaims.tenantId !== tenant.id) {
-      return res.status(401).json({ error: 'STAFF_SESSION_INVALID', message: 'جلسة الموظف غير صالحة، أدخل رمزك مجدداً.' });
+      /*
+       * رمز موظف قديم/لا يخص هذا المتجر لا يعني أن التاجر خارج حسابه.
+       * قبل: كان كل طلب يُرفض برسالة «جلسة الموظف غير صالحة» فيبدو التطبيق
+       * معطلاً بعد تسجيل دخول ناجح. الآن: نتجاهله ونكمل بجلسة المتجر
+       * (ونمسحه من الجهاز في الواجهة عند رؤية staffSession=false).
+       */
+      return next();
     }
     const staffEmployee = (db.getSchema().employees || []).find((e) => e.id === staffClaims.employeeId && e.tenantId === tenant.id);
     if (!staffEmployee || staffEmployee.isActive === false) {

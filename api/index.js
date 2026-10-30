@@ -3169,8 +3169,10 @@ var Database = class {
     if (plainCode) {
       const compact = String(plainCode).toUpperCase().replace(/[^A-Z0-9]/g, "");
       tenant.merchantCodePrefix = compact.slice(0, 16);
+      tenant.merchantCodeDisplay = compact;
     } else {
       delete tenant.merchantCodePrefix;
+      delete tenant.merchantCodeDisplay;
     }
     this.save();
     return tenant;
@@ -3181,6 +3183,7 @@ var Database = class {
     delete tenant.merchantCodeHash;
     delete tenant.merchantCodeIssuedAt;
     delete tenant.merchantCodeIssuedBy;
+    delete tenant.merchantCodeDisplay;
     this.save();
     return true;
   }
@@ -6198,7 +6201,7 @@ function merchantAuthMiddleware(req, res, next) {
   if (staffToken) {
     const staffClaims = verifySession(staffToken, secret, "staff");
     if (!staffClaims || staffClaims.tenantId !== tenant.id) {
-      return res.status(401).json({ error: "STAFF_SESSION_INVALID", message: "\u062C\u0644\u0633\u0629 \u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629\u060C \u0623\u062F\u062E\u0644 \u0631\u0645\u0632\u0643 \u0645\u062C\u062F\u062F\u0627\u064B." });
+      return next();
     }
     const staffEmployee = (db.getSchema().employees || []).find((e) => e.id === staffClaims.employeeId && e.tenantId === tenant.id);
     if (!staffEmployee || staffEmployee.isActive === false) {
@@ -8605,6 +8608,11 @@ apiRouter.get("/admin/tenants", adminAuthMiddleware, (req, res) => {
     return {
       ...safe,
       hasMerchantCode: !!merchantCodeHash2,
+      /*
+       * الكود نفسه يُعاد للمنصة دائماً (لو مُخزَّن) حتى لا يضيع: التاجر يطلبه
+       * واتسابياً، والمدير ينسخه من الجدول بدل إصدار كود جديد يقطع القديم.
+       */
+      merchantCode: t.merchantCodeDisplay || null,
       branchCount: branches.length,
       employeeCount: employees.length,
       planName: plan?.name
@@ -8647,7 +8655,13 @@ apiRouter.post("/admin/tenants/:id/merchant-code", adminAuthMiddleware, (req, re
     entityId: tenant.id,
     details: `\u0625\u0635\u062F\u0627\u0631/\u062A\u062C\u062F\u064A\u062F \u0631\u0645\u0632 \u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u062A\u062C\u0631 \u2014 \u0623\u064F\u0638\u0647\u0631 \u0645\u0631\u0629 \u0648\u0627\u062D\u062F\u0629 \u0648\u064A\u062C\u0628 \u0625\u0631\u0633\u0627\u0644\u0647 \u0644\u0644\u062A\u0627\u062C\u0631 \u0639\u0628\u0631 \u0642\u0646\u0627\u0629 \u0622\u0645\u0646\u0629`
   });
-  res.json({ success: true, tenantId: tenant.id, code: newCode2, issuedAt: tenant.merchantCodeIssuedAt, message: "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u0631\u0645\u0632 \u2014 \u0627\u0646\u0633\u062E\u0647 \u0627\u0644\u0622\u0646 \u0648\u0623\u0631\u0633\u0644\u0647 \u0644\u0644\u062A\u0627\u062C\u0631 \u0639\u0628\u0631 \u0648\u0627\u062A\u0633\u0627\u0628 \u0622\u0645\u0646. \u0644\u0646 \u064A\u0638\u0647\u0631 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649." });
+  res.json({
+    success: true,
+    tenantId: tenant.id,
+    code: newCode2,
+    issuedAt: tenant.merchantCodeIssuedAt,
+    message: "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0631\u0645\u0632 \u062C\u062F\u064A\u062F \u2014 \u0623\u064F\u0631\u0633\u0644 \u0644\u0644\u062A\u0627\u062C\u0631 \u0627\u0644\u0622\u0646\u060C \u0648\u0627\u0644\u0631\u0645\u0632 \u0627\u0644\u0642\u062F\u064A\u0645 \u062A\u0648\u0642\u0641."
+  });
 });
 apiRouter.post("/admin/tenants/:id/merchant-code/clear", adminAuthMiddleware, (req, res) => {
   const tenant = db.getTenant(req.params.id);
