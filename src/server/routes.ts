@@ -241,6 +241,22 @@ apiRouter.post('/auth/merchant/login', (req, res) => {
   }
   // Prefer tenant lookup by hash (code itself identifies the store)
   let tenant = hash ? db.findTenantByMerchantCodeHash(hash) : legacyByPrefix || undefined;
+
+  /*
+   * شبكة أمان: لو البصمة في قاعدة البيانات لم تتزامن بعد مع الكود الذي أرسلناه
+   * للتاجر، نطابق النص المحفوظ ونصلح البصمة في نفس الطلب — فالكود المُصدر من
+   * المنصة يُقبل في اللحظة نفسها دائماً.
+   */
+  if (!tenant) {
+    const compact = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const byStoredCode = db.getSchema().tenants.find(
+      (t) => String((t as any).merchantCodeDisplay || '') === compact
+    );
+    if (byStoredCode && hash) {
+      db.setMerchantCode(byStoredCode.id, hash, 'login_self_heal', compact);
+      tenant = byStoredCode;
+    }
+  }
   // If slug/tenantId supplied, enforce exact match (prevents cross-store confusion)
   const hint = String(slug || tenantId || '').trim();
   if (hint) {
@@ -5278,9 +5294,15 @@ apiRouter.post('/admin/tenants/repair-codes', adminAuthMiddleware, (req, res) =>
      * rotateAll=true: تحويل كل الأكواد إلى الصيغة القصيرة (حتى لو عندها كود)
      * — يُستخدم مرة واحدة بعد إطلاق الصيغة الجديدة. غير ذلك: فقط بلا كود.
      */
+    /*
+     * القاعدة العامة (لا حالة بحالة):
+     * - rotateAll: صيغة قديمة/طويلة تُحوَّل.
+     * - غير ذلك: أي متجر بلا كود صالح أو بلا نص كود محفوظ (من إصدارات سابقة)
+     *   يُصدر له كود جديد. المتجر الذي كوده ظاهر لا يُمَس — الدخول الحالي لا ينقطع.
+     */
     const needsCode = rotateAll
       ? String((tenant as any).merchantCodePrefix || '').length > 12 || !String((tenant as any).merchantCodePrefix || '')
-      : !/^[0-9a-f]{64}$/.test(hash);
+      : !/^[0-9a-f]{64}$/.test(hash) || !String((tenant as any).merchantCodeDisplay || '');
     if (!needsCode) continue;
     if (tenant.status === 'suspended') continue;
     const fresh = newMerchantCode();

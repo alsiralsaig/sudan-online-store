@@ -6401,6 +6401,16 @@ apiRouter.post("/auth/merchant/login", (req, res) => {
     }
   }
   let tenant = hash ? db.findTenantByMerchantCodeHash(hash) : legacyByPrefix || void 0;
+  if (!tenant) {
+    const compact = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const byStoredCode = db.getSchema().tenants.find(
+      (t) => String(t.merchantCodeDisplay || "") === compact
+    );
+    if (byStoredCode && hash) {
+      db.setMerchantCode(byStoredCode.id, hash, "login_self_heal", compact);
+      tenant = byStoredCode;
+    }
+  }
   const hint = String(slug || tenantId || "").trim();
   if (hint) {
     const hinted = db.getTenant(hint) || db.getTenantBySlug(hint);
@@ -10359,7 +10369,7 @@ apiRouter.post("/admin/tenants/repair-codes", adminAuthMiddleware, (req, res) =>
   const repaired = [];
   for (const tenant of db.getSchema().tenants) {
     const hash = String(tenant.merchantCodeHash || "");
-    const needsCode = rotateAll ? String(tenant.merchantCodePrefix || "").length > 12 || !String(tenant.merchantCodePrefix || "") : !/^[0-9a-f]{64}$/.test(hash);
+    const needsCode = rotateAll ? String(tenant.merchantCodePrefix || "").length > 12 || !String(tenant.merchantCodePrefix || "") : !/^[0-9a-f]{64}$/.test(hash) || !String(tenant.merchantCodeDisplay || "");
     if (!needsCode) continue;
     if (tenant.status === "suspended") continue;
     const fresh = newMerchantCode();

@@ -62,6 +62,21 @@ export const CentralAdminView: React.FC = () => {
   const [reviewNote, setReviewNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  /**
+   * ترحيل صامت لكل المتاجر: من كان له رمز بصيغة قديمة/بلا نص محفوظ يُصدر له
+   * رمز جديد تلقائياً مرة واحدة، فيصبح زر «عرض الرمز» متاحاً لكل متجر.
+   * لا يحتاج مدير يفتح متجراً متجراً، ولا يراه التاجر كإجراء.
+   */
+  const backfillCodes = async () => {
+    try {
+      const res = await api.repairMerchantCodes();
+      if (res?.count) {
+        setRepairResult(res.repaired.map((r) => ({ name: r.name, code: r.code })));
+        loadAll();
+      }
+    } catch { /* لا نُفزع المدير: يعاد المحاولة في التحميل القادم */ }
+  };
+
   const loadAll = async () => {
     try {
       const tRes = await api.getAdminTenants();
@@ -84,8 +99,18 @@ export const CentralAdminView: React.FC = () => {
   };
 
   useEffect(() => {
-    loadAll();
+    loadAll().then(() => {
+      /* المتاجر التي لا يوجد لها نص كود محفوظ (من إصدارات قديمة) تُصلَح تلقائياً */
+      setBackfillTick((n) => n + 1);
+    });
   }, []);
+
+  const [backfillTick, setBackfillTick] = useState(0);
+  useEffect(() => {
+    if (backfillTick === 0) return;
+    backfillCodes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backfillTick]);
 
   const [codeFor, setCodeFor] = useState<{ tenantId: string; name: string; code: string } | null>(null);
 
@@ -280,6 +305,80 @@ export const CentralAdminView: React.FC = () => {
           </button>
         </div>
       )}
+
+      {/* كل أكواد المتاجر في مكان واحد — إصدار جماعي ونسخ وإرسال بدون متجر متجر */}
+      <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[12px] font-black text-sky-900">
+            🔑 أكواد دخول المتاجر — {tenants.filter((t) => (t as any).merchantCode).length} متجر جاهز للدخول
+            {tenants.some((t) => !(t as any).merchantCode) ? ` · ${tenants.filter((t) => !(t as any).merchantCode).length} بلا كود ظاهر` : ''}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={async () => {
+                const lines = tenants
+                  .filter((t) => (t as any).merchantCode)
+                  .map((t) => `${t.name}${t.city ? ` (${t.city})` : ''}: ${(t as any).merchantCode}`)
+                  .join('\n');
+                if (!lines) { alert('لا توجد أكواد بعد — اضغط «إصدار الأكواد الناقصة».'); return; }
+                await navigator.clipboard?.writeText(lines).catch(() => {});
+                alert('تم نسخ كل الأكواد — الصقها في واتساب أو جدول.');
+              }}
+              className="rounded-xl bg-sky-700 px-3 py-2 text-[11px] font-black text-white"
+            >
+              نسخ كل الأكواد
+            </button>
+            <button
+              onClick={() => {
+                const rows = tenants
+                  .filter((t) => (t as any).merchantCode)
+                  .map((t) => `${t.name} | ${t.city || ''} | ${t.phone || ''} | ${(t as any).merchantCode}`)
+                  .join('\n');
+                const csv = '\ufeff' + 'المتجر | المدينة | الهاتف | كود الدخول\n' + rows;
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'sanad-merchant-codes.csv';
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="rounded-xl bg-slate-900 px-3 py-2 text-[11px] font-black text-white"
+            >
+              تصدير CSV
+            </button>
+            <button
+              onClick={handleRepairCodes}
+              className="rounded-xl bg-amber-600 px-3 py-2 text-[11px] font-black text-white"
+            >
+              إصدار الأكواد الناقصة
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-1.5 sm:grid-cols-2 max-h-56 overflow-y-auto">
+          {tenants.map((t: any) => (
+            <div key={t.id} className="flex items-center gap-2 rounded-xl bg-white border border-sky-200 px-2 py-1.5">
+              <span className="text-[11px] font-bold text-slate-800 truncate flex-1">{t.name}</span>
+              {t.merchantCode ? (
+                <>
+                  <code dir="ltr" className="font-mono text-[10.5px] text-slate-900">{t.merchantCode}</code>
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(t.merchantCode).catch(() => {})}
+                    className="shrink-0 rounded-lg bg-sky-700 px-2 py-0.5 text-[10px] font-bold text-white"
+                  >نسخ</button>
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(`كود دخول متجرك في سند: ${t.merchantCode}\nادخل به من شاشة «دخول المتجر».`)}`}
+                    target="_blank" rel="noreferrer"
+                    className="shrink-0 rounded-lg bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white"
+                  >واتساب</a>
+                </>
+              ) : (
+                <span className="text-[10px] font-bold text-amber-700">بلا كود ظاهر</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {repairResult && repairResult.length > 0 && (
         <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-3 space-y-2">
