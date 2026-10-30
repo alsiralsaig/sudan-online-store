@@ -1104,12 +1104,12 @@ export const PosView: React.FC<PosViewProps> = ({
         <div className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950">
           <div className="flex items-center gap-2">
             <span className="font-bold text-sm text-white">سلة المبيعات الحالية</span>
-            <span className="text-xs text-slate-500 font-mono">({cart.length} أصناف)</span>
+            <span className="text-[13px] font-bold text-slate-300 font-mono">({cart.length} أصناف)</span>
           </div>
           {cart.length > 0 && (
             <button
               onClick={() => setCart([])}
-              className="text-xs text-rose-600 hover:text-rose-800 flex items-center gap-1"
+              className="text-[13px] font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-500/10 border border-rose-500/30"
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>إفراغ</span>
@@ -1297,7 +1297,7 @@ export const PosView: React.FC<PosViewProps> = ({
                   <span className="font-black text-slate-900 text-sm tabular-nums">
                     {(item.quantity * item.unitPrice - item.discount).toLocaleString()} ج.س
                   </span>
-                  <div className="text-[11px] text-slate-600 tabular-nums">
+                  <div className="text-xs font-bold text-slate-700 tabular-nums">
                     @{item.unitPrice.toLocaleString()} ج.س
                   </div>
                 </div>

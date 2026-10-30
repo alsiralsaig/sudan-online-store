@@ -251,3 +251,52 @@
   color: #0c4a6e !important;
   border-color: #7dd3fc !important;
 }
+
+/* =========================================================================
+   وضوح النصوص (Contrast pass) — قواعد خارج الطبقات لتتغلّب على قواعد الثيم
+   -------------------------------------------------------------------------
+   الشكوى: «خطوط باهتة وغير واضحة». السبب أن قواعد الوضع الداكن في
+   merchant-shell تُحوّل text-slate-400/500 إلى رمادي فاتح (#94a3b8/#cbd5e1)
+   حتى داخل البطاقات **البيضاء**، فيصير الرمادي على الأبيض شبه غير مقروء
+   (شاشة سلة الكاشير مثال واضح). نعالجها من الجذر: كل نص داخل سطح فاتح
+   يُجبر على لون داكن واضح بغض النظر عن الثيم.
+   ========================================================================= */
+
+/* 1) أسطح فاتحة داخل أي ثيم → نص داكن مقروء */
+[data-theme='dark'] .bg-white .text-slate-400,
+[data-theme='dark'] .bg-white .text-slate-500,
+[data-theme='dark'] .bg-white .text-slate-600,
+[data-theme='dark'] .bg-slate-50 .text-slate-400,
+[data-theme='dark'] .bg-slate-50 .text-slate-500,
+[data-theme='dark'] .bg-slate-100 .text-slate-400,
+[data-theme='dark'] .bg-slate-100 .text-slate-500,
+[data-theme='medium'] .bg-white .text-slate-400,
+[data-theme='medium'] .bg-white .text-slate-500 {
+  color: #334155 !important;
+}
+
+/* 2) والبطاقات نفسها: أي نص رمادي داخلها داكن */
+[data-theme='dark'] .bg-white,
+[data-theme='dark'] .bg-slate-50 {
+  color: #0f172a;
+}
+
+/* 3) حدود البطاقات الفاتحة أوضح على الشاشة */
+[data-theme='dark'] .bg-white.border-slate-200,
+[data-theme='dark'] .bg-slate-50.border-slate-200 {
+  border-color: #cbd5e1 !important;
+}
+
+/* 4) placeholder أوضح في الحقول الفاتحة */
+input::placeholder,
+textarea::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+[data-theme='dark'] .bg-white input::placeholder {
+  color: #64748b;
+}
+
+/* 5) النصوص الصغيرة جداً كانت 9–10px — حد أدنى للقراءة */
+.text-\[9px\] { font-size: 10.5px; }
+.text-\[10px\] { font-size: 11.5px; }
