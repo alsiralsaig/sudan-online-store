@@ -551,6 +551,15 @@ export interface SupplyOrder {
   status: 'pending' | 'accepted' | 'rejected' | 'fulfilled' | 'cancelled';
   note?: string;
   sellerNote?: string;
+  /* طريقة ومكان الدفع + العملة (يحددها المشتري عند الطلب ويؤكدها المورد عند التسليم) */
+  paymentMethod?: 'cash' | 'bankak' | 'bank_transfer' | 'credit';
+  paymentCurrency?: string;
+  paymentExchangeRate?: number;
+  /* فاتورة المشتريات التي تُنشأ تلقائياً عند التسليم + وثيقة المورد */
+  purchaseId?: string;
+  invoiceNumber?: string;
+  sellerInvoiceNumber?: string;
+  deliveredAt?: string;
   createdAt: string;
   updatedAt: string;
 }

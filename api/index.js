@@ -7289,7 +7289,7 @@ apiRouter.get("/supply-orders", merchantAuthMiddleware, (req, res) => {
 apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);
   if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
-  const { sellerTenantId, items, note } = req.body || {};
+  const { sellerTenantId, items, note, paymentMethod, paymentCurrency, paymentExchangeRate } = req.body || {};
   const seller = db.getTenant(String(sellerTenantId || ""));
   if (!seller) return res.status(404).json({ error: "SELLER_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u0627\u0644\u0645\u064F\u0648\u0631\u0650\u0651\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   if (!canSeeCatalogOf(me, seller)) {
@@ -7330,6 +7330,9 @@ apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
     totalSdg: clean.reduce((sum, it) => sum + it.totalSdg, 0),
     status: "pending",
     note: typeof note === "string" ? note.slice(0, 400) : void 0,
+    paymentMethod: ["cash", "bankak", "bank_transfer", "credit"].includes(String(paymentMethod)) ? paymentMethod : "cash",
+    paymentCurrency: String(paymentCurrency || "SDG").toUpperCase(),
+    paymentExchangeRate: Number(paymentExchangeRate) > 0 ? Number(paymentExchangeRate) : 1,
     createdAt: now,
     updatedAt: now
   };
@@ -7365,7 +7368,76 @@ apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, (req, res) => {
   }
   order.status = status;
   if (typeof req.body?.sellerNote === "string") order.sellerNote = req.body.sellerNote.slice(0, 400);
+  if (typeof req.body?.sellerInvoiceNumber === "string") order.sellerInvoiceNumber = req.body.sellerInvoiceNumber.slice(0, 60);
   order.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  if (status === "fulfilled" && !order.purchaseId) {
+    const buyer = db.getTenant(order.buyerTenantId);
+    const branch = db.getSchema().branches.find((b) => b.tenantId === order.buyerTenantId && b.isActive);
+    if (buyer && branch) {
+      const rate = Number(order.paymentExchangeRate) || 1;
+      for (const line of order.items) {
+        let myProduct = db.getSchema().products.find(
+          (p) => p.tenantId === buyer.id && (p.id === line.productId || p.name === line.productName)
+        );
+        if (!myProduct) {
+          myProduct = {
+            id: newId("prod"),
+            tenantId: buyer.id,
+            name: line.productName,
+            sku: newCode("SKU"),
+            barcode: newCode("BC"),
+            category: "\u0645\u0648\u0631\u062F\u0648\u0646",
+            unit: line.unit || "\u062D\u0628\u0629",
+            costPriceSdg: line.unitPriceSdg,
+            sellingPriceSdg: Math.round(line.unitPriceSdg * 1.15),
+            currentStock: 0,
+            minStockLevel: 0,
+            isActive: true,
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          db.getSchema().products.push(myProduct);
+        }
+        db.adjustStock({
+          tenantId: buyer.id,
+          branchId: branch.id,
+          productId: myProduct.id,
+          delta: line.quantity,
+          type: "purchase_receive",
+          reason: `\u062A\u0648\u0631\u064A\u062F ${order.orderNumber} \u0645\u0646 ${order.sellerName}`,
+          actorName: "\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F"
+        });
+      }
+      const invoiceNumber = newCode("PO");
+      const purchase = {
+        id: newId("purch"),
+        tenantId: buyer.id,
+        branchId: branch.id,
+        branchName: branch.name,
+        supplierName: order.sellerName,
+        invoiceNumber: order.sellerInvoiceNumber || invoiceNumber,
+        currency: order.paymentCurrency || "SDG",
+        exchangeRate: rate,
+        items: order.items.map((it) => ({
+          productId: it.productId,
+          productName: it.productName,
+          quantity: it.quantity,
+          costInCurrency: rate > 1 ? it.unitPriceSdg / rate : it.unitPriceSdg,
+          currency: order.paymentCurrency || "SDG",
+          exchangeRate: rate,
+          costSdg: it.unitPriceSdg
+        })),
+        totalCostSdg: order.totalSdg,
+        paymentStatus: order.paymentMethod === "credit" ? "credit" : order.paymentMethod === "cash" || order.paymentMethod === "bankak" || order.paymentMethod === "bank_transfer" ? "paid" : "credit",
+        notes: `\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F ${order.orderNumber} \u2014 \u0627\u0644\u062F\u0641\u0639: ${order.paymentMethod === "cash" ? "\u0643\u0627\u0634" : order.paymentMethod === "bankak" ? "\u0628\u0646\u0643\u0643" : order.paymentMethod === "bank_transfer" ? "\u062D\u0648\u0627\u0644\u0629 \u0628\u0646\u0643\u064A\u0629" : "\u0622\u062C\u0644"}${order.note ? ` \u2022 \u0645\u0644\u0627\u062D\u0638\u0629: ${order.note}` : ""}`,
+        createdBy: "\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      db.getSchema().purchases.unshift(purchase);
+      order.purchaseId = purchase.id;
+      order.invoiceNumber = purchase.invoiceNumber;
+      order.deliveredAt = (/* @__PURE__ */ new Date()).toISOString();
+    }
+  }
   db.commit();
   db.logAudit({
     tenantId: me,
@@ -7376,7 +7448,11 @@ apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, (req, res) => {
     entityId: order.id,
     details: `\u0627\u0644\u0637\u0644\u0628 ${order.orderNumber} \u0623\u0635\u0628\u062D: ${status}`
   });
-  res.json({ success: true, order });
+  res.json({
+    success: true,
+    order,
+    invoice: order.invoiceNumber ? { invoiceNumber: order.invoiceNumber, purchaseId: order.purchaseId } : null
+  });
 });
 apiRouter.get("/links/incoming", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);

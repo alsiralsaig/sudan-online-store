@@ -1198,7 +1198,7 @@ apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant((req as AuthenticatedRequest).tenantId);
   if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
 
-  const { sellerTenantId, items, note } = req.body || {};
+  const { sellerTenantId, items, note, paymentMethod, paymentCurrency, paymentExchangeRate } = req.body || {};
   const seller = db.getTenant(String(sellerTenantId || ''));
   if (!seller) return res.status(404).json({ error: 'SELLER_NOT_FOUND', message: 'المتجر المُورِّد غير موجود.' });
 
@@ -1244,6 +1244,11 @@ apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
     totalSdg: clean.reduce((sum, it) => sum + it.totalSdg, 0),
     status: 'pending',
     note: typeof note === 'string' ? note.slice(0, 400) : undefined,
+    paymentMethod: ['cash', 'bankak', 'bank_transfer', 'credit'].includes(String(paymentMethod))
+      ? (paymentMethod as any)
+      : 'cash',
+    paymentCurrency: String(paymentCurrency || 'SDG').toUpperCase(),
+    paymentExchangeRate: Number(paymentExchangeRate) > 0 ? Number(paymentExchangeRate) : 1,
     createdAt: now,
     updatedAt: now,
   };
@@ -1286,7 +1291,96 @@ apiRouter.patch('/supply-orders/:id', merchantAuthMiddleware, (req, res) => {
 
   order.status = status as SupplyOrder['status'];
   if (typeof req.body?.sellerNote === 'string') order.sellerNote = req.body.sellerNote.slice(0, 400);
+  if (typeof req.body?.sellerInvoiceNumber === 'string') order.sellerInvoiceNumber = req.body.sellerInvoiceNumber.slice(0, 60);
   order.updatedAt = new Date().toISOString();
+
+  /**
+   * عند التسليم: تُنشأ فاتورة مشتريات عند المشتري + تدخل الكميات مخزونه تلقائياً.
+   * بلا هذا كان «تم التسليم» مجرد كلمة بلا أثر محاسبي أو مخزني.
+   */
+  if (status === 'fulfilled' && !order.purchaseId) {
+    const buyer = db.getTenant(order.buyerTenantId);
+    const branch = db.getSchema().branches.find((b) => b.tenantId === order.buyerTenantId && b.isActive);
+    if (buyer && branch) {
+      const rate = Number(order.paymentExchangeRate) || 1;
+
+      /* الأصناف عند المشتري: ربط موجود أو إنشاء صنف جديد بنفس الاسم */
+      for (const line of order.items) {
+        let myProduct = db.getSchema().products.find(
+          (p) => p.tenantId === buyer.id && (p.id === line.productId || p.name === line.productName),
+        );
+        if (!myProduct) {
+          myProduct = {
+            id: newId('prod'),
+            tenantId: buyer.id,
+            name: line.productName,
+            sku: newCode('SKU'),
+            barcode: newCode('BC'),
+            category: 'موردون',
+            unit: line.unit || 'حبة',
+            costPriceSdg: line.unitPriceSdg,
+            sellingPriceSdg: Math.round(line.unitPriceSdg * 1.15),
+            currentStock: 0,
+            minStockLevel: 0,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+          } as any;
+          db.getSchema().products.push(myProduct);
+        }
+
+        db.adjustStock({
+          tenantId: buyer.id,
+          branchId: branch.id,
+          productId: myProduct.id,
+          delta: line.quantity,
+          type: 'purchase_receive',
+          reason: `توريد ${order.orderNumber} من ${order.sellerName}`,
+          actorName: 'طلب توريد',
+        });
+      }
+
+      const invoiceNumber = newCode('PO');
+      const purchase = {
+        id: newId('purch'),
+        tenantId: buyer.id,
+        branchId: branch.id,
+        branchName: branch.name,
+        supplierName: order.sellerName,
+        invoiceNumber: order.sellerInvoiceNumber || invoiceNumber,
+        currency: order.paymentCurrency || 'SDG',
+        exchangeRate: rate,
+        items: order.items.map((it) => ({
+          productId: it.productId,
+          productName: it.productName,
+          quantity: it.quantity,
+          costInCurrency: rate > 1 ? it.unitPriceSdg / rate : it.unitPriceSdg,
+          currency: order.paymentCurrency || 'SDG',
+          exchangeRate: rate,
+          costSdg: it.unitPriceSdg,
+        })),
+        totalCostSdg: order.totalSdg,
+        paymentStatus:
+          order.paymentMethod === 'credit' ? 'credit'
+            : order.paymentMethod === 'cash' || order.paymentMethod === 'bankak' || order.paymentMethod === 'bank_transfer'
+              ? 'paid'
+              : 'credit',
+        notes: `طلب توريد ${order.orderNumber} — الدفع: ${
+          order.paymentMethod === 'cash' ? 'كاش'
+            : order.paymentMethod === 'bankak' ? 'بنكك'
+            : order.paymentMethod === 'bank_transfer' ? 'حوالة بنكية'
+            : 'آجل'
+        }${order.note ? ` • ملاحظة: ${order.note}` : ''}`,
+        createdBy: 'طلب توريد',
+        createdAt: new Date().toISOString(),
+      } as any;
+
+      db.getSchema().purchases.unshift(purchase);
+      order.purchaseId = purchase.id;
+      order.invoiceNumber = purchase.invoiceNumber;
+      order.deliveredAt = new Date().toISOString();
+    }
+  }
+
   db.commit();
 
   db.logAudit({
@@ -1299,7 +1393,11 @@ apiRouter.patch('/supply-orders/:id', merchantAuthMiddleware, (req, res) => {
     details: `الطلب ${order.orderNumber} أصبح: ${status}`,
   });
 
-  res.json({ success: true, order });
+  res.json({
+    success: true,
+    order,
+    invoice: order.invoiceNumber ? { invoiceNumber: order.invoiceNumber, purchaseId: order.purchaseId } : null,
+  });
 });
 
 /**

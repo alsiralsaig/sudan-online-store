@@ -39,6 +39,9 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   /* طلب توريد: سلة الكميات ثم إرسال الطلب + متابعة الوارد/الصادر */
   const [cart, setCart] = useState<Record<string, number>>({});
   const [orderNote, setOrderNote] = useState('');
+  const [payMethod, setPayMethod] = useState<'cash' | 'bankak' | 'bank_transfer' | 'credit'>('cash');
+  const [payCurrency, setPayCurrency] = useState('SDG');
+  const [payRate, setPayRate] = useState('1');
   const [orders, setOrders] = useState<{ incoming: any[]; outgoing: any[]; totals: { incomingPending: number; outgoingPending: number } }>({
     incoming: [], outgoing: [], totals: { incomingPending: 0, outgoingPending: 0 },
   });
@@ -211,7 +214,10 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
         sellerTenantId: openSource.id,
         items: cartLines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
         note: orderNote.trim() || undefined,
-      });
+        paymentMethod: payMethod,
+        paymentCurrency: payCurrency,
+        paymentExchangeRate: Number(payRate) || 1,
+      } as any);
       setNote(res.message || 'تم إرسال الطلب.');
       clearCart();
       const ord = await api.getSupplyOrders().catch(() => null);
@@ -443,11 +449,53 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                       </div>
                     ))}
                   </div>
+                  {/* طريقة الدفع والعملة */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <label className="text-[10px] font-black text-sky-900">
+                      طريقة الدفع
+                      <select
+                        value={payMethod}
+                        onChange={(e) => setPayMethod(e.target.value as any)}
+                        className="mt-0.5 w-full rounded-lg border border-sky-300 bg-white px-1.5 py-1 text-[11px] font-bold text-slate-800"
+                      >
+                        <option value="cash">كاش</option>
+                        <option value="bankak">بنكك</option>
+                        <option value="bank_transfer">حوالة بنكية</option>
+                        <option value="credit">آجل</option>
+                      </select>
+                    </label>
+                    <label className="text-[10px] font-black text-sky-900">
+                      عملة الدفع
+                      <select
+                        value={payCurrency}
+                        onChange={(e) => setPayCurrency(e.target.value)}
+                        className="mt-0.5 w-full rounded-lg border border-sky-300 bg-white px-1.5 py-1 text-[11px] font-bold text-slate-800"
+                      >
+                        <option value="SDG">جنيه سوداني (SDG)</option>
+                        <option value="USD">دولار (USD)</option>
+                        <option value="SAR">ريال سعودي (SAR)</option>
+                        <option value="AED">درهم (AED)</option>
+                        <option value="CNY">يوان (CNY)</option>
+                      </select>
+                    </label>
+                    {payCurrency !== 'SDG' && (
+                      <label className="text-[10px] font-black text-sky-900 col-span-2">
+                        سعر الصرف للجنيه السوداني
+                        <input
+                          value={payRate}
+                          onChange={(e) => setPayRate(e.target.value.replace(/[^\d.]/g, ''))}
+                          inputMode="decimal"
+                          placeholder="مثال: 2500"
+                          className="mt-0.5 w-full rounded-lg border border-sky-300 px-2 py-1 text-[11px] font-mono"
+                        />
+                      </label>
+                    )}
+                  </div>
                   <textarea
                     value={orderNote}
                     onChange={(e) => setOrderNote(e.target.value)}
                     rows={2}
-                    placeholder="ملاحظة للمورد (اختياري): مكان التسليم، موعد، طريقة الدفع…"
+                    placeholder="ملاحظة للمورد (اختياري): مكان التسليم، موعد التسليم…"
                     className="w-full rounded-lg border border-sky-300 px-2 py-1.5 text-[11px] focus:outline-none focus:border-sky-600"
                   />
                   <div className="flex gap-2">
@@ -683,6 +731,27 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                         <a href={`tel:${o.buyerPhone}`} className="rounded-lg bg-slate-900 text-white px-2 py-1 text-[10.5px] font-black">اتصال</a>
                       )}
                     </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 text-[10px]">
+                    <span className="rounded-md bg-slate-100 text-slate-700 px-1.5 py-0.5 font-bold">
+                      الدفع: {o.paymentMethod === 'cash' ? 'كاش' : o.paymentMethod === 'bankak' ? 'بنكك' : o.paymentMethod === 'bank_transfer' ? 'حوالة بنكية' : 'آجل'}
+                    </span>
+                    <span className="rounded-md bg-slate-100 text-slate-700 px-1.5 py-0.5 font-bold">
+                      العملة: {o.paymentCurrency || 'SDG'}
+                    </span>
+                    {Number(o.paymentExchangeRate) > 1 && (
+                      <span className="rounded-md bg-slate-100 text-slate-700 px-1.5 py-0.5 font-mono">
+                        صرف: {Number(o.paymentExchangeRate).toLocaleString('en-US')}
+                      </span>
+                    )}
+                    {o.invoiceNumber && (
+                      <span className="rounded-md bg-emerald-100 text-emerald-900 px-1.5 py-0.5 font-black">
+                        فاتورة مشتريات: {o.invoiceNumber}
+                      </span>
+                    )}
+                    {o.status === 'fulfilled' && !o.invoiceNumber && o.side === 'in' && (
+                      <span className="text-rose-700 font-bold">لم تُنشأ فاتورة (المشتري بلا فرع نشط)</span>
+                    )}
                   </div>
                   {o.note ? <div className="text-[10px] text-slate-500">ملاحظة الطالب: {o.note}</div> : null}
                 </div>
