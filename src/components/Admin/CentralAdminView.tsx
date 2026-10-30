@@ -284,7 +284,7 @@ export const CentralAdminView: React.FC = () => {
       {repairResult && repairResult.length > 0 && (
         <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-3 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-[12px] font-black text-emerald-900">✅ تم إصدار الأكواد — انسخها الآن (لن تظهر مرة أخرى)</p>
+            <p className="text-[12px] font-black text-emerald-900">✅ تم إصدار الأكواد — انسخها الآن وأرسلها للتجار (وتبقى ظاهرة في «عرض الرمز»)</p>
             <button onClick={() => setRepairResult(null)} className="text-[11px] font-bold text-emerald-800 underline">إغلاق</button>
           </div>
           <div className="space-y-1.5 max-h-60 overflow-y-auto">
