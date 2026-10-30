@@ -590,6 +590,85 @@ export const fetchAlsougSnapshot = async (): Promise<LiveRatesSnapshot | null> =
 };
 
 /**
+ * آخر أخبار السودان — عناوين عامة (سياسة/اقتصاد/مجتمع)، لا أسعار صرف.
+ * ------------------------------------------------------------------
+ * المساعد كان مربوطاً بسوق السودان وأخبار السودان «للأسعار» فقط؛ لو سألت
+ * «آخر الأخبار» يجيب من ذاكرة النموذج. الدالة دي تقرأ عناوين اليوم الحقيقية
+ * من نفس الموقع (عبر wp-json ثم نسخة القارئ لو رجع 403).
+ */
+export interface SudanNewsItem {
+  title: string;
+  url?: string;
+  publishedAt?: string;
+}
+
+const cleanHtml = (t: string) =>
+  String(t || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#8217;|&rsquo;/g, '’')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+export const fetchSudanAkhbarNews = async (limit = 6): Promise<SudanNewsItem[]> => {
+  const endpoints = [
+    `https://www.sudanakhbar.com/wp-json/wp/v2/posts?per_page=${limit}&_fields=id,date_gmt,link,title`,
+    `https://www.sudanakhbar.com/wp-json/wp/v2/posts?categories=1&per_page=${limit}&_fields=id,date_gmt,link,title`,
+  ];
+
+  /* 1) مباشرة — أسرع وأدق */
+  for (const url of endpoints) {
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 6000);
+      const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const json = (await res.json()) as any[];
+      const items = (Array.isArray(json) ? json : [])
+        .map((p) => ({
+          title: cleanHtml(p?.title?.rendered || ''),
+          url: p?.link,
+          publishedAt: p?.date_gmt ? `${p.date_gmt}Z` : undefined,
+        }))
+        .filter((x) => x.title.length > 12);
+      if (items.length) return items.slice(0, limit);
+    } catch {
+      /* جرّب اللي بعده */
+    }
+  }
+
+  /* 2) عبر نسخة القارئ (Vercel يُحجب أحياناً) */
+  try {
+    const raw = await fetchViaReader(
+      `https://www.sudanakhbar.com/wp-json/wp/v2/posts?per_page=${limit}&_fields=id,date_gmt,link,title`,
+      12000
+    );
+    if (raw) {
+      const start = raw.indexOf('[');
+      const end = raw.lastIndexOf(']');
+      if (start >= 0 && end > start) {
+        const json = JSON.parse(raw.slice(start, end + 1));
+        const items = (Array.isArray(json) ? json : [])
+          .map((p: any) => ({
+            title: cleanHtml(p?.title?.rendered || p?.title || ''),
+            url: p?.link,
+            publishedAt: p?.date_gmt ? `${p.date_gmt}Z` : undefined,
+          }))
+          .filter((x: SudanNewsItem) => x.title.length > 12);
+        if (items.length) return items.slice(0, limit);
+      }
+    }
+  } catch {
+    /* لا شيء */
+  }
+
+  return [];
+};
+
+/**
  * Reads both published sources in parallel and returns whatever answered.
  * Used when the shopper asks for «أخبار السودان» or wants a comparison, so the
  * assistant never has to say «ما عندي وصول».

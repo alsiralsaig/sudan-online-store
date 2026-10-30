@@ -4578,6 +4578,51 @@ var fetchAlsougSnapshot = async () => {
     return null;
   }
 };
+var cleanHtml = (t) => String(t || "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#8217;|&rsquo;/g, "\u2019").replace(/\s+/g, " ").trim();
+var fetchSudanAkhbarNews = async (limit = 6) => {
+  const endpoints = [
+    `https://www.sudanakhbar.com/wp-json/wp/v2/posts?per_page=${limit}&_fields=id,date_gmt,link,title`,
+    `https://www.sudanakhbar.com/wp-json/wp/v2/posts?categories=1&per_page=${limit}&_fields=id,date_gmt,link,title`
+  ];
+  for (const url of endpoints) {
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 6e3);
+      const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const json = await res.json();
+      const items = (Array.isArray(json) ? json : []).map((p) => ({
+        title: cleanHtml(p?.title?.rendered || ""),
+        url: p?.link,
+        publishedAt: p?.date_gmt ? `${p.date_gmt}Z` : void 0
+      })).filter((x) => x.title.length > 12);
+      if (items.length) return items.slice(0, limit);
+    } catch {
+    }
+  }
+  try {
+    const raw = await fetchViaReader(
+      `https://www.sudanakhbar.com/wp-json/wp/v2/posts?per_page=${limit}&_fields=id,date_gmt,link,title`,
+      12e3
+    );
+    if (raw) {
+      const start = raw.indexOf("[");
+      const end = raw.lastIndexOf("]");
+      if (start >= 0 && end > start) {
+        const json = JSON.parse(raw.slice(start, end + 1));
+        const items = (Array.isArray(json) ? json : []).map((p) => ({
+          title: cleanHtml(p?.title?.rendered || p?.title || ""),
+          url: p?.link,
+          publishedAt: p?.date_gmt ? `${p.date_gmt}Z` : void 0
+        })).filter((x) => x.title.length > 12);
+        if (items.length) return items.slice(0, limit);
+      }
+    }
+  } catch {
+  }
+  return [];
+};
 var fetchAllSources = async (diag = []) => {
   const [primary, backup] = await Promise.all([
     fetchAlsougSnapshot().catch(() => null),
@@ -7699,6 +7744,17 @@ apiRouter.get("/currency/parallel-rates", async (_req, res) => {
     refreshEveryHours: RATES_REFRESH_HOURS
   });
 });
+apiRouter.post("/currency/refresh", async (_req, res) => {
+  const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u062F\u0648\u064A \u0645\u0646 \u0627\u0644\u062A\u0637\u0628\u064A\u0642");
+  if (!result.refreshed) {
+    return res.status(502).json({
+      error: "SOURCE_UNAVAILABLE",
+      message: "\u062A\u0639\u0630\u0631 \u0627\u0644\u0648\u0635\u0648\u0644 \u0644\u0645\u0635\u062F\u0631 \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0622\u0646 \u2014 \u062A\u0645 \u0627\u0644\u0627\u062D\u062A\u0641\u0627\u0638 \u0628\u0622\u062E\u0631 \u0623\u0633\u0639\u0627\u0631 \u0645\u0639\u0631\u0648\u0641\u0629.",
+      snapshot: result.snapshot
+    });
+  }
+  res.json({ success: true, ...result });
+});
 apiRouter.post("/admin/currency/refresh", adminAuthMiddleware, async (req, res) => {
   const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u062F\u0648\u064A \u0645\u0646 \u0644\u0648\u062D\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629");
   if (!result.refreshed) {
@@ -7816,6 +7872,18 @@ apiRouter.post("/admin/telegram/test", adminAuthMiddleware, async (_req, res) =>
     "\u2705 *\u0645\u0646\u0635\u0629 \u0633\u0646\u062F* \u2014 \u062A\u0645 \u0631\u0628\u0637 \u0642\u0646\u0627\u0629 \u062A\u0644\u064A\u062C\u0631\u0627\u0645 \u0628\u0646\u062C\u0627\u062D.\n\u0647\u0630\u0647 \u0631\u0633\u0627\u0644\u0629 \u062A\u062C\u0631\u064A\u0628\u064A\u0629: \u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0628\u062A\u0648\u0635\u0644\u0643 \u0647\u0646\u0627 \u0645\u062C\u0627\u0646\u0627\u064B."
   );
   res.json({ success: verdict.sent > 0, ...verdict, ...telegramStatus() });
+});
+apiRouter.post("/currency/alerts/run", async (_req, res) => {
+  const refresh = await refreshLiveRates("\u0641\u062D\u0635 \u0627\u0644\u062A\u062D\u0631\u0643\u0627\u062A \u0645\u0646 \u0627\u0644\u062A\u0637\u0628\u064A\u0642");
+  await db.flush({ lock: false }).catch(() => {
+  });
+  const moves = db.getSchema().currencies.filter((c) => !c.isBase).map((c) => ({ code: c.code, name: c.name, rate: c.rateToSdg })).slice(0, 10);
+  res.json({
+    success: true,
+    refreshed: refresh.refreshed,
+    message: refresh.refreshed ? "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0645\u0646 \u0627\u0644\u0645\u0635\u062F\u0631 \u0648\u0641\u062D\u0635 \u0627\u0644\u062A\u062D\u0631\u0643\u0627\u062A." : "\u0627\u0644\u0645\u0635\u062F\u0631 \u063A\u064A\u0631 \u0645\u062A\u0627\u062D \u0627\u0644\u0622\u0646 \u2014 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0627\u0644\u0645\u0639\u0631\u0648\u0636\u0629 \u0647\u064A \u0622\u062E\u0631 \u0642\u0631\u0627\u0621\u0629 \u0645\u0639\u0631\u0648\u0641\u0629.",
+    moves
+  });
 });
 apiRouter.post("/admin/currency/alerts/run", adminAuthMiddleware, async (_req, res) => {
   const refresh = await refreshLiveRates("\u0641\u062D\u0635 \u064A\u062F\u0648\u064A \u0644\u0644\u062A\u062D\u0631\u0643\u0627\u062A");
@@ -8738,13 +8806,24 @@ function allowParseSale(tenantId, max = 20, windowMs = 6e4) {
   return true;
 }
 var ASSISTANT_MODELS = [
+  /*
+   * الترتيب مقصود: الأسرع أولاً.
+   * ------------------------------------------------------------------
+   * كان flash-preview (نموذج تفكير) هو الأول، فكل سؤال عادي يستغرق
+   * 20–21 ثانية. الآن flash-lite أولاً (أقل من نصف الزمن)، ولو فشل
+   * ننتقل للنماذج الأكبر. GEMINI_MODEL يظل له الأولوية لو ضُبط يدوياً.
+   */
   process.env.GEMINI_MODEL,
-  // `flash-latest` always points at the newest stable flash model
+  "gemini-flash-lite-latest",
+  "gemini-2.5-flash-lite",
   "gemini-flash-latest",
-  "gemini-3-flash-preview",
-  "gemini-3.1-flash-lite",
   "gemini-2.5-flash"
 ].filter(Boolean);
+var isNewsQuery = (msg) => {
+  const news = /(اخبار|أخبار|جريدة|صحيفة|عناوين|أحداث|احداث)/i.test(msg);
+  const money2 = /(سعر|أسعار|اسعار|صرف|دولار|ريال|درهم|يورو|تحويل)/i.test(msg);
+  return news && !money2;
+};
 var ratesBlockForPrompt = (snapshot) => {
   if (!snapshot?.rates?.length) {
     return "\u0644\u0627 \u062A\u0648\u062C\u062F \u0642\u0631\u0627\u0621\u0629 \u062D\u062F\u064A\u062B\u0629 \u0644\u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A \u0627\u0644\u0622\u0646 \u2014 \u0642\u0644 \u0644\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0625\u0646 \u0627\u0644\u0645\u0635\u062F\u0631 \u063A\u064A\u0631 \u0645\u062A\u0627\u062D \u062D\u0627\u0644\u064A\u0627\u064B \u0648\u0644\u0627 \u062A\u062E\u062A\u0631\u0639 \u0623\u0631\u0642\u0627\u0645\u0627\u064B.";
@@ -8795,6 +8874,8 @@ ${context?.liveRates ? ratesBlockForPrompt(context.liveRates) : "\u0644\u0627 \u
 - \u0644\u0648 \u0645\u0627 \u0641\u064A \u0628\u064A\u0627\u0646\u0627\u062A \u062D\u062F\u064A\u062B\u0629 \u0623\u0635\u0644\u0627\u064B: \u0642\u0644 \u0628\u0635\u0631\u0627\u062D\u0629 \u0625\u0646 \u0627\u0644\u0645\u0635\u062F\u0631 \u0645\u0634 \u0645\u062A\u0627\u062D \u0647\u0633\u064A\u060C \u0648\u0645\u0627 \u062A\u062E\u062A\u0631\u0639 \u0633\u0639\u0631 \u0645\u0646 \u0631\u0627\u0633\u0643 \u0623\u0628\u062F\u0627\u064B.
 - \u0644\u0648 \u0633\u0623\u0644 \u0639\u0646 \u0645\u0628\u0644\u063A (\u0645\u062B\u0644\u0627\u064B \xAB100 \u062F\u0648\u0644\u0627\u0631 \u0643\u0645 \u0628\u0627\u0644\u062C\u0646\u064A\u0647\u061F\xBB) \u0627\u062D\u0633\u0628 \u0628\u0627\u0644\u0636\u0631\u0628 \u0641\u064A \u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A.
 - \u0627\u062E\u062A\u0635\u0631: \u0633\u0639\u0631\u060C \u0645\u0635\u062F\u0631\u060C \u0648\u0642\u062A\u060C \u0648\u0646\u0635\u064A\u062D\u0629 \u0633\u0637\u0631 \u0648\u0627\u062D\u062F.
+- **\u0627\u0644\u0627\u062E\u062A\u0635\u0627\u0631 \u0642\u0627\u0639\u062F\u0629 \u0639\u0627\u0645\u0629 \u0641\u064A \u0643\u0644 \u0633\u0624\u0627\u0644**: \u0663 \u0623\u0633\u0637\u0631 \u0643\u062D\u062F \u0623\u0642\u0635\u0649 (\u0665 \u0644\u0648 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0637\u0644\u0628 \u062A\u0641\u0635\u064A\u0644). \u0627\u0628\u062F\u0623 \u0628\u0627\u0644\u0625\u062C\u0627\u0628\u0629 \u0645\u0628\u0627\u0634\u0631\u0629 \u0628\u0644\u0627 \u0645\u0642\u062F\u0645\u0627\u062A \u0637\u0648\u064A\u0644\u0629 \u0632\u064A \xAB\u062D\u0628\u0627\u0628\u0643 \u0639\u0634\u0631\u0629 \u0623\u0628\u0634\u0631 \u0628\u0627\u0644\u062E\u064A\u0631\xBB \u2014 \u062C\u0645\u0644\u0629 \u062A\u0631\u062D\u064A\u0628 \u0642\u0635\u064A\u0631\u0629 \u062A\u0643\u0641\u064A \u0623\u0648 \u0628\u062F\u0648\u0646\u0647\u0627.
+- **\u0623\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646**: \u0644\u0648 \u0633\u0623\u0644 \u0639\u0646 \u0627\u0644\u0623\u062E\u0628\u0627\u0631\u060C \u0627\u0644\u0639\u0646\u0627\u0648\u064A\u0646 \u0627\u0644\u062D\u0642\u064A\u0642\u064A\u0629 \u062A\u064F\u0642\u0631\u0623 \u0645\u0646 sudanakhbar.com \u0648\u062A\u064F\u0631\u0641\u064E\u0642 \u0645\u0639\u0643\u061B \u0627\u0639\u062A\u0645\u062F \u0639\u0644\u064A\u0647\u0627 \u0648\u0644\u0627 \u062A\u062C\u064A\u0628 \u0645\u0646 \u0627\u0644\u0630\u0627\u0643\u0631\u0629\u060C \u0648\u0644\u0627 \u062A\u0642\u0648\u0644 \xAB\u0645\u0627 \u0639\u0646\u062F\u064A \u0648\u0635\u0648\u0644\xBB.
 - \u0627\u0643\u062A\u0628 \u0646\u0635 \u0639\u0627\u062F\u064A \u0628\u0644\u0627 \u0623\u064A \u0631\u0645\u0648\u0632 Markdown: \u0628\u062F\u0648\u0646 ** \u0623\u0648 * \u0623\u0648 # \u0623\u0648 _ \u2014 \u0627\u0633\u062A\u062E\u062F\u0645 \xAB\u2022\xBB \u0644\u0644\u0646\u0642\u0627\u0637\u060C \u0648\u0627\u0644\u062E\u0637 \u0627\u0644\u0641\u0627\u0635\u0644 \u0633\u0637\u0631 \u062C\u062F\u064A\u062F. (\u0627\u0644\u0634\u0627\u0634\u0629 \u0628\u062A\u0639\u0631\u0636 \u0627\u0644\u0646\u0635 \u0632\u064A \u0645\u0627 \u0647\u0648\u060C \u0648\u0627\u0644\u0631\u0645\u0648\u0632 \u0628\u062A\u0638\u0647\u0631 \u062E\u0627\u0645.)
 
 ## \u0627\u0644\u0633\u064A\u0627\u0642 \u0627\u0644\u062D\u0627\u0644\u064A
@@ -8990,6 +9071,21 @@ apiRouter.post("/assistant/chat", async (req, res) => {
         sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt }))
       });
     }
+    if (!asksAboutRates && isNewsQuery(message)) {
+      const items = await fetchSudanAkhbarNews(6).catch(() => []);
+      if (items.length) {
+        const lines = items.map((it, i) => `${i + 1}. ${it.title}`).join("\n");
+        return res.json({
+          reply: `\u0622\u062E\u0631 \u0639\u0646\u0627\u0648\u064A\u0646 \u0627\u0644\u0633\u0648\u062F\u0627\u0646 \u0645\u0646 \xAB\u0623\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\xBB (sudanakhbar.com) \u0647\u0633\u064A:
+
+${lines}
+
+\u0627\u0644\u0645\u0635\u062F\u0631: sudanakhbar.com \u2014 \u0627\u0641\u062A\u062D \u0627\u0644\u0645\u0648\u0642\u0639 \u0644\u0644\u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0643\u0627\u0645\u0644\u0629.`,
+          model: "news-live",
+          sources: [{ name: "sudanakhbar.com", count: items.length }]
+        });
+      }
+    }
     if (asksAboutRates) {
       const hours = liveRates?.fetchedAt ? ageHours(liveRates.fetchedAt) : null;
       if (hours === null || hours >= 0.25) {
@@ -9030,9 +9126,13 @@ apiRouter.post("/assistant/chat", async (req, res) => {
       models: ASSISTANT_MODELS,
       contents: turns,
       systemInstruction: buildSystemInstruction(String(mode || "admin"), enrichedContext),
-      temperature: 0.85,
-      maxTokens: 1200,
-      timeoutMs: 16e3
+      temperature: 0.75,
+      /*
+       * ردود أقصر = أسرع. كان 1200 توكن/16 ثانية، والردود تخرج طويلة
+       * («حبابك عشرة…» + خطوات مسهبة). الآن سقف أقصر ومهلة أقصر.
+       */
+      maxTokens: 500,
+      timeoutMs: 9e3
     });
     if (result.text) {
       return res.json({ reply: result.text, model: result.model });

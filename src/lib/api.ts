@@ -749,8 +749,13 @@ class ApiClient {
   }
 
   /** Force a refresh from the public sources right now. */
+  /**
+   * «تحديث الآن» لأسعار السوق الموازي.
+   * المسار العام (/currency/refresh) يعمل للتاجر والجمهور بلا صلاحية إدارية؛
+   * المسار الإداري يبقى للمتوافق لو أردنا استخدامه لاحقاً.
+   */
   public async refreshParallelRates(): Promise<{ success: boolean; updated?: number; snapshot: any }> {
-    return this.request('/admin/currency/refresh', { method: 'POST' });
+    return this.request('/currency/refresh', { method: 'POST' });
   }
 
   public async runCurrencyAlertScan(): Promise<{
@@ -761,7 +766,8 @@ class ApiClient {
     moves?: Array<{ code: string; name: string; rate: number; percent: number }>;
     alerts?: { triggered: any[]; inApp: number };
   }> {
-    return this.request('/admin/currency/alerts/run', { method: 'POST' });
+    // مسار عام: التاجر يستخدم «فحص التحركات» بلا صلاحية إدارية
+    return this.request('/currency/alerts/run', { method: 'POST' });
   }
 
   public async getCurrencyHistory(): Promise<{ history: CurrencyRateHistory[] }> {

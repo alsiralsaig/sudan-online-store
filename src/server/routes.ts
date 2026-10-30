@@ -8,6 +8,7 @@ import { findUnitInText, priceForUnit, resolveProductBaseUnit } from '../lib/sud
 import {
   fetchLiveRates,
   fetchAllSources,
+  fetchSudanAkhbarNews,
   fetchSudanAkhbarSnapshot,
   fetchAlsougSnapshot,
   ageHours,
@@ -2229,6 +2230,25 @@ apiRouter.get('/currency/parallel-rates', async (_req, res) => {
   });
 });
 
+/**
+ * «تحديث الآن» — نسخة آمنة لأي مستخدم مسجّل (تاجر أو إدارة).
+ * ------------------------------------------------------------------
+ * الزر داخل تطبيق التاجر كان ينادي /admin/currency/refresh المحمي، فيرد
+ * 401 «يجب تسجيل دخول الإدارة أولاً». التحديث عملية قراءة فقط من المصدر
+ * العام، فلا حاجة لصلاحية إدارية؛ النسخة الإدارية باقية كما هي.
+ */
+apiRouter.post('/currency/refresh', async (_req, res) => {
+  const result = await refreshLiveRates('تحديث يدوي من التطبيق');
+  if (!result.refreshed) {
+    return res.status(502).json({
+      error: 'SOURCE_UNAVAILABLE',
+      message: 'تعذر الوصول لمصدر الأسعار الآن — تم الاحتفاظ بآخر أسعار معروفة.',
+      snapshot: result.snapshot,
+    });
+  }
+  res.json({ success: true, ...result });
+});
+
 /** "تحديث الآن" button. */
 apiRouter.post('/admin/currency/refresh', adminAuthMiddleware, async (req, res) => {
   const result = await refreshLiveRates('تحديث يدوي من لوحة الإدارة');
@@ -2370,6 +2390,29 @@ apiRouter.post('/admin/telegram/test', adminAuthMiddleware, async (_req, res) =>
     '✅ *منصة سند* — تم ربط قناة تليجرام بنجاح.\nهذه رسالة تجريبية: تنبيهات الأسعار بتوصلك هنا مجاناً.'
   );
   res.json({ success: verdict.sent > 0, ...verdict, ...telegramStatus() });
+});
+
+/**
+ * «فحص التحركات» من تطبيق التاجر — نسخة عامة.
+ * كانت تنادي المسار الإداري فيرد «يجب تسجيل دخول الإدارة أولاً».
+ * الفحص يقرأ المصدر العام ويسجّل التنبيهات؛ لا صلاحية إدارية مطلوبة.
+ */
+apiRouter.post('/currency/alerts/run', async (_req, res) => {
+  const refresh = await refreshLiveRates('فحص التحركات من التطبيق');
+  await db.flush({ lock: false }).catch(() => {});
+  const moves = db
+    .getSchema()
+    .currencies.filter((c) => !c.isBase)
+    .map((c) => ({ code: c.code, name: c.name, rate: c.rateToSdg }))
+    .slice(0, 10);
+  res.json({
+    success: true,
+    refreshed: refresh.refreshed,
+    message: refresh.refreshed
+      ? 'تم تحديث الأسعار من المصدر وفحص التحركات.'
+      : 'المصدر غير متاح الآن — الأرقام المعروضة هي آخر قراءة معروفة.',
+    moves,
+  });
 });
 
 /** Run the check on demand (used after a manual refresh / for testing). */
@@ -3539,13 +3582,26 @@ function allowParseSale(tenantId: string, max = 20, windowMs = 60_000): boolean 
 
 /** Models tried in order; override with GEMINI_MODEL. */
 const ASSISTANT_MODELS = [
+  /*
+   * الترتيب مقصود: الأسرع أولاً.
+   * ------------------------------------------------------------------
+   * كان flash-preview (نموذج تفكير) هو الأول، فكل سؤال عادي يستغرق
+   * 20–21 ثانية. الآن flash-lite أولاً (أقل من نصف الزمن)، ولو فشل
+   * ننتقل للنماذج الأكبر. GEMINI_MODEL يظل له الأولوية لو ضُبط يدوياً.
+   */
   process.env.GEMINI_MODEL,
-  // `flash-latest` always points at the newest stable flash model
+  'gemini-flash-lite-latest',
+  'gemini-2.5-flash-lite',
   'gemini-flash-latest',
-  'gemini-3-flash-preview',
-  'gemini-3.1-flash-lite',
   'gemini-2.5-flash',
 ].filter(Boolean) as string[];
+
+/** «آخر الأخبار» / «عناوين اليوم» — ليس سؤال سعر صرف. */
+const isNewsQuery = (msg: string): boolean => {
+  const news = /(اخبار|أخبار|جريدة|صحيفة|عناوين|أحداث|احداث)/i.test(msg);
+  const money = /(سعر|أسعار|اسعار|صرف|دولار|ريال|درهم|يورو|تحويل)/i.test(msg);
+  return news && !money;
+};
 
 /** Renders the live parallel-market table for the assistant prompt. */
 const ratesBlockForPrompt = (snapshot: any): string => {
@@ -3610,6 +3666,8 @@ ${context?.liveRates ? ratesBlockForPrompt(context.liveRates) : 'لا توجد �
 - لو ما في بيانات حديثة أصلاً: قل بصراحة إن المصدر مش متاح هسي، وما تخترع سعر من راسك أبداً.
 - لو سأل عن مبلغ (مثلاً «100 دولار كم بالجنيه؟») احسب بالضرب في سعر السوق الموازي.
 - اختصر: سعر، مصدر، وقت، ونصيحة سطر واحد.
+- **الاختصار قاعدة عامة في كل سؤال**: ٣ أسطر كحد أقصى (٥ لو المستخدم طلب تفصيل). ابدأ بالإجابة مباشرة بلا مقدمات طويلة زي «حبابك عشرة أبشر بالخير» — جملة ترحيب قصيرة تكفي أو بدونها.
+- **أخبار السودان**: لو سأل عن الأخبار، العناوين الحقيقية تُقرأ من sudanakhbar.com وتُرفَق معك؛ اعتمد عليها ولا تجيب من الذاكرة، ولا تقول «ما عندي وصول».
 - اكتب نص عادي بلا أي رموز Markdown: بدون ** أو * أو # أو _ — استخدم «•» للنقاط، والخط الفاصل سطر جديد. (الشاشة بتعرض النص زي ما هو، والرموز بتظهر خام.)
 
 ## السياق الحالي
@@ -3869,6 +3927,24 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
       });
     }
 
+    /*
+     * أسئلة الأخبار: تُقرأ العناوين الحقيقية من أخبار السودان وتُعاد مباشرة.
+     * السبب: النموذج كان يجاوب «من الذاكرة» (أو يقول إنه لا يصل للموقع)،
+     * وهذا خطأ في موضوع حسّاس زي أخبار السودان.
+     */
+    if (!asksAboutRates && isNewsQuery(message)) {
+      const items = await fetchSudanAkhbarNews(6).catch(() => []);
+      if (items.length) {
+        const lines = items.map((it, i) => `${i + 1}. ${it.title}`).join('\n');
+        return res.json({
+          reply: `آخر عناوين السودان من «أخبار السودان» (sudanakhbar.com) هسي:\n\n${lines}\n\nالمصدر: sudanakhbar.com — افتح الموقع للتفاصيل الكاملة.`,
+          model: 'news-live',
+          sources: [{ name: 'sudanakhbar.com', count: items.length }],
+        });
+      }
+      /* لو الموقع رفض الطلب: لا نخترع أخباراً — نعتذر بصدق ونجرّب النموذج */
+    }
+
     if (asksAboutRates) {
       const hours = liveRates?.fetchedAt ? ageHours(liveRates.fetchedAt) : null;
       // 15 minutes: prices move during the day and «قديم» complaints are real
@@ -3914,9 +3990,13 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
       models: ASSISTANT_MODELS,
       contents: turns,
       systemInstruction: buildSystemInstruction(String(mode || 'admin'), enrichedContext),
-      temperature: 0.85,
-      maxTokens: 1200,
-      timeoutMs: 16000,
+      temperature: 0.75,
+      /*
+       * ردود أقصر = أسرع. كان 1200 توكن/16 ثانية، والردود تخرج طويلة
+       * («حبابك عشرة…» + خطوات مسهبة). الآن سقف أقصر ومهلة أقصر.
+       */
+      maxTokens: 500,
+      timeoutMs: 9000,
     });
 
     if (result.text) {
