@@ -1125,16 +1125,16 @@ export const PosView: React.FC<PosViewProps> = ({
             placeholder="اسم العميل (افتراضي: عميل نقدي)"
             value={customerName}
             onChange={(e) => setCustomerName(e.target.value)}
-            className="w-full text-xs py-1 border-b border-slate-200 focus:outline-none focus:border-emerald-500"
+            className="w-full text-xs py-1 bg-white text-slate-900 placeholder:text-slate-400 border-b border-slate-200 focus:outline-none focus:border-emerald-500"
           />
         </div>
 
         {/* Cart Items List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 text-slate-900">
           {cart.map((item) => (
             <div
               key={item.product.id}
-              className="p-2.5 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col gap-1.5 transition-all hover:border-slate-300"
+              className="p-2.5 rounded-xl border border-slate-200 bg-white flex flex-col gap-1.5 transition-all hover:border-emerald-300 shadow-xs"
             >
               <div className="flex items-start justify-between gap-2">
                 <span className="text-xs font-semibold text-slate-900 leading-tight">
@@ -1261,12 +1261,13 @@ export const PosView: React.FC<PosViewProps> = ({
 
               <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200/60">
                 {/* Quantity Controls */}
-                <div className="flex items-center border border-slate-300 rounded bg-white">
+                <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-xs">
                   <button
                     onClick={() => updateQuantity(item.product.id, -1)}
-                    className="p-1 hover:bg-slate-100 text-slate-600"
+                    aria-label="تقليل الكمية"
+                    className="px-2.5 py-1.5 hover:bg-slate-100 active:bg-slate-200 text-slate-900"
                   >
-                    <Minus className="w-3 h-3" />
+                    <Minus className="w-4 h-4" />
                   </button>
                   <input
                     type="text"
@@ -1280,21 +1281,23 @@ export const PosView: React.FC<PosViewProps> = ({
                       if (e.key === 'Enter') { commitQuantity(item.product.id); e.currentTarget.blur(); }
                     }}
                     dir="ltr"
-                    className="w-12 py-0.5 text-center font-mono font-semibold tabular-nums bg-transparent border-0 border-x border-slate-200 focus:outline-none focus:bg-sky-50 rounded-none"
+                    /* اللون صريح: كان الرقم يورث الأبيض فيختفي على الأبيض */
+                    className="w-14 py-1.5 text-center font-mono text-sm font-black text-slate-900 tabular-nums bg-white border-0 border-x border-slate-200 focus:outline-none focus:bg-sky-50 rounded-none"
                   />
                   <button
                     onClick={() => updateQuantity(item.product.id, 1)}
-                    className="p-1 hover:bg-slate-100 text-slate-600"
+                    aria-label="زيادة الكمية"
+                    className="px-2.5 py-1.5 hover:bg-slate-100 active:bg-slate-200 text-slate-900"
                   >
-                    <Plus className="w-3 h-3" />
+                    <Plus className="w-4 h-4" />
                   </button>
                 </div>
 
                 <div className="text-left font-mono">
-                  <span className="font-bold text-slate-900 tabular-nums">
+                  <span className="font-black text-slate-900 text-sm tabular-nums">
                     {(item.quantity * item.unitPrice - item.discount).toLocaleString()} ج.س
                   </span>
-                  <div className="text-[10px] text-slate-500 tabular-nums">
+                  <div className="text-[11px] text-slate-600 tabular-nums">
                     @{item.unitPrice.toLocaleString()} ج.س
                   </div>
                 </div>
@@ -1310,11 +1313,11 @@ export const PosView: React.FC<PosViewProps> = ({
         </div>
 
         {/* Cart Totals & Checkout Button */}
-        <div className="p-3.5 border-t border-slate-200 bg-slate-50 space-y-2">
+        <div className="p-3.5 border-t border-slate-200 bg-slate-50 space-y-2 text-slate-900">
           {/* Subtotal */}
-          <div className="flex items-center justify-between text-xs text-slate-600">
+          <div className="flex items-center justify-between text-xs text-slate-700">
             <span>المجموع الأولي:</span>
-            <span className="font-mono tabular-nums">{subtotal.toLocaleString()} ج.س</span>
+            <span className="font-mono font-bold text-slate-900 tabular-nums">{subtotal.toLocaleString()} ج.س</span>
           </div>
 
           {/* Discount Field */}
@@ -1330,7 +1333,7 @@ export const PosView: React.FC<PosViewProps> = ({
               value={discountTotal || ''}
               onChange={(e) => setDiscountTotal(Math.min(subtotal, Number(e.target.value) || 0))}
               placeholder="0"
-              className="w-24 text-left px-2 py-0.5 text-xs border border-slate-300 rounded bg-white font-mono"
+              className="w-24 text-left px-2 py-1 text-xs border border-slate-300 rounded bg-white text-slate-900 font-mono font-bold"
             />
           </div>
 
@@ -1373,7 +1376,7 @@ export const PosView: React.FC<PosViewProps> = ({
           {/* Net Grand Total */}
           <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
             <span className="font-bold text-slate-900 text-sm">المبلغ الإجمالي الصافي:</span>
-            <span className="font-bold text-emerald-700 text-lg font-mono tabular-nums">
+            <span className="font-black text-emerald-700 text-xl font-mono tabular-nums">
               {grandTotal.toLocaleString()} ج.س
             </span>
           </div>
