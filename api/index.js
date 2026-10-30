@@ -2514,6 +2514,7 @@ var Database = class {
             }
             console.log("[DB] Seeded new collections:", missing.map(([c]) => c).join(", "));
           }
+          this.repairSegmentColumns();
           this.captureBaseline();
           console.log("[DB] Loaded from Postgres:", Object.entries(loaded).map(([k, v]) => `${k}=${v.length}`).join(" "));
         } else {
@@ -3070,6 +3071,32 @@ var Database = class {
       /* جدول جديد: يُنشأ تلقائياً عند أول تشغيل بعد النشر */
       itemLinks: []
     };
+  }
+  /**
+   * إصلاح ذاتي لبيانات الطبقات: أي متجر/طلب عنده accountSegment أو isVip
+   * محفوظ داخل __extra (لأن العمود لم يكن موجوداً وقت الكتابة) يُنسخ إلى العمود
+   * الصحيح مرة واحدة. يُستدعى عند الإقلاع.
+   */
+  repairSegmentColumns() {
+    const schema = this.data;
+    let fixed = 0;
+    const carry = (row) => {
+      const extra = row?.__extra;
+      if (!extra || typeof extra !== "object") return;
+      let touched = false;
+      for (const key of ["accountSegment", "isVip"]) {
+        if (row[key] === void 0 && extra[key] !== void 0) {
+          row[key] = extra[key];
+          touched = true;
+        }
+      }
+      if (touched) fixed += 1;
+    };
+    (schema.tenants || []).forEach(carry);
+    (schema.tenantApplications || []).forEach(carry);
+    (schema.branches || []).forEach(carry);
+    if (fixed > 0) console.log("[DB] repaired segment columns on rows:", fixed);
+    return fixed;
   }
   /** Mark the snapshot as changed; the request pipeline flushes it. */
   save(_data) {
@@ -9207,8 +9234,29 @@ apiRouter.get("/diagnostics/columns", async (_req, res) => {
         ORDER BY table_name, column_name`
     );
     const tenants = db.getSchema().tenants;
+    const where = (list2) => {
+      const out = { rows: list2.length, inColumn: 0, inExtra: 0, missing: 0, sample: [] };
+      for (const row of list2) {
+        const hasCol = row.accountSegment !== void 0 && row.accountSegment !== null;
+        const hasExtra = row.__extra && row.__extra.accountSegment !== void 0;
+        if (hasCol) out.inColumn += 1;
+        else if (hasExtra) out.inExtra += 1;
+        else out.missing += 1;
+        if (out.sample.length < 4) {
+          out.sample.push({
+            name: row.tradeName || row.storeName || row.name,
+            accountSegment: row.accountSegment ?? null,
+            extraSegment: row.__extra?.accountSegment ?? null,
+            keys: Object.keys(row).length
+          });
+        }
+      }
+      return out;
+    };
     res.json({
-      columns: rows,
+      columns: rows.slice(0, 4),
+      tenantsDetail: where(tenants),
+      applicationsDetail: where(db.getSchema().tenantApplications || []),
       tenantsTotal: tenants.length,
       tenantsWithSegment: tenants.filter((t) => Boolean(t.accountSegment)).length,
       segments: tenants.reduce((acc, t) => {

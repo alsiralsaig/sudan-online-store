@@ -3618,8 +3618,30 @@ apiRouter.get('/diagnostics/columns', async (_req, res) => {
         ORDER BY table_name, column_name`,
     );
     const tenants = db.getSchema().tenants;
+    /* أين توجد بيانات الطبقات فعلاً: عمود صحيح أم __extra أم لا شيء */
+    const where = (list: any[]) => {
+      const out = { rows: list.length, inColumn: 0, inExtra: 0, missing: 0, sample: [] as any[] };
+      for (const row of list) {
+        const hasCol = row.accountSegment !== undefined && row.accountSegment !== null;
+        const hasExtra = row.__extra && row.__extra.accountSegment !== undefined;
+        if (hasCol) out.inColumn += 1;
+        else if (hasExtra) out.inExtra += 1;
+        else out.missing += 1;
+        if (out.sample.length < 4) {
+          out.sample.push({
+            name: row.tradeName || row.storeName || row.name,
+            accountSegment: row.accountSegment ?? null,
+            extraSegment: row.__extra?.accountSegment ?? null,
+            keys: Object.keys(row).length,
+          });
+        }
+      }
+      return out;
+    };
     res.json({
-      columns: rows,
+      columns: rows.slice(0, 4),
+      tenantsDetail: where(tenants),
+      applicationsDetail: where(db.getSchema().tenantApplications || []),
       tenantsTotal: tenants.length,
       tenantsWithSegment: tenants.filter((t) => Boolean((t as any).accountSegment)).length,
       segments: tenants.reduce((acc: Record<string, number>, t) => {

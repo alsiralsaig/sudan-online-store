@@ -1591,6 +1591,9 @@ class Database {
             console.log('[DB] Seeded new collections:', missing.map(([c]) => c).join(', '));
           }
 
+          /* بيانات الطبقات المحفوظة قديماً في __extra تعود لأعمدتها */
+          this.repairSegmentColumns();
+
           this.captureBaseline();
           console.log('[DB] Loaded from Postgres:', Object.entries(loaded)
             .map(([k, v]) => `${k}=${v.length}`)
@@ -2327,6 +2330,35 @@ class Database {
       /* جدول جديد: يُنشأ تلقائياً عند أول تشغيل بعد النشر */
       itemLinks: [],
     };
+  }
+
+  /**
+   * إصلاح ذاتي لبيانات الطبقات: أي متجر/طلب عنده accountSegment أو isVip
+   * محفوظ داخل __extra (لأن العمود لم يكن موجوداً وقت الكتابة) يُنسخ إلى العمود
+   * الصحيح مرة واحدة. يُستدعى عند الإقلاع.
+   */
+  public repairSegmentColumns(): number {
+    const schema = this.data as any;
+    let fixed = 0;
+
+    const carry = (row: any) => {
+      const extra = row?.__extra;
+      if (!extra || typeof extra !== 'object') return;
+      let touched = false;
+      for (const key of ['accountSegment', 'isVip']) {
+        if (row[key] === undefined && extra[key] !== undefined) {
+          row[key] = extra[key];
+          touched = true;
+        }
+      }
+      if (touched) fixed += 1;
+    };
+
+    (schema.tenants || []).forEach(carry);
+    (schema.tenantApplications || []).forEach(carry);
+    (schema.branches || []).forEach(carry);
+    if (fixed > 0) console.log('[DB] repaired segment columns on rows:', fixed);
+    return fixed;
   }
 
   /** Mark the snapshot as changed; the request pipeline flushes it. */
