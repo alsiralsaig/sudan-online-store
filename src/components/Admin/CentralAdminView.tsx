@@ -451,17 +451,24 @@ export const CentralAdminView: React.FC = () => {
                       {t.planName}
                       <div className="mt-1 flex flex-wrap items-center gap-1">
                         <select
-                          value={t.accountSegment || 'retailer'}
+                          value={t.accountSegment || ''}
                           onChange={async (e) => {
+                            const value = e.target.value;
+                            if (!value) return;
                             try {
-                              await api.setTenantSegment(t.id, e.target.value as any, undefined);
+                              await api.setTenantSegment(t.id, value as any, undefined);
                               loadAll();
                             } catch (err: any) {
                               alert('تعذّر تعديل النوع: ' + (err.message || ''));
                             }
                           }}
-                          className="rounded-lg border border-slate-300 bg-white px-1.5 py-0.5 text-[10.5px] font-bold text-slate-800"
+                          className={`rounded-lg border px-1.5 py-0.5 text-[10.5px] font-bold ${
+                            t.accountSegment
+                              ? 'border-slate-300 bg-white text-slate-800'
+                              : 'border-amber-400 bg-amber-50 text-amber-900'
+                          }`}
                         >
+                          {!t.accountSegment && <option value="">— بلا نوع —</option>}
                           <option value="supplier">مورد</option>
                           <option value="wholesaler">جملة</option>
                           <option value="retailer">قطاعي</option>
