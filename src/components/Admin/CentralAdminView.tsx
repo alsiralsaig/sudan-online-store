@@ -311,7 +311,7 @@ export const CentralAdminView: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[12px] font-black text-sky-900">
             🔑 أكواد دخول المتاجر — {tenants.filter((t) => (t as any).merchantCode).length} متجر جاهز للدخول
-            {tenants.some((t) => !(t as any).merchantCode) ? ` · ${tenants.filter((t) => !(t as any).merchantCode).length} بلا كود ظاهر` : ''}
+            {tenants.some((t) => !(t as any).merchantCode) ? ` · ${tenants.filter((t) => !(t as any).merchantCode).length} بدون كود ظاهر (يُصلَح تلقائياً)` : ' · الكل جاهز ✅'}
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -355,37 +355,11 @@ export const CentralAdminView: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="grid gap-1.5 sm:grid-cols-2 max-h-56 overflow-y-auto">
-          {tenants.map((t: any) => (
-            <div key={t.id} className="flex items-center gap-2 rounded-xl bg-white border border-sky-200 px-2 py-1.5">
-              <span className="text-[11px] font-bold text-slate-800 truncate flex-1">{t.name}</span>
-              {t.merchantCode ? (
-                <>
-                  <code dir="ltr" className="font-mono text-[10.5px] text-slate-900">{t.merchantCode}</code>
-                  <button
-                    onClick={() => navigator.clipboard?.writeText(t.merchantCode).catch(() => {})}
-                    className="shrink-0 rounded-lg bg-sky-700 px-2 py-0.5 text-[10px] font-bold text-white"
-                  >نسخ</button>
-                  <a
-                    /* الكود لوحده في رسالة الواتساب — ليكون النسخ نظيفاً */
-                    href={`https://wa.me/?text=${encodeURIComponent(String(t.merchantCode || '').trim().toUpperCase())}`}
-                    target="_blank" rel="noreferrer"
-                    className="shrink-0 rounded-lg bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white"
-                  >الكود</a>
-                  <a
-                    href={`https://wa.me/?text=${encodeURIComponent(
-                      `مرحباً بك في سند 🌿\nتم تفعيل متجر «${t.name}» على منصة سند.\n\nطريقة الدخول:\n١) افتح تطبيق التاجر أو: https://sudan-online-store-eta.vercel.app/login\n٢) في «دخول المتجر» الصق كود متجرك (وصلك في رسالة منفصلة).\n٣) اضغط «دخول المتجر» — يدخلك متجرك مباشرة.\n\nالكود واحد فقط لمتجرك، احفظه ولا تشاركه.`
-                    )}`}
-                    target="_blank" rel="noreferrer"
-                    className="shrink-0 rounded-lg bg-slate-700 px-2 py-0.5 text-[10px] font-bold text-white"
-                  >ترحيب</a>
-                </>
-              ) : (
-                <span className="text-[10px] font-bold text-amber-700">بلا كود ظاهر</span>
-              )}
-            </div>
-          ))}
-        </div>
+        {/* لا عرض مفتوح للأكواد داخل المنصة — النسخ والإرسال من «عرض الرمز» */}
+        <p className="text-[11px] text-slate-700 leading-6">
+          الأكواد لا تُعرض هنا. لكل متجر زر «عرض الرمز» في الجدول بالأسفل: تنسخ الرسالتين أو ترسلهما واتساب مباشرة.
+          لإرسال دفعة واحدة استخدم «نسخ كل الأكواد» أو «تصدير CSV».
+        </p>
       </div>
 
       {repairResult && repairResult.length > 0 && (
