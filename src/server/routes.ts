@@ -3577,9 +3577,10 @@ apiRouter.get('/admin/tenants', adminAuthMiddleware, (req, res) => {
 apiRouter.get('/diagnostics/segments', async (_req, res) => {
   try {
     const { rows: tenantRows } = await query(
-      `SELECT "id", COALESCE(to_jsonb(t)->>'accountSegment', '—') AS segment,
+      `SELECT t."id"::text AS id,
+              COALESCE(to_jsonb(t)->>'accountSegment', '—') AS segment,
               COALESCE(to_jsonb(t)->>'isVip', '—') AS vip,
-              COALESCE(t."tradeName", t."name", t."storeName") AS name
+              COALESCE(to_jsonb(t)->>'tradeName', to_jsonb(t)->>'name', '—') AS name
          FROM "sanad_tenants" t ORDER BY t."id" LIMIT 20`,
     );
     const { rows: ping } = await query(`SELECT current_database() AS db, current_user AS usr, COUNT(*)::int AS n FROM "sanad_tenants"`);
