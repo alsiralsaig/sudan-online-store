@@ -756,6 +756,38 @@ export interface AdPlan {
   note?: string;
 }
 
+/**
+ * مزاد في السوق — ينشئه أي متسوّق أو متجر.
+ * يدعم صوراً متعددة وفيديو واحد (نفس مدخلات الإعلان العادي).
+ */
+export interface MarketAuction {
+  id: string;
+  title: string;
+  category: string;
+  description?: string;
+  /** سعر الافتتاح بالجنيه السوداني */
+  startPriceSdg: number;
+  /** أقل زيادة مسموحة بين المزايدات */
+  minIncrementSdg: number;
+  /** صور متعددة (الأولى هي الغلاف) */
+  images: string[];
+  /** فيديو قصير اختياري */
+  videoUrl?: string;
+  city: string;
+  phone: string;
+  whatsapp?: string;
+  storeName?: string;
+  ownerToken: string;
+  status: 'pending' | 'approved' | 'rejected' | 'closed';
+  /** متى يبدأ المزاد ومتى ينتهي (ISO) */
+  startsAt: string;
+  endsAt: string;
+  createdAt: string;
+  /** أعلى مزايدة مسجلة */
+  topBidSdg?: number;
+  topBidder?: string;
+}
+
 export interface MarketAdPricing {
   standardFeeSdg: number;
   vipFeeSdg: number;

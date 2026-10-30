@@ -862,6 +862,42 @@ class ApiClient {
     });
   }
 
+  /* ---------------- Market catalog & auctions (public) ---------------- */
+
+  /** كتالوج السوق العام: منتجات كل المتاجر + الإعلانات الفردية. */
+  public async getMarketCatalog(params: { category?: string; search?: string; limit?: number } = {}): Promise<{
+    items: any[];
+    counts: { products: number; ads: number; stores: number };
+  }> {
+    const q = new URLSearchParams();
+    if (params.category) q.set('category', params.category);
+    if (params.search) q.set('search', params.search);
+    if (params.limit) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return this.request(`/market/catalog${qs ? `?${qs}` : ''}`);
+  }
+
+  /** المزادات العامة + مزاداتي. */
+  public async getMarketAuctions(ownerToken?: string): Promise<{ auctions: any[]; mine: any[] }> {
+    return this.request('/market/auctions', {
+      headers: ownerToken ? { 'x-owner-token': ownerToken } : {},
+    });
+  }
+
+  public async createMarketAuction(payload: any): Promise<{ success: boolean; auction: any; message: string }> {
+    return this.request('/market/auctions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async placeAuctionBid(id: string, amountSdg: number, bidder: string): Promise<{ success: boolean; auction: any }> {
+    return this.request(`/market/auctions/${encodeURIComponent(id)}/bid`, {
+      method: 'POST',
+      body: JSON.stringify({ amountSdg, bidder }),
+    });
+  }
+
   /* Central SaaS Admin */
   /* ---------------- Market ads ---------------- */
 

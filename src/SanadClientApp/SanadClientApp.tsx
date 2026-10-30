@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ClientHeader } from './components/ClientHeader.tsx';
 import { ClientHeroBanner } from './components/ClientHeroBanner.tsx';
 import { ClientProductCatalog } from './components/ClientProductCatalog.tsx';
+import { ClientMarketCatalog } from './components/ClientMarketCatalog.tsx';
+import { ClientAuctionsView } from './components/ClientAuctionsView.tsx';
 import { ClientCartDrawer } from './components/ClientCartDrawer.tsx';
 import { ClientOrderTracker } from './components/ClientOrderTracker.tsx';
 import { ClientWishlistView } from './components/ClientWishlistView.tsx';
@@ -86,6 +88,15 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
   };
   const [selectedAdForDetail, setSelectedAdForDetail] = useState<ClientMarketAd | null>(null);
   const [openStore, setOpenStore] = useState<{ slug: string; name?: string } | null>(null);
+
+  /** فتح متجر من الكتالوج العام بالسكك أو المعرّف. */
+  const openStoreBySlug = (idOrSlug: string) => {
+    if (!idOrSlug) return;
+    go({ page: 'store', id: idOrSlug, tab: 'catalog' }, () => {
+      setActiveTab('catalog');
+      setOpenStore({ slug: idOrSlug });
+    });
+  };
 
   const [products, setProducts] = useState<Product[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -647,6 +658,18 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
               onExplorePreOrders={() => go({ page: 'pre_orders', tab: 'pre_orders' }, () => setActiveTab('pre_orders'))}
               onTrackOrder={() => go({ page: 'track_order', tab: 'track_order' }, () => setActiveTab('track_order'))}
             />
+            {/*
+              «تصفح المنتجات» يعرض الآن كل منتجات المتاجر + الإعلانات الفردية
+              عبر /market/catalog العام. الكتالوج القديم (متجر واحد) يبقى
+              لتبويب «الطلبات المسبقة» فقط لأنه يعتمد على مخزون متجر محدد.
+            */}
+            {activeTab === 'catalog' ? (
+              <ClientMarketCatalog
+                initialSearch={searchQuery}
+                onOpenStore={(idOrSlug) => openStoreBySlug(idOrSlug)}
+                onOpenAd={() => setActiveTab('market_home')}
+              />
+            ) : (
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
               <ClientProductCatalog
                 products={products}
@@ -671,58 +694,13 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
                 }}
               />
             </div>
+            )}
           </div>
         )}
 
-        {/* Tab 3: المزادات (Auctions) */}
+        {/* Tab 3: المزادات (Auctions) — حقيقية: قراءة/إنشاء/مزايدة */}
         {activeTab === 'auctions' && (
-          <div className="max-w-4xl mx-auto px-4 py-8 space-y-6" dir="rtl">
-            <div className="bg-gradient-to-r from-teal-900 to-slate-900 text-white rounded-3xl p-6 sm:p-8 space-y-2 shadow-lg">
-              <div className="flex items-center gap-2">
-                <Gavel className="w-6 h-6 text-amber-400" />
-                <h2 className="text-xl sm:text-2xl font-black">مزادات سند الحية</h2>
-              </div>
-              <p className="text-xs sm:text-sm text-slate-300">
-                تصفح مزادات السيارات، الأجهزة، والعقارات النشطة، وشارك في المزايدة المباشرة!
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-3">
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">
-                  🔴 مباشر الآن
-                </span>
-                <h4 className="font-bold text-sm text-slate-900">
-                  مزاد سيارة تويوتا فورتشنر 2021
-                </h4>
-                <p className="text-xs text-slate-500">
-                  أعلى سومة حالية: 52,000,000 ج.س • ينتهي بعد 3 ساعات
-                </p>
-                <button
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs"
-                >
-                  تقديم مزايدة أو إضافة مزاد (+)
-                </button>
-              </div>
-
-              <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs space-y-3">
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
-                  ⏳ مزاد قادم
-                </span>
-                <h4 className="font-bold text-sm text-slate-900">
-                  مزاد أجهزة حاسوب وسيرفرات ديل
-                </h4>
-                <p className="text-xs text-slate-500">يبدأ السعر من 850,000 ج.س • الموقع: الخرطوم</p>
-                <button
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs"
-                >
-                  تذكير بموعد المزاد
-                </button>
-              </div>
-            </div>
-          </div>
+          <ClientAuctionsView ownerToken={getOwnerToken()} />
         )}
 
         {/* Tab 4: الرسائل (Messages) */}

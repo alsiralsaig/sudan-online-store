@@ -379,6 +379,83 @@ apiRouter.get('/market/stores', (req, res) => {
   res.json({ tenants });
 });
 
+/*
+ * كتالوج السوق العام — كل منتجات كل المتاجر + كل إعلانات السوق.
+ * ------------------------------------------------------------------
+ * زر «تصفح المنتجات» في تطبيق الجمهور كان ينادي /products المحمي، فيرجع
+ * 401 وتظهر «لا توجد منتجات مطابقة». هنا نسخة عامة للقراءة فقط تجمع:
+ *   • منتجات المتاجر النشطة (بلا تكلفة شراء ولا بيانات داخلية)
+ *   • إعلانات السوق المعتمدة (فردية)
+ * حتى يرى المتسوّق كل المعروض في المنصة من شاشة واحدة.
+ */
+apiRouter.get('/market/catalog', (req, res) => {
+  const schema = db.getSchema();
+  const activeTenants = schema.tenants.filter((t) => t.status !== 'suspended');
+  const tenantById = new Map(activeTenants.map((t) => [t.id, t]));
+
+  const category = String(req.query.category || '').trim();
+  const search = String(req.query.search || '').trim().toLowerCase();
+  const limit = Math.min(Number(req.query.limit) || 120, 300);
+
+  const productItems = schema.products
+    .filter((p) => p.isActive !== false && tenantById.has(p.tenantId))
+    .filter((p) => !category || p.category === category)
+    .filter((p) => !search || `${p.name} ${p.category}`.toLowerCase().includes(search))
+    .map((p) => {
+      const t = tenantById.get(p.tenantId)!;
+      return {
+        kind: 'product' as const,
+        id: p.id,
+        title: p.name,
+        category: p.category,
+        priceSdg: p.sellingPriceSdg,
+        unit: p.unit,
+        imageUrl: p.imageUrl,
+        videoUrl: p.videoUrl,
+        storeId: t.id,
+        storeName: t.tradeName || t.name,
+        storeSlug: t.slug,
+        city: t.city,
+        isPreOrder: p.isPreOrderAllowed ?? p.allowPreOrder ?? false,
+        inStock:
+          (p.currentStock ?? 0) > 0 ||
+          schema.branchInventories.some((i) => i.productId === p.id && i.quantity > 0),
+        createdAt: p.createdAt,
+      };
+    });
+
+  const adItems = db
+    .getMarketAds()
+    .filter(isLiveAd)
+    .filter((a) => !category || a.category === category)
+    .filter((a) => !search || `${a.title} ${a.category} ${a.description || ''}`.toLowerCase().includes(search))
+    .map((a) => ({
+      kind: 'ad' as const,
+      id: a.id,
+      title: a.title,
+      category: a.category,
+      priceSdg: a.priceSdg,
+      imageUrl: a.imageUrl,
+      videoUrl: a.videoUrl,
+      storeName: a.storeName || a.publisherName || 'إعلان فردي',
+      city: a.location,
+      isVip: a.isVip,
+      phone: a.phone,
+      whatsapp: a.whatsapp,
+      createdAt: a.createdAt,
+    }));
+
+  const items = [...adItems, ...productItems]
+    .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''))
+    .slice(0, limit);
+
+  res.setHeader('Cache-Control', 'public, max-age=30');
+  res.json({
+    items,
+    counts: { products: productItems.length, ads: adItems.length, stores: activeTenants.length },
+  });
+});
+
 apiRouter.get('/tenants/list', adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   res.json({
@@ -4505,6 +4582,142 @@ apiRouter.get('/market-ads', (req, res) => {
     : [];
 
   res.json({ ads: approved, mine, pricing: AD_PRICING });
+});
+
+/* =========================================================================
+   مزادات السوق — إنشاء مزاد (بصور متعددة وفيديو) + مزايدة
+   ========================================================================= */
+
+/** المزادات المنتهية تُغلق تلقائياً عند القراءة (بلا مهمة مجدولة). */
+const closeExpiredAuctions = () => {
+  const list = db.getMarketAuctions();
+  const now = Date.now();
+  const expired = list.filter((a) => a.status === 'approved' && Date.parse(a.endsAt) < now);
+  if (!expired.length) return;
+  /* إغلاق عبر تابع قاعدة البيانات (يحفظ التغيير بنفسه) */
+  db.closeExpiredAuctions();
+};
+
+/** المزادات العامة — المسوّق يرى النشطة والمنتهية. */
+apiRouter.get('/market/auctions', (req, res) => {
+  closeExpiredAuctions();
+  const ownerToken = String(req.headers['x-owner-token'] || '');
+  const all = db.getMarketAuctions();
+  const live = all
+    .filter((a) => a.status === 'approved' || a.status === 'closed')
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const mine = ownerToken ? all.filter((a) => a.ownerToken === ownerToken) : [];
+  res.setHeader('Cache-Control', 'public, max-age=15');
+  res.json({ auctions: live, mine });
+});
+
+/** إنشاء مزاد: صور متعددة (حتى 6) + فيديو واحد اختياري. */
+apiRouter.post('/market/auctions', async (req, res) => {
+  const b = req.body || {};
+  const title = String(b.title || '').trim();
+  const ownerToken = String(b.ownerToken || '').trim();
+  const startPriceSdg = Number(b.startPriceSdg);
+  const endsAt = String(b.endsAt || '').trim();
+
+  if (!title || title.length < 4) {
+    return res.status(400).json({ success: false, message: 'اكتب عنواناً واضحاً للمزاد (4 أحرف على الأقل).' });
+  }
+  if (!ownerToken) {
+    return res.status(400).json({ success: false, message: 'تعذّر التعرف على جهازك — أعد فتح التطبيق.' });
+  }
+  if (!Number.isFinite(startPriceSdg) || startPriceSdg <= 0) {
+    return res.status(400).json({ success: false, message: 'اكتب سعر افتتاح صحيح بالجنيه.' });
+  }
+  if (!endsAt || Number.isNaN(Date.parse(endsAt))) {
+    return res.status(400).json({ success: false, message: 'حدّد وقت انتهاء المزاد.' });
+  }
+
+  /* الصور: نقبل مصفوفة أو حقل صور قديم، ونحدّها بست صور */
+  const rawImages: string[] = Array.isArray(b.images)
+    ? b.images
+    : typeof b.imageUrl === 'string' && b.imageUrl
+      ? [b.imageUrl]
+      : [];
+  const images = rawImages
+    .map((u) => String(u || '').trim())
+    .filter((u) => /^(https?:|data:image)/.test(u))
+    .slice(0, 6);
+
+  if (!images.length) {
+    return res.status(400).json({ success: false, message: 'أضف صورة واحدة على الأقل للمزاد.' });
+  }
+
+  const auction = db.createMarketAuction({
+    title,
+    category: String(b.category || 'other'),
+    description: String(b.description || '').slice(0, 1200),
+    startPriceSdg,
+    minIncrementSdg:
+      Number.isFinite(Number(b.minIncrementSdg)) && Number(b.minIncrementSdg) > 0
+        ? Number(b.minIncrementSdg)
+        : Math.max(1000, Math.round(startPriceSdg * 0.02)),
+    images,
+    videoUrl: typeof b.videoUrl === 'string' && /^https?:/.test(b.videoUrl) ? b.videoUrl : undefined,
+    city: String(b.city || ''),
+    phone: String(b.phone || ''),
+    whatsapp: String(b.whatsapp || ''),
+    storeName: String(b.storeName || ''),
+    ownerToken,
+    startsAt: b.startsAt && !Number.isNaN(Date.parse(b.startsAt)) ? String(b.startsAt) : new Date().toISOString(),
+    endsAt: new Date(endsAt).toISOString(),
+  });
+
+  await db.flush({ lock: false }).catch(() => {});
+
+  /* تنبيه للمهتمين — نفس قناة إشعارات السوق */
+  notifyUser({
+    app: 'client',
+    kind: 'new_ad',
+    title: 'مزاد جديد في سند',
+    body: `«${title}» — يبدأ من ${startPriceSdg.toLocaleString('en-US')} ج.س. شارك بمزايدتك!`,
+    linkTab: 'auctions',
+  });
+
+  res.json({ success: true, auction, message: 'تم نشر المزاد — شارك الرابط مع من تحب.' });
+});
+
+/** مزايدة على مزاد. */
+apiRouter.post('/market/auctions/:id/bid', async (req, res) => {
+  closeExpiredAuctions();
+  const { id } = req.params;
+  const amount = Number(req.body?.amountSdg);
+  const bidder = String(req.body?.bidder || req.body?.ownerToken || 'زائر').slice(0, 40);
+
+  const target = db.getMarketAuctions().find((a) => a.id === id);
+  if (!target) return res.status(404).json({ success: false, message: 'المزاد غير موجود.' });
+  if (target.status === 'closed' || Date.parse(target.endsAt) < Date.now()) {
+    return res.status(400).json({ success: false, message: 'انتهى هذا المزاد — لا يمكن المزايدة.' });
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ success: false, message: 'اكتب مبلغ مزايدة صحيح.' });
+  }
+
+  const floor = (target.topBidSdg ?? target.startPriceSdg) + target.minIncrementSdg;
+  if (amount < floor) {
+    return res.status(400).json({
+      success: false,
+      message: `أقل مزايدة مسموحة الآن: ${floor.toLocaleString('en-US')} ج.س.`,
+      floorSdg: floor,
+    });
+  }
+
+  const updated = db.placeBid(id, amount, bidder);
+  await db.flush({ lock: false }).catch(() => {});
+  res.json({ success: true, auction: updated });
+});
+
+/** حذف مزادك (بالرمز السري للجهاز). */
+apiRouter.delete('/market/auctions/:id', async (req, res) => {
+  const ownerToken = String(req.headers['x-owner-token'] || '');
+  const ok = db.deleteMarketAuction(req.params.id, ownerToken);
+  if (!ok) return res.status(404).json({ success: false, message: 'المزاد غير موجود أو ليس لك.' });
+  await db.flush({ lock: false }).catch(() => {});
+  res.json({ success: true });
 });
 
 apiRouter.post('/market-ads', (req, res) => {

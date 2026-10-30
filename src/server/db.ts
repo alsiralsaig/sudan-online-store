@@ -15,6 +15,7 @@ import {
 } from './repository.ts';
 import type {
   CurrencyRatesSnapshot,
+  MarketAuction,
   Tenant,
   SubscriptionPlan,
   SubscriptionPayment,
@@ -85,6 +86,8 @@ export interface DatabaseSchema {
   inventoryAlerts: InventoryAlert[];
   inventoryAudits: InventoryAudit[];
   marketAds: MarketAd[];
+  /** مزادات السوق — اختياري للتوافق مع ملفات البيانات القديمة */
+  marketAuctions?: MarketAuction[];
   tenantApplications: TenantApplication[];
   notifications: AppNotification[];
   pushSubscriptions: PushSubscriptionRecord[];
@@ -1883,6 +1886,68 @@ class Database {
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
     return filter.limit ? rows.slice(0, filter.limit) : rows;
+  }
+
+  /* ---------------- Market auctions ---------------- */
+
+  public getMarketAuctions(): MarketAuction[] {
+    return this.data.marketAuctions || [];
+  }
+
+  public createMarketAuction(
+    input: Omit<MarketAuction, 'id' | 'createdAt' | 'status'>
+  ): MarketAuction {
+    const auction: MarketAuction = {
+      ...input,
+      id: `auc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      status: 'approved',
+      createdAt: new Date().toISOString(),
+    };
+    this.data.marketAuctions = [auction, ...(this.data.marketAuctions || [])];
+    this.save();
+    return auction;
+  }
+
+  public placeBid(auctionId: string, amountSdg: number, bidder: string): MarketAuction | null {
+    const list = this.data.marketAuctions || [];
+    const idx = list.findIndex((a) => a.id === auctionId);
+    if (idx < 0) return null;
+    const current = list[idx];
+    const floor = (current.topBidSdg ?? current.startPriceSdg) + current.minIncrementSdg;
+    if (amountSdg < floor) return null;
+    const updated: MarketAuction = {
+      ...current,
+      topBidSdg: amountSdg,
+      topBidder: bidder,
+    };
+    list[idx] = updated;
+    this.data.marketAuctions = list;
+    this.save();
+    return updated;
+  }
+
+  /** إغلاق المزادات المنتهية زمنياً — يُنادى عند كل قراءة. */
+  public closeExpiredAuctions(): number {
+    const list = this.data.marketAuctions || [];
+    const now = Date.now();
+    let n = 0;
+    for (const a of list) {
+      if (a.status === 'approved' && Date.parse(a.endsAt) < now) {
+        a.status = 'closed';
+        n++;
+      }
+    }
+    if (n) this.save();
+    return n;
+  }
+
+  public deleteMarketAuction(id: string, ownerToken: string): boolean {
+    const list = this.data.marketAuctions || [];
+    const target = list.find((a) => a.id === id);
+    if (!target || target.ownerToken !== ownerToken) return false;
+    this.data.marketAuctions = list.filter((a) => a.id !== id);
+    this.save();
+    return true;
   }
 
   public hasNotificationKey(key: string): boolean {

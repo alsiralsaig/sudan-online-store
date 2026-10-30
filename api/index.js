@@ -2709,6 +2709,60 @@ var Database = class {
     }).sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
     return filter.limit ? rows.slice(0, filter.limit) : rows;
   }
+  /* ---------------- Market auctions ---------------- */
+  getMarketAuctions() {
+    return this.data.marketAuctions || [];
+  }
+  createMarketAuction(input) {
+    const auction = {
+      ...input,
+      id: `auc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      status: "approved",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.marketAuctions = [auction, ...this.data.marketAuctions || []];
+    this.save();
+    return auction;
+  }
+  placeBid(auctionId, amountSdg, bidder) {
+    const list2 = this.data.marketAuctions || [];
+    const idx = list2.findIndex((a) => a.id === auctionId);
+    if (idx < 0) return null;
+    const current = list2[idx];
+    const floor = (current.topBidSdg ?? current.startPriceSdg) + current.minIncrementSdg;
+    if (amountSdg < floor) return null;
+    const updated = {
+      ...current,
+      topBidSdg: amountSdg,
+      topBidder: bidder
+    };
+    list2[idx] = updated;
+    this.data.marketAuctions = list2;
+    this.save();
+    return updated;
+  }
+  /** إغلاق المزادات المنتهية زمنياً — يُنادى عند كل قراءة. */
+  closeExpiredAuctions() {
+    const list2 = this.data.marketAuctions || [];
+    const now = Date.now();
+    let n = 0;
+    for (const a of list2) {
+      if (a.status === "approved" && Date.parse(a.endsAt) < now) {
+        a.status = "closed";
+        n++;
+      }
+    }
+    if (n) this.save();
+    return n;
+  }
+  deleteMarketAuction(id, ownerToken) {
+    const list2 = this.data.marketAuctions || [];
+    const target = list2.find((a) => a.id === id);
+    if (!target || target.ownerToken !== ownerToken) return false;
+    this.data.marketAuctions = list2.filter((a) => a.id !== id);
+    this.save();
+    return true;
+  }
   hasNotificationKey(key) {
     return (this.data.notifications || []).some((n) => n.dedupeKey === key);
   }
@@ -6428,6 +6482,55 @@ apiRouter.get("/market/stores", (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=60");
   res.json({ tenants });
 });
+apiRouter.get("/market/catalog", (req, res) => {
+  const schema = db.getSchema();
+  const activeTenants = schema.tenants.filter((t) => t.status !== "suspended");
+  const tenantById = new Map(activeTenants.map((t) => [t.id, t]));
+  const category = String(req.query.category || "").trim();
+  const search = String(req.query.search || "").trim().toLowerCase();
+  const limit = Math.min(Number(req.query.limit) || 120, 300);
+  const productItems = schema.products.filter((p) => p.isActive !== false && tenantById.has(p.tenantId)).filter((p) => !category || p.category === category).filter((p) => !search || `${p.name} ${p.category}`.toLowerCase().includes(search)).map((p) => {
+    const t = tenantById.get(p.tenantId);
+    return {
+      kind: "product",
+      id: p.id,
+      title: p.name,
+      category: p.category,
+      priceSdg: p.sellingPriceSdg,
+      unit: p.unit,
+      imageUrl: p.imageUrl,
+      videoUrl: p.videoUrl,
+      storeId: t.id,
+      storeName: t.tradeName || t.name,
+      storeSlug: t.slug,
+      city: t.city,
+      isPreOrder: p.isPreOrderAllowed ?? p.allowPreOrder ?? false,
+      inStock: (p.currentStock ?? 0) > 0 || schema.branchInventories.some((i) => i.productId === p.id && i.quantity > 0),
+      createdAt: p.createdAt
+    };
+  });
+  const adItems = db.getMarketAds().filter(isLiveAd).filter((a) => !category || a.category === category).filter((a) => !search || `${a.title} ${a.category} ${a.description || ""}`.toLowerCase().includes(search)).map((a) => ({
+    kind: "ad",
+    id: a.id,
+    title: a.title,
+    category: a.category,
+    priceSdg: a.priceSdg,
+    imageUrl: a.imageUrl,
+    videoUrl: a.videoUrl,
+    storeName: a.storeName || a.publisherName || "\u0625\u0639\u0644\u0627\u0646 \u0641\u0631\u062F\u064A",
+    city: a.location,
+    isVip: a.isVip,
+    phone: a.phone,
+    whatsapp: a.whatsapp,
+    createdAt: a.createdAt
+  }));
+  const items = [...adItems, ...productItems].sort((a, b) => Date.parse(b.createdAt || "") - Date.parse(a.createdAt || "")).slice(0, limit);
+  res.setHeader("Cache-Control", "public, max-age=30");
+  res.json({
+    items,
+    counts: { products: productItems.length, ads: adItems.length, stores: activeTenants.length }
+  });
+});
 apiRouter.get("/tenants/list", adminAuthMiddleware, (req, res) => {
   const schema = db.getSchema();
   res.json({
@@ -9652,6 +9755,106 @@ apiRouter.get("/market-ads", (req, res) => {
   const approved = all.filter(isLiveAd).slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(decorateMarketAd);
   const mine = ownerToken ? all.filter((a) => a.ownerToken === ownerToken).map(decorateMarketAd) : [];
   res.json({ ads: approved, mine, pricing: AD_PRICING });
+});
+var closeExpiredAuctions = () => {
+  const list2 = db.getMarketAuctions();
+  const now = Date.now();
+  const expired = list2.filter((a) => a.status === "approved" && Date.parse(a.endsAt) < now);
+  if (!expired.length) return;
+  db.closeExpiredAuctions();
+};
+apiRouter.get("/market/auctions", (req, res) => {
+  closeExpiredAuctions();
+  const ownerToken = String(req.headers["x-owner-token"] || "");
+  const all = db.getMarketAuctions();
+  const live = all.filter((a) => a.status === "approved" || a.status === "closed").sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const mine = ownerToken ? all.filter((a) => a.ownerToken === ownerToken) : [];
+  res.setHeader("Cache-Control", "public, max-age=15");
+  res.json({ auctions: live, mine });
+});
+apiRouter.post("/market/auctions", async (req, res) => {
+  const b = req.body || {};
+  const title = String(b.title || "").trim();
+  const ownerToken = String(b.ownerToken || "").trim();
+  const startPriceSdg = Number(b.startPriceSdg);
+  const endsAt = String(b.endsAt || "").trim();
+  if (!title || title.length < 4) {
+    return res.status(400).json({ success: false, message: "\u0627\u0643\u062A\u0628 \u0639\u0646\u0648\u0627\u0646\u0627\u064B \u0648\u0627\u0636\u062D\u0627\u064B \u0644\u0644\u0645\u0632\u0627\u062F (4 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644)." });
+  }
+  if (!ownerToken) {
+    return res.status(400).json({ success: false, message: "\u062A\u0639\u0630\u0651\u0631 \u0627\u0644\u062A\u0639\u0631\u0641 \u0639\u0644\u0649 \u062C\u0647\u0627\u0632\u0643 \u2014 \u0623\u0639\u062F \u0641\u062A\u062D \u0627\u0644\u062A\u0637\u0628\u064A\u0642." });
+  }
+  if (!Number.isFinite(startPriceSdg) || startPriceSdg <= 0) {
+    return res.status(400).json({ success: false, message: "\u0627\u0643\u062A\u0628 \u0633\u0639\u0631 \u0627\u0641\u062A\u062A\u0627\u062D \u0635\u062D\u064A\u062D \u0628\u0627\u0644\u062C\u0646\u064A\u0647." });
+  }
+  if (!endsAt || Number.isNaN(Date.parse(endsAt))) {
+    return res.status(400).json({ success: false, message: "\u062D\u062F\u0651\u062F \u0648\u0642\u062A \u0627\u0646\u062A\u0647\u0627\u0621 \u0627\u0644\u0645\u0632\u0627\u062F." });
+  }
+  const rawImages = Array.isArray(b.images) ? b.images : typeof b.imageUrl === "string" && b.imageUrl ? [b.imageUrl] : [];
+  const images = rawImages.map((u) => String(u || "").trim()).filter((u) => /^(https?:|data:image)/.test(u)).slice(0, 6);
+  if (!images.length) {
+    return res.status(400).json({ success: false, message: "\u0623\u0636\u0641 \u0635\u0648\u0631\u0629 \u0648\u0627\u062D\u062F\u0629 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644 \u0644\u0644\u0645\u0632\u0627\u062F." });
+  }
+  const auction = db.createMarketAuction({
+    title,
+    category: String(b.category || "other"),
+    description: String(b.description || "").slice(0, 1200),
+    startPriceSdg,
+    minIncrementSdg: Number.isFinite(Number(b.minIncrementSdg)) && Number(b.minIncrementSdg) > 0 ? Number(b.minIncrementSdg) : Math.max(1e3, Math.round(startPriceSdg * 0.02)),
+    images,
+    videoUrl: typeof b.videoUrl === "string" && /^https?:/.test(b.videoUrl) ? b.videoUrl : void 0,
+    city: String(b.city || ""),
+    phone: String(b.phone || ""),
+    whatsapp: String(b.whatsapp || ""),
+    storeName: String(b.storeName || ""),
+    ownerToken,
+    startsAt: b.startsAt && !Number.isNaN(Date.parse(b.startsAt)) ? String(b.startsAt) : (/* @__PURE__ */ new Date()).toISOString(),
+    endsAt: new Date(endsAt).toISOString()
+  });
+  await db.flush({ lock: false }).catch(() => {
+  });
+  notify({
+    app: "client",
+    kind: "new_ad",
+    title: "\u0645\u0632\u0627\u062F \u062C\u062F\u064A\u062F \u0641\u064A \u0633\u0646\u062F",
+    body: `\xAB${title}\xBB \u2014 \u064A\u0628\u062F\u0623 \u0645\u0646 ${startPriceSdg.toLocaleString("en-US")} \u062C.\u0633. \u0634\u0627\u0631\u0643 \u0628\u0645\u0632\u0627\u064A\u062F\u062A\u0643!`,
+    linkTab: "auctions"
+  });
+  res.json({ success: true, auction, message: "\u062A\u0645 \u0646\u0634\u0631 \u0627\u0644\u0645\u0632\u0627\u062F \u2014 \u0634\u0627\u0631\u0643 \u0627\u0644\u0631\u0627\u0628\u0637 \u0645\u0639 \u0645\u0646 \u062A\u062D\u0628." });
+});
+apiRouter.post("/market/auctions/:id/bid", async (req, res) => {
+  closeExpiredAuctions();
+  const { id } = req.params;
+  const amount = Number(req.body?.amountSdg);
+  const bidder = String(req.body?.bidder || req.body?.ownerToken || "\u0632\u0627\u0626\u0631").slice(0, 40);
+  const target = db.getMarketAuctions().find((a) => a.id === id);
+  if (!target) return res.status(404).json({ success: false, message: "\u0627\u0644\u0645\u0632\u0627\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (target.status === "closed" || Date.parse(target.endsAt) < Date.now()) {
+    return res.status(400).json({ success: false, message: "\u0627\u0646\u062A\u0647\u0649 \u0647\u0630\u0627 \u0627\u0644\u0645\u0632\u0627\u062F \u2014 \u0644\u0627 \u064A\u0645\u0643\u0646 \u0627\u0644\u0645\u0632\u0627\u064A\u062F\u0629." });
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ success: false, message: "\u0627\u0643\u062A\u0628 \u0645\u0628\u0644\u063A \u0645\u0632\u0627\u064A\u062F\u0629 \u0635\u062D\u064A\u062D." });
+  }
+  const floor = (target.topBidSdg ?? target.startPriceSdg) + target.minIncrementSdg;
+  if (amount < floor) {
+    return res.status(400).json({
+      success: false,
+      message: `\u0623\u0642\u0644 \u0645\u0632\u0627\u064A\u062F\u0629 \u0645\u0633\u0645\u0648\u062D\u0629 \u0627\u0644\u0622\u0646: ${floor.toLocaleString("en-US")} \u062C.\u0633.`,
+      floorSdg: floor
+    });
+  }
+  const updated = db.placeBid(id, amount, bidder);
+  await db.flush({ lock: false }).catch(() => {
+  });
+  res.json({ success: true, auction: updated });
+});
+apiRouter.delete("/market/auctions/:id", async (req, res) => {
+  const ownerToken = String(req.headers["x-owner-token"] || "");
+  const ok = db.deleteMarketAuction(req.params.id, ownerToken);
+  if (!ok) return res.status(404).json({ success: false, message: "\u0627\u0644\u0645\u0632\u0627\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0623\u0648 \u0644\u064A\u0633 \u0644\u0643." });
+  await db.flush({ lock: false }).catch(() => {
+  });
+  res.json({ success: true });
 });
 apiRouter.post("/market-ads", (req, res) => {
   const {
