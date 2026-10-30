@@ -235,6 +235,8 @@ apiRouter.post('/auth/merchant/enter', async (req, res) => {
       const created: any = {
         id: tenantId,
         ownerName: application.ownerName,
+        accountSegment: (application as any).accountSegment || 'retailer',
+        isVip: false,
         slug: (application.storeName || 'store').trim().replace(/\s+/g, '-').slice(0, 40) + '-' + tenantId.slice(-4),
         name: application.storeName,
         tradeName: application.storeName,
@@ -3220,12 +3222,51 @@ apiRouter.get('/admin/tenants', adminAuthMiddleware, (req, res) => {
        * واتسابياً، والمدير ينسخه من الجدول بدل إصدار كود جديد يقطع القديم.
        */
       merchantCode: (t as any).merchantCodeDisplay || null,
+      accountSegment: (t as any).accountSegment || 'retailer',
+      isVip: Boolean((t as any).isVip),
       branchCount: branches.length,
       employeeCount: employees.length,
       planName: plan?.name,
     };
   });
   res.json({ tenants: summary });
+});
+
+/** المنصة: تحديد نوع الحساب (قطاعي/جملة/مورد) وتشغيل/إيقاف VIP. */
+apiRouter.post('/admin/tenants/:id/segment', adminAuthMiddleware, (req, res) => {
+  const tenant = db.getTenant(req.params.id);
+  if (!tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+
+  const segment = String(req.body?.accountSegment || '').trim();
+  const vip = req.body?.isVip;
+
+  if (segment) {
+    if (!['supplier', 'wholesaler', 'retailer'].includes(segment)) {
+      return res.status(400).json({ error: 'BAD_SEGMENT', message: 'النوع يجب أن يكون مورد أو جملة أو قطاعي.' });
+    }
+    (tenant as any).accountSegment = segment;
+  }
+  if (typeof vip === 'boolean') (tenant as any).isVip = vip;
+
+  db.commit();
+  db.logAudit({
+    tenantId: tenant.id,
+    actorId: 'saas_admin',
+    actorName: 'مدير المنصة',
+    action: 'SET_ACCOUNT_SEGMENT',
+    entity: 'Tenant',
+    entityId: tenant.id,
+    details: `نوع الحساب: ${(tenant as any).accountSegment || 'retailer'}${vip !== undefined ? ` • VIP: ${vip ? 'نعم' : 'لا'}` : ''}`,
+  });
+  res.json({
+    success: true,
+    tenant: {
+      id: tenant.id,
+      name: tenant.name,
+      accountSegment: (tenant as any).accountSegment || 'retailer',
+      isVip: Boolean((tenant as any).isVip),
+    },
+  });
 });
 
 apiRouter.post('/admin/tenants/:id/status', adminAuthMiddleware, (req, res) => {
@@ -5254,8 +5295,21 @@ apiRouter.get('/tenant-applications/pricing', (_req, res) => {
 apiRouter.post('/tenant-applications', (req, res) => {
   const {
     storeName, ownerName, wilaya, city, phone, email,
-    branchesCount, businessType, notes, source,
+    branchesCount, businessType, notes, source, accountSegment,
   } = req.body || {};
+
+  /*
+   * نوع الحساب: قطاعي / جملة / مورد.
+   * الطبقات: المورد ← الجملة ← القطاعي. النوع يحدد من يرى بضاعة المتجر.
+   */
+  const SEGMENTS = ['retailer', 'wholesaler', 'supplier'] as const;
+  const segment = SEGMENTS.includes(String(accountSegment) as any) ? String(accountSegment) : '';
+  if (!segment) {
+    return res.status(400).json({
+      error: 'SEGMENT_REQUIRED',
+      message: 'اختر نوع الحساب: قطاعي أو جملة أو مورد.',
+    });
+  }
 
   if (!storeName || String(storeName).trim().length < 3) {
     return res.status(400).json({ error: 'STORE_NAME_REQUIRED', message: 'اسم المتجر مطلوب (3 أحرف على الأقل).' });
@@ -5289,6 +5343,7 @@ apiRouter.post('/tenant-applications', (req, res) => {
     email: email ? String(email).trim() : undefined,
     branchesCount: Math.round(branches),
     businessType: businessType ? String(businessType).trim() : 'غير محدد',
+    accountSegment: segment,
     notes: notes ? String(notes).trim() : undefined,
     source: source === 'merchant' ? 'merchant' : 'client',
     registrationFeeSdg: TENANT_REGISTRATION_FEE_SDG,
@@ -5564,6 +5619,8 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
   const tenant = {
     id: tenantId,
     ownerName: application.ownerName,
+    accountSegment: (application as any).accountSegment || 'retailer',
+    isVip: false,
     slug: (application.storeName || 'store').trim().replace(/\s+/g, '-').slice(0, 40) + '-' + tenantId.slice(-4),
     name: application.storeName,
     tradeName: application.storeName,

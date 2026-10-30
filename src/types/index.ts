@@ -35,6 +35,10 @@ export interface Tenant {
   city: string;
   address: string;
   currency: string; // Base currency: 'SDG'
+  /** نوع الحساب (يحدد الطبقة ومن يرى البضاعة). المتاجر القديمة تُعامل كقطاعي. */
+  accountSegment?: AccountSegment;
+  /** باقة VIP: تفتح للقطاعي التعامل مع المورد مباشرة */
+  isVip?: boolean;
   status: TenantStatus;
   subscriptionPlanId: string;
   subscriptionExpiresAt: string;
@@ -805,6 +809,14 @@ export interface MarketAdPricing {
 
 export type TenantApplicationStatus = 'pending' | 'approved' | 'rejected';
 
+/**
+ * نوع حساب المتجر — ثلاث طبقات:
+ *   supplier   (مورد):   بضاعته تظهر لتجار الجملة فقط.
+ *   wholesaler (جملة):   يشتري من المورد، وبضاعته تظهر لتجار القطاعي.
+ *   retailer   (قطاعي):  يشتري من الجملة (أو من المورد بباقة VIP) ويبيع للجمهور.
+ */
+export type AccountSegment = 'supplier' | 'wholesaler' | 'retailer';
+
 export interface TenantApplication {
   id: string;
   storeName: string;
@@ -815,6 +827,8 @@ export interface TenantApplication {
   email?: string;
   branchesCount: number;
   businessType: string;
+  /** نوع الحساب المختار في الطلب: قطاعي / جملة / مورد */
+  accountSegment?: AccountSegment;
   notes?: string;
   /** Which app the request came from, for reporting. */
   source: 'client' | 'merchant';

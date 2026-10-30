@@ -447,7 +447,43 @@ export const CentralAdminView: React.FC = () => {
                     <td className="py-3 px-4 font-mono text-slate-800">
                       {t.branchCount} فروع · {t.employeeCount} موظف
                     </td>
-                    <td className="py-3 px-4 font-semibold text-slate-800">{t.planName}</td>
+                    <td className="py-3 px-4 font-semibold text-slate-800">
+                      {t.planName}
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <select
+                          value={t.accountSegment || 'retailer'}
+                          onChange={async (e) => {
+                            try {
+                              await api.setTenantSegment(t.id, e.target.value as any, undefined);
+                              loadAll();
+                            } catch (err: any) {
+                              alert('تعذّر تعديل النوع: ' + (err.message || ''));
+                            }
+                          }}
+                          className="rounded-lg border border-slate-300 bg-white px-1.5 py-0.5 text-[10.5px] font-bold text-slate-800"
+                        >
+                          <option value="supplier">مورد</option>
+                          <option value="wholesaler">جملة</option>
+                          <option value="retailer">قطاعي</option>
+                        </select>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api.setTenantSegment(t.id, undefined, !t.isVip);
+                              loadAll();
+                            } catch (err: any) {
+                              alert('تعذّر تعديل VIP: ' + (err.message || ''));
+                            }
+                          }}
+                          className={`rounded-lg px-1.5 py-0.5 text-[10.5px] font-black ${
+                            t.isVip ? 'bg-amber-500 text-slate-950' : 'bg-slate-100 text-slate-500 border border-slate-300'
+                          }`}
+                          title="باقة VIP: تفتح للقطاعي التعامل مع المورد مباشرة"
+                        >
+                          {t.isVip ? 'VIP ✓' : 'VIP'}
+                        </button>
+                      </div>
+                    </td>
                     <td className="py-3 px-4 font-mono text-slate-600">
                       {new Date(t.subscriptionExpiresAt).toLocaleDateString('ar-SD')}
                     </td>

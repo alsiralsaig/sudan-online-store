@@ -382,6 +382,18 @@ class ApiClient {
     return this.request('/admin/tenants/repair-codes', { method: 'POST', body: JSON.stringify({ rotateAll: true }) });
   }
 
+  /** المنصة: نوع الحساب (قطاعي/جملة/مورد) + تشغيل VIP. */
+  public async setTenantSegment(
+    tenantId: string,
+    accountSegment?: 'retailer' | 'wholesaler' | 'supplier',
+    isVip?: boolean
+  ): Promise<{ success: boolean; tenant: any }> {
+    return this.request(`/admin/tenants/${encodeURIComponent(tenantId)}/segment`, {
+      method: 'POST',
+      body: JSON.stringify({ accountSegment, isVip }),
+    });
+  }
+
   public async issueMerchantCode(tenantId: string): Promise<{ success: boolean; code: string; tenantId: string }> {
     return this.request(`/admin/tenants/${encodeURIComponent(tenantId)}/merchant-code`, { method: 'POST', body: '{}' });
   }

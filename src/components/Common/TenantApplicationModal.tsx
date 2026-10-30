@@ -53,6 +53,8 @@ export const TenantApplicationModal: React.FC<TenantApplicationModalProps> = ({
     email: '',
     branchesCount: '1',
     businessType: '',
+    /** نوع الحساب: قطاعي / جملة / مورد — يحدد الطبقة واللي يشوفه المتجر */
+    accountSegment: '',
     notes: '',
   });
   const [wilayas, setWilayas] = useState<string[]>(FALLBACK_WILAYAS);
@@ -86,6 +88,7 @@ export const TenantApplicationModal: React.FC<TenantApplicationModalProps> = ({
 
     if (form.storeName.trim().length < 3) return setError('اكتب اسم المتجر (3 أحرف على الأقل).');
     if (form.ownerName.trim().length < 3) return setError('اكتب اسم صاحب المتجر.');
+    if (!form.accountSegment) return setError('اختر نوع الحساب: قطاعي أو جملة أو مورد.');
     if (!form.wilaya) return setError('اختر الولاية.');
     if (form.city.trim().length < 2) return setError('اكتب المدينة أو المحلية.');
     if (form.phone.replace(/\D/g, '').length < 9) return setError('رقم الهاتف غير صحيح.');
@@ -106,7 +109,7 @@ export const TenantApplicationModal: React.FC<TenantApplicationModalProps> = ({
       });
       setForm({
         storeName: '', ownerName: '', wilaya: '', city: '', phone: '',
-        email: '', branchesCount: '1', businessType: '', notes: '',
+        email: '', branchesCount: '1', businessType: '', accountSegment: '', notes: '',
       });
     } catch (err) {
       setError((err as Error).message || 'تعذر إرسال الطلب، تحقق من الاتصال وحاول مرة أخرى.');
@@ -181,6 +184,32 @@ export const TenantApplicationModal: React.FC<TenantApplicationModalProps> = ({
                 <Wallet className="w-3.5 h-3.5" /> قيمة تسجيل المتجر
               </span>
               <span className="text-xs font-black text-emerald-700">{fee.toLocaleString('en-US')} ج.س</span>
+            </div>
+
+            {/* نوع الحساب: مربع واحد، والضغط عليه يفتح الثلاثة */}
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                <Layers className="w-3 h-3 text-emerald-600" /> نوع الحساب <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={form.accountSegment}
+                onChange={(e) => set('accountSegment', e.target.value)}
+                className={`${fieldClass} font-bold`}
+              >
+                <option value="">اختر النوع — قطاعي / جملة / مورد</option>
+                <option value="retailer">قطاعي — يبيع للجمهور</option>
+                <option value="wholesaler">جملة — يبيع لتجار القطاعي</option>
+                <option value="supplier">مورد — بضاعته تظهر لتجار الجملة فقط</option>
+              </select>
+              <p className="text-[10.5px] text-slate-500 leading-5 mt-1">
+                {form.accountSegment === 'retailer'
+                  ? 'تشتري من تجار الجملة وتربط الأصناف بهامش ربح. (مع باقة VIP يمكنك الشراء من المورد مباشرة.)'
+                  : form.accountSegment === 'wholesaler'
+                    ? 'تربط أصنافك بالمورد، وتظهر أصنافك لتجار القطاعي للربط بها.'
+                    : form.accountSegment === 'supplier'
+                      ? 'أصنافك تظهر لتجار الجملة فقط، ولا تظهر لتجار القطاعي ولا للجمهور.'
+                      : 'النوع يحدد من يرى بضاعتك: المورد ← الجملة ← القطاعي.'}
+              </p>
             </div>
 
             <div>
