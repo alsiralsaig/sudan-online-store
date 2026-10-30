@@ -4,6 +4,7 @@ import {
   closePool,
 } from './pg.ts';
 import { newId } from './ids.ts';
+import { query } from './pg.ts';
 import {
   ensureSchema,
   loadAll,
@@ -1560,6 +1561,8 @@ class Database {
       this.ready = (async () => {
         const seed = this.getInitialSeedData() as unknown as Record<string, any[]>;
         this.tableDefs = await ensureSchema(seed);
+        /* أعمدة جديدة في جداول موجودة (بدون فقدان بيانات) */
+        await this.ensureRowColumns();
 
         const loaded = await loadAll(this.tableDefs);
         const hasTenants = (loaded.tenants || []).length > 0;
@@ -2338,6 +2341,40 @@ class Database {
 
   public commit() {
     this.save();
+  }
+
+  /**
+   * إضافة أي عمود جديد في الجداول القائمة.
+   * ليه: الجداول تُنشأ مرة واحدة عند أول تشغيل، فأي حقل جديد (مثل accountSegment)
+   * لم يكن يُنشأ كعمود ⇒ يُحفظ في JSON لكنه يرجع فارغاً من الصفوف الجديدة
+   * (INSERT لا يذكر العمود) ⇒ تضيع بيانات الطبقات على الإنتاج.
+   * نفحص information_schema ونضيف الناقص فقط. خفيفة ومرة واحدة لكل نسخة.
+   */
+  private async ensureRowColumns(): Promise<string[]> {
+    if (!isDbEnabled() || this.tableDefs.length === 0) return [];
+    const added: string[] = [];
+    try {
+      const wanted = this.tableDefs.flatMap((def) =>
+        Object.entries(def.columns).map(([column, type]) => ({ table: def.table, column, type })),
+      );
+      const { rows } = await query(
+        `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`,
+      );
+      const existing = new Set(rows.map((r: any) => `${r.table_name}.${r.column_name}`));
+      for (const col of wanted) {
+        if (existing.has(`${col.table}.${col.column}`)) continue;
+        try {
+          await query(`ALTER TABLE "${col.table}" ADD COLUMN IF NOT EXISTS "${col.column}" ${col.type}`);
+          added.push(`${col.table}.${col.column}`);
+        } catch (err) {
+          console.warn('[DB] column add failed:', col.table, col.column, (err as Error).message);
+        }
+      }
+    } catch (err) {
+      console.warn('[DB] ensureRowColumns failed:', (err as Error).message);
+    }
+    if (added.length > 0) console.log('[DB] Added missing columns:', added.join(', '));
+    return added;
   }
 
   /* ------------------------------------------------------------------ */

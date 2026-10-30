@@ -763,6 +763,9 @@ function newCode(prefix, pad = 6) {
   return `${prefix}-${rand}`;
 }
 
+// src/server/db.ts
+init_pg();
+
 // src/server/repository.ts
 init_pg();
 var PRIMARY_KEY_OVERRIDES = {
@@ -2485,6 +2488,7 @@ var Database = class {
       this.ready = (async () => {
         const seed = this.getInitialSeedData();
         this.tableDefs = await ensureSchema(seed);
+        await this.ensureRowColumns();
         const loaded = await loadAll(this.tableDefs);
         const hasTenants = (loaded.tenants || []).length > 0;
         if (hasTenants) {
@@ -3073,6 +3077,39 @@ var Database = class {
   }
   commit() {
     this.save();
+  }
+  /**
+   * إضافة أي عمود جديد في الجداول القائمة.
+   * ليه: الجداول تُنشأ مرة واحدة عند أول تشغيل، فأي حقل جديد (مثل accountSegment)
+   * لم يكن يُنشأ كعمود ⇒ يُحفظ في JSON لكنه يرجع فارغاً من الصفوف الجديدة
+   * (INSERT لا يذكر العمود) ⇒ تضيع بيانات الطبقات على الإنتاج.
+   * نفحص information_schema ونضيف الناقص فقط. خفيفة ومرة واحدة لكل نسخة.
+   */
+  async ensureRowColumns() {
+    if (!isDbEnabled() || this.tableDefs.length === 0) return [];
+    const added = [];
+    try {
+      const wanted = this.tableDefs.flatMap(
+        (def) => Object.entries(def.columns).map(([column, type]) => ({ table: def.table, column, type }))
+      );
+      const { rows } = await query(
+        `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`
+      );
+      const existing = new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
+      for (const col of wanted) {
+        if (existing.has(`${col.table}.${col.column}`)) continue;
+        try {
+          await query(`ALTER TABLE "${col.table}" ADD COLUMN IF NOT EXISTS "${col.column}" ${col.type}`);
+          added.push(`${col.table}.${col.column}`);
+        } catch (err) {
+          console.warn("[DB] column add failed:", col.table, col.column, err.message);
+        }
+      }
+    } catch (err) {
+      console.warn("[DB] ensureRowColumns failed:", err.message);
+    }
+    if (added.length > 0) console.log("[DB] Added missing columns:", added.join(", "));
+    return added;
   }
   /* ------------------------------------------------------------------ */
   /*  Parallel-market currency rates                                     */
