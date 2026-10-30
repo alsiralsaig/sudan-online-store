@@ -9,13 +9,13 @@ export function ThemeSwitcher({ compact }: { compact?: boolean }) {
     { id: 'dark', label: 'ليلي', icon: Moon },
   ];
   return (
-    <div className={`flex items-center gap-1 rounded-xl border bg-white/90 dark:bg-slate-900 p-1 ${compact ? 'text-[11px]' : ''}`} dir="rtl">
+    <div className={`flex items-center gap-0.5 sm:gap-1 rounded-xl border bg-white/90 dark:bg-slate-900 p-0.5 sm:p-1 ${compact ? 'text-[11px]' : ''}`} dir="rtl">
       {opts.map(o => {
         const Icon = o.icon;
         const active = theme === o.id;
         return (
           <button key={o.id} onClick={() => setTheme(o.id)}
-            className={`px-2.5 py-1.5 rounded-lg flex items-center gap-1 font-bold transition ${active ? 'bg-sky-500 text-white shadow' : 'text-slate-600 hover:bg-sky-50'}`}>
+            className={`px-1.5 sm:px-2.5 py-1.5 rounded-lg flex items-center gap-1 font-bold transition ${active ? 'bg-sky-500 text-white shadow' : 'text-slate-600 hover:bg-sky-50'}`}>
             <Icon className="w-3.5 h-3.5" /> {!compact && o.label}
           </button>
         );

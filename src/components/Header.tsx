@@ -185,36 +185,6 @@ export const Header: React.FC<HeaderProps> = ({
         {/* كانت shrink-0 بلا wrap فكانت الأزرار الأخيرة (جرس الإشعارات) تخرج
             خارج الشاشة على الجوال ولا تُرى أصلاً */}
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 min-w-0">
-          {/* السحابة — أول زر ظاهر زي حساباتي */}
-          {onOpenCloud && (
-            <button
-              type="button"
-              onClick={onOpenCloud}
-              title={isOffline ? 'السحابة: دون اتصال — اضغط للتفاصيل' : 'السحابة والرفع'}
-              className={`relative flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 font-black text-xs transition-all ${
-                isOffline
-                  ? 'border-amber-300 bg-amber-500 text-slate-950'
-                  : pendingOfflineCount > 0
-                    ? 'border-sky-300 bg-sky-500 text-slate-950'
-                    : 'border-emerald-300 bg-emerald-600 text-white'
-              }`}
-            >
-              {isOffline ? (
-                <CloudOff className="w-5 h-5" />
-              ) : pendingOfflineCount > 0 || isSyncing ? (
-                <CloudUpload className={`w-5 h-5 ${isSyncing ? 'animate-pulse' : ''}`} />
-              ) : (
-                <Cloud className="w-5 h-5" />
-              )}
-              <span className="hidden sm:inline">السحابة</span>
-              {pendingOfflineCount > 0 && (
-                <span className="absolute -top-1.5 -left-1.5 min-w-[1.1rem] h-5 px-1 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black flex items-center justify-center">
-                  {pendingOfflineCount}
-                </span>
-              )}
-            </button>
-          )}
-
           {/* Dual-App Switcher Pill */}
           <div className="hidden sm:flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
             <button
@@ -241,37 +211,77 @@ export const Header: React.FC<HeaderProps> = ({
             من هنا. الطلب والتفعيل يبقيان في تطبيق الجمهور (شاشة الدخول)
             وفي شاشة «أول مرة؟ فعّل متجري» داخل بوابة الدخول.
           */}
-          <ThemeSwitcher compact />
-          {/* Offline indicator & simulation button */}
-          <button
-            onClick={onToggleSimulateOffline}
-            title={isOffline ? 'اضغط للاتصال بالإنترنت' : 'اضغط لمحاكاة انقطاع الإنترنت وتجربة الكاشير دون اتصال'}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition-colors whitespace-nowrap ${
-              isOffline
-                ? 'bg-amber-500 text-slate-950 border border-amber-300'
-                : 'bg-emerald-600 text-white border border-emerald-300'
-            }`}
-          >
-            {isOffline ? (
-              <>
-                <WifiOff className="w-3.5 h-3.5 text-slate-950" />
-                <span>وضع دون اتصال {isSimulatingOffline && '(محاكاة)'}</span>
-              </>
-            ) : (
-              <>
-                <Wifi className="w-3.5 h-3.5 text-white" />
-                <span>متصل بالخادم</span>
-              </>
-            )}
-          </button>
+          {/*
+            صف واحد يجمع الأربعة على الجوال — بلا التفاف لبند ثانٍ:
+            [متصل بالخادم] [الجرس] [الوضع] [السحابة]
+            على الجوال يُقصّر زر الاتصال إلى «متصل» حتى لا يفيض الصف.
+          */}
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0 flex-nowrap">
+            {/* Offline indicator & simulation button */}
+            <button
+              onClick={onToggleSimulateOffline}
+              title={isOffline ? 'اضغط للاتصال بالإنترنت' : 'اضغط لمحاكاة انقطاع الإنترنت وتجربة الكاشير دون اتصال'}
+              className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs font-black rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                isOffline
+                  ? 'bg-amber-500 text-slate-950 border border-amber-300'
+                  : 'bg-emerald-600 text-white border border-emerald-300'
+              }`}
+            >
+              {isOffline ? (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-slate-950" />
+                  <span className="hidden sm:inline">وضع دون اتصال {isSimulatingOffline && '(محاكاة)'}</span>
+                  <span className="sm:hidden">دون اتصال</span>
+                </>
+              ) : (
+                <>
+                  <Wifi className="w-3.5 h-3.5 text-white" />
+                  <span className="hidden sm:inline">متصل بالخادم</span>
+                  <span className="sm:hidden">متصل</span>
+                </>
+              )}
+            </button>
 
-          {/* جرس الإشعارات: ملاصق لزر الاتصال في نفس الصف — يوفّر صفاً كاملاً */}
-          <div className="relative flex items-center">
-            <NotificationBell
-              app="merchant"
-              theme="dark"
-              onNavigate={(tab) => onTabChange(tab as any)}
-            />
+            {/* جرس الإشعارات — ملاصق لزر الاتصال */}
+            <div className="relative flex items-center shrink-0">
+              <NotificationBell
+                app="merchant"
+                theme="dark"
+                onNavigate={(tab) => onTabChange(tab as any)}
+              />
+            </div>
+
+            <div className="shrink-0"><ThemeSwitcher compact /></div>
+
+            {/* السحابة */}
+            {onOpenCloud && (
+              <button
+                type="button"
+                onClick={onOpenCloud}
+                title={isOffline ? 'السحابة: دون اتصال — اضغط للتفاصيل' : 'السحابة والرفع'}
+                className={`relative flex items-center gap-1.5 rounded-xl border px-2 sm:px-2.5 py-1.5 font-black text-xs transition-all shrink-0 ${
+                  isOffline
+                    ? 'border-amber-300 bg-amber-500 text-slate-950'
+                    : pendingOfflineCount > 0
+                      ? 'border-sky-300 bg-sky-500 text-slate-950'
+                      : 'border-emerald-300 bg-emerald-600 text-white'
+                }`}
+              >
+                {isOffline ? (
+                  <CloudOff className="w-5 h-5" />
+                ) : pendingOfflineCount > 0 || isSyncing ? (
+                  <CloudUpload className={`w-5 h-5 ${isSyncing ? 'animate-pulse' : ''}`} />
+                ) : (
+                  <Cloud className="w-5 h-5" />
+                )}
+                <span className="hidden sm:inline">السحابة</span>
+                {pendingOfflineCount > 0 && (
+                  <span className="absolute -top-1.5 -left-1.5 min-w-[1.1rem] h-5 px-1 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black flex items-center justify-center">
+                    {pendingOfflineCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
 
           {/* Pending Sync Button if any */}
