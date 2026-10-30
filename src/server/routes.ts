@@ -3948,7 +3948,8 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
      * سؤال تحويل مبلغ («300 دولار كم بالجنيه؟») أو حساب تجاري لا يستحق جدول
      * عملات كامل — يُحسب مباشرة في الكتلة التالية.
      */
-    const isMath = isCalcQuery(message) || isConversionQuery(message);
+    const followUpEarly = isFollowUpCalc(message);
+    const isMath = isCalcQuery(message) || isConversionQuery(message) || followUpEarly;
     const asksAboutRates = isRateQuery(message) && !newsOnly && !isMath;
     const wantsSources = asksForSources(message);
 
@@ -3967,7 +3968,7 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
      */
     /* ==== حساب تجاري أو تحويل مبلغ أو متابعة حسبة: جواب رقمي مباشر ==== */
     const deviceKey = String(req.headers['x-device-id'] || req.ip || 'anon');
-    const followUp = isFollowUpCalc(message);
+    const followUp = followUpEarly;
     if (isCalcQuery(message) || isConversionQuery(message) || followUp) {
       const usable = (snap: any) =>
         snap?.rates?.length ? snap : null;
@@ -4005,19 +4006,30 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
       }
 
       /* كل عملة متاحة في القراءة الحالية أو في عملات المنصة */
-      const rateFor = (c: string): number | null => {
+      const rateFor = (c: string): { rate: number; live: boolean } | null => {
         const r = snap?.rates?.find((x: any) => x.code === c);
         const v = r?.parallel ?? r?.sell ?? r?.official ?? null;
-        if (typeof v === 'number' && v > 0) return v;
+        if (typeof v === 'number' && v > 0) return { rate: v, live: true };
+        /*
+         * عملة غير موجودة في قراءة السوق الحالية (مثل الليرة التركية التي لا
+         * ينشرها جدول السوق الموازي) — نستخدم آخر سعر محفوظ في المنصة مع
+         * تنويه صريح، ولا نقدّمه كسعر سوق.
+         */
         const local = db.getSchema().currencies.find((x) => x.code === c);
-        return local && local.rateToSdg > 0 ? local.rateToSdg : null;
+        return local && local.rateToSdg > 0 ? { rate: local.rateToSdg, live: false } : null;
       };
 
       if ((isCalcQuery(message) || followUp) && amount > 0) {
         const r1 = rateFor(code);
         if (r1) {
           if (!followUp) lastCalcByDevice.set(deviceKey, { amount, pct, code, at: Date.now() });
-          return res.json({ reply: buildCalcReply(amount, pct, code, r1), model: 'calc-local' });
+          const body = buildCalcReply(amount, pct, code, r1.rate);
+          return res.json({
+            reply: r1.live
+              ? body
+              : `${body}\nتنويه: ${AR_NAMES[code] || code} مش منشورة في جدول السوق الموازي اليوم — الرقم أعلاه آخر سعر محفوظ في المنصة، أكّده مع الصرّاف.`,
+            model: 'calc-local',
+          });
         }
       }
 

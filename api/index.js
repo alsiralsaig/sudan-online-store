@@ -9244,11 +9244,12 @@ apiRouter.post("/assistant/chat", async (req, res) => {
   try {
     let liveRates = db.getRatesSnapshot();
     const newsOnly = isNewsQuery(message);
-    const isMath = isCalcQuery(message) || isConversionQuery(message);
+    const followUpEarly = isFollowUpCalc(message);
+    const isMath = isCalcQuery(message) || isConversionQuery(message) || followUpEarly;
     const asksAboutRates = isRateQuery(message) && !newsOnly && !isMath;
     const wantsSources = asksForSources(message);
     const deviceKey = String(req.headers["x-device-id"] || req.ip || "anon");
-    const followUp = isFollowUpCalc(message);
+    const followUp = followUpEarly;
     if (isCalcQuery(message) || isConversionQuery(message) || followUp) {
       const usable = (snap2) => snap2?.rates?.length ? snap2 : null;
       let snap = usable(db.getRatesSnapshot());
@@ -9280,15 +9281,20 @@ apiRouter.post("/assistant/chat", async (req, res) => {
       const rateFor = (c) => {
         const r = snap?.rates?.find((x) => x.code === c);
         const v = r?.parallel ?? r?.sell ?? r?.official ?? null;
-        if (typeof v === "number" && v > 0) return v;
+        if (typeof v === "number" && v > 0) return { rate: v, live: true };
         const local = db.getSchema().currencies.find((x) => x.code === c);
-        return local && local.rateToSdg > 0 ? local.rateToSdg : null;
+        return local && local.rateToSdg > 0 ? { rate: local.rateToSdg, live: false } : null;
       };
       if ((isCalcQuery(message) || followUp) && amount > 0) {
         const r1 = rateFor(code);
         if (r1) {
           if (!followUp) lastCalcByDevice.set(deviceKey, { amount, pct, code, at: Date.now() });
-          return res.json({ reply: buildCalcReply(amount, pct, code, r1), model: "calc-local" });
+          const body = buildCalcReply(amount, pct, code, r1.rate);
+          return res.json({
+            reply: r1.live ? body : `${body}
+\u062A\u0646\u0648\u064A\u0647: ${AR_NAMES[code] || code} \u0645\u0634 \u0645\u0646\u0634\u0648\u0631\u0629 \u0641\u064A \u062C\u062F\u0648\u0644 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A \u0627\u0644\u064A\u0648\u0645 \u2014 \u0627\u0644\u0631\u0642\u0645 \u0623\u0639\u0644\u0627\u0647 \u0622\u062E\u0631 \u0633\u0639\u0631 \u0645\u062D\u0641\u0648\u0638 \u0641\u064A \u0627\u0644\u0645\u0646\u0635\u0629\u060C \u0623\u0643\u0651\u062F\u0647 \u0645\u0639 \u0627\u0644\u0635\u0631\u0651\u0627\u0641.`,
+            model: "calc-local"
+          });
         }
       }
       if (sell && isCalcQuery(message)) {
