@@ -21,6 +21,10 @@ import {
   formatRatesAnswer,
   formatMultiSourceAnswer,
   isRateQuery,
+  isCalcQuery,
+  isConversionQuery,
+  amountFromMessage,
+  codeFromMessage,
   asksForSources,
   sourcesWanted,
 } from './rateAnswer.ts';
@@ -3941,6 +3945,56 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
         });
       }
       /* فشل المصدران معاً → نكمل للكاش/النموذج بالأسفل */
+    }
+
+    /* ==== حساب تجاري أو تحويل مبلغ: جواب رقمي مباشر، لا جدول عملات ==== */
+    if (isCalcQuery(message) || isConversionQuery(message)) {
+      const usable = (snap: any) =>
+        snap?.rates?.length ? snap : null;
+      let snap: any = usable(db.getRatesSnapshot());
+      if (!snap) {
+        snap = usable(await fetchLiveRates().catch(() => null));
+      }
+      const code = codeFromMessage(message);
+      const rate = snap?.rates?.find((r: any) => r.code === code);
+      const sell = rate?.parallel ?? rate?.sell ?? rate?.official ?? null;
+      const name = AR_NAMES[code] || code;
+
+      if (sell && isCalcQuery(message)) {
+        /* أرقام المستخدم: مبلغ + نسبة ربح/خسارة */
+        const amount = amountFromMessage(message) || 0;
+        const pctMatch = message.replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*(?:%|٪|في\s*المية|بالمية)/);
+        const pct = pctMatch ? Number(pctMatch[1]) : null;
+        const costSdg = amount * sell;
+        const profit = pct !== null ? (costSdg * pct) / 100 : null;
+        const total = profit !== null ? costSdg + profit : null;
+        const lines = [
+          `التكلفة: ${amount.toLocaleString('en-US')} ${name} × ${sell.toLocaleString('en-US')} = ${Math.round(costSdg).toLocaleString('en-US')} ج.س`,
+        ];
+        if (pct !== null) {
+          lines.push(
+            `هامش الربح ${pct}% = ${Math.round(profit!).toLocaleString('en-US')} ج.س`,
+            `سعر البيع المطلوب = ${Math.round(total!).toLocaleString('en-US')} ج.س`
+          );
+        }
+        lines.push(
+          `(على سعر بيع الدولار ${sell.toLocaleString('en-US')} ج.س — مصدر السوق الموازي)`
+        );
+        return res.json({ reply: lines.join('\n'), model: 'calc-local' });
+      }
+
+      if (sell && isConversionQuery(message)) {
+        const amount = amountFromMessage(message) || 0;
+        const total = amount * sell;
+        return res.json({
+          reply:
+            `${amount.toLocaleString('en-US')} ${name} × ${sell.toLocaleString('en-US')} = ` +
+            `${Math.round(total).toLocaleString('en-US')} ج.س\n` +
+            `(بسعر السوق الموازي: ${sell.toLocaleString('en-US')} ج.س)`,
+          model: 'convert-local',
+        });
+      }
+      /* ما في سعر متاح؟ نكمل للنموذج بدل اختراع رقم */
     }
 
     /*

@@ -26,6 +26,8 @@ export const AR_NAMES: Record<string, string> = {
 };
 
 /** Display order: what people actually trade first. */
+const AR_CODES_RE = /دولار|ريال|درهم|يورو|جنيه\s*مصري|إسترليني|استرليني|ليرة|دينار/i;
+
 const CODE_ORDER = ['USD', 'SAR', 'AED', 'EUR', 'EGP', 'QAR', 'GBP', 'OMR', 'KWD', 'TRY'];
 
 const money = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -80,10 +82,61 @@ export const describeAgeAr = (iso?: string, now: number = Date.now()): string =>
 };
 
 /** Any question about prices / currencies / buying money (or naming a source). */
-export const isRateQuery = (msg: string): boolean =>
-  /سعر|أسعار|اسعار|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|ليرة|عملة|عملات|صرف|تحويل|بنكك\s*سعر/i.test(
-    msg
-  ) || asksForSources(msg);
+/**
+ * سؤال حسابي/تجاري بحت: «اشتريت بـ150 دولار وعايز أبيع بهامش ربح».
+ * ------------------------------------------------------------------
+ * أي كلمة «دولار» أو «بيع» كانت تُشغّل رد جدول الأسعار، فيسأل المستخدم
+ * سؤالاً حسابياً ويُجاب بقائمة عملات كاملة — بلا أي حساب. هذه الحالة تُعالج
+ * بالحساب مباشرة، ولو احتجنا سعر السوق نأخذه كسطر واحد فقط.
+ */
+export const isCalcQuery = (msg: string): boolean => {
+  const money = /(دولار|ريال|درهم|يورو|جنيه|عملة|عملات)/i.test(msg);
+  if (!money) return false;
+  /* سؤال صريح عن السعر/الجدول — يبقى رد أسعار */
+  const explicitRate =
+    /(كم\s*سعر|سعر\s*(اليوم|الآن|هسي|السوق)|أسعار\s*(اليوم|العملات)|جدول\s*(الأسعار|العملات)|قائمة\s*الأسعار)/i.test(
+      msg
+    );
+  if (explicitRate) return false;
+  const margin = /(هامش|ربح|خسارة|زكاة|زكاه|نسبة|خصم|في\s*المية|بالمية|٪|%)/i.test(msg);
+  const deal = /(اشتريت|شريت|بعت|أبيع|ابيع|أشتري|اشتري|تكلفة|ربحي)/i.test(msg);
+  return (margin || deal) && /\d/.test(msg);
+};
+
+/** تحويل مبلغ محدد: «عندي 300 دولار، كم بالجنيه؟» — جواب بسطر واحد. */
+export const isConversionQuery = (msg: string): boolean =>
+  /\d/.test(msg) &&
+  /(كم|بكم|بكام|يساوي|تساوي|حوّل|حول|بالجنيه|جنيه\s*سوداني)/i.test(msg) &&
+  AR_CODES_RE.test(msg) &&
+  !isCalcQuery(msg);
+
+/** العملة المطلوبة في السؤال (USD افتراضاً). */
+export const codeFromMessage = (msg: string): string => {
+  if (/ريال\s*سعودي|SAR/i.test(msg)) return 'SAR';
+  if (/درهم|AED/i.test(msg)) return 'AED';
+  if (/يورو|EUR/i.test(msg)) return 'EUR';
+  if (/جنيه\s*مصري|EGP/i.test(msg)) return 'EGP';
+  if (/ريال\s*قطري|QAR/i.test(msg)) return 'QAR';
+  if (/إسترليني|استرليني|GBP/i.test(msg)) return 'GBP';
+  return 'USD';
+};
+
+/** الرقم المطلوب تحويله (أول رقم في الرسالة). */
+export const amountFromMessage = (msg: string): number | null => {
+  const m = msg.replace(/[,٬]/g, '').match(/(\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+export const isRateQuery = (msg: string): boolean => {
+  if (isCalcQuery(msg)) return false;
+  return (
+    /سعر|أسعار|اسعار|سوق\s*(الموازي|الأسود|السوداء)|دولار|ريال|درهم|يورو|جنيه\s*مصري|ليرة|عملة|عملات|صرف|تحويل|بنكك\s*سعر/i.test(
+      msg
+    ) || asksForSources(msg)
+  );
+};
 
 /** The user explicitly named a source (or asked to compare them). */
 export const asksForSources = (msg: string): boolean => {
