@@ -179,7 +179,10 @@ export const formatMultiSourceAnswer = (
   });
 
   /* سطر واحد يشرح الرموز، مرة واحدة في آخر الجواب */
-  const legend = '\n\n(ش = سعر الشراء من التاجر · ب = سعر البيع)';
+  const hasBuySell = sources.some((s) =>
+    (s.rates || []).some((r) => typeof (r as any).buy === 'number' && Math.abs((r as any).buy - (r.parallel ?? 0)) >= 0.01)
+  );
+  const legend = hasBuySell ? '\n\n(ش = سعر الشراء من التاجر · ب = سعر البيع)' : '';
 
   // Compare the currencies both sources publish
   const perSource = sources.map((s) => ({

@@ -4846,7 +4846,10 @@ var formatMultiSourceAnswer = (sources, opts = {}) => {
 ` + (lines.length ? lines.join("\n") : "\u2022 \u0645\u0627 \u0644\u0642\u064A\u062A \u062C\u062F\u0648\u0644 \u0623\u0633\u0639\u0627\u0631 \u0641\u064A \u0627\u0644\u0635\u0641\u062D\u0629 \u0627\u0644\u0622\u0646") + `
 \u0633\u062D\u0628 \u0627\u0644\u0642\u0631\u0627\u0621\u0629: ${describeAgeAr(s.fetchedAt)}${published}`;
   });
-  const legend = "\n\n(\u0634 = \u0633\u0639\u0631 \u0627\u0644\u0634\u0631\u0627\u0621 \u0645\u0646 \u0627\u0644\u062A\u0627\u062C\u0631 \xB7 \u0628 = \u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639)";
+  const hasBuySell = sources.some(
+    (s) => (s.rates || []).some((r) => typeof r.buy === "number" && Math.abs(r.buy - (r.parallel ?? 0)) >= 0.01)
+  );
+  const legend = hasBuySell ? "\n\n(\u0634 = \u0633\u0639\u0631 \u0627\u0644\u0634\u0631\u0627\u0621 \u0645\u0646 \u0627\u0644\u062A\u0627\u062C\u0631 \xB7 \u0628 = \u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639)" : "";
   const perSource = sources.map((s) => ({
     name: s.source,
     map: new Map(s.rates.filter((r) => r.parallel).map((r) => [r.code, r.parallel]))
@@ -9031,8 +9034,6 @@ async function geminiGenerate(opts) {
   }
   return { text: null, error: lastError };
 }
-var SOURCE_ALIASES_PRIMARY = /alsoug|سوق\s*السودان|البديل/i;
-var SOURCE_ALIASES_BACKUP = /أخبار\s*السودان|اخبار\s*السودان|سودان\s*أخبار|sudanakhbar/i;
 apiRouter.post("/ai/parse-sale", merchantAuthMiddleware, async (req, res) => {
   const authReq = req;
   if (!allowParseSale(authReq.tenantId)) {
@@ -9162,18 +9163,22 @@ apiRouter.post("/assistant/chat", async (req, res) => {
     const newsOnly = isNewsQuery(message);
     const asksAboutRates = isRateQuery(message) && !newsOnly;
     const wantsSources = asksForSources(message);
-    if (asksAboutRates && wantsSources) {
+    if (asksAboutRates) {
       const sources = await fetchAllSources().catch(() => []);
-      const prefersBackup = SOURCE_ALIASES_BACKUP.test(message) && !SOURCE_ALIASES_PRIMARY.test(message);
-      const ordered = prefersBackup ? [...sources].sort((a) => a.source.includes("sudanakhbar") ? -1 : 1) : sources;
-      const answer = formatMultiSourceAnswer(ordered, {
-        storedAt: db.getRatesSnapshot()?.fetchedAt
-      });
-      return res.json({
-        reply: answer,
-        model: "rates-multi-source",
-        sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt }))
-      });
+      if (sources.length) {
+        const ordered = [...sources].sort((a, b) => {
+          const rank = (x) => x.source.includes("sudanakhbar") ? 0 : 1;
+          return rank(a) - rank(b);
+        });
+        const answer = formatMultiSourceAnswer(ordered, {
+          storedAt: db.getRatesSnapshot()?.fetchedAt
+        });
+        return res.json({
+          reply: answer,
+          model: "rates-multi-source",
+          sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt }))
+        });
+      }
     }
     if (newsOnly && !asksAboutRates) {
       const items = await fetchSudanAkhbarNews(6).catch(() => []);

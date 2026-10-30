@@ -3916,21 +3916,31 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
      * reads both sites and answers deterministically. The model is skipped on
      * purpose: it used to claim it had no access to sudanakhbar.
      */
-    if (asksAboutRates && wantsSources) {
+    /*
+     * أي سؤال عن الأسعار يُقرأ الآن من المصدرين معاً وبشكل حتمي (بدون النموذج).
+     * ------------------------------------------------------------------
+     * كان السؤال العادي («كم الدولار؟») يُجاب من كاش سوق السودان وحده، فيظهر
+     * 10310 بينما «أخبار السودان» تنشر 10300 شراء / 10500 بيع — فيبدو الرقم
+     * غير مطابق للمصدر. الآن: المصدران دائماً، وأخبار السودان أولاً (لأنها
+     * أحدث نشراً وأقرب لسعر التداول)، مع شراء/بيع كما هما منشوران.
+     */
+    if (asksAboutRates) {
       const sources = await fetchAllSources().catch(() => []);
-      // They named «أخبار السودان» → show it first, then the other source to compare
-      const prefersBackup = SOURCE_ALIASES_BACKUP.test(message) && !SOURCE_ALIASES_PRIMARY.test(message);
-      const ordered = prefersBackup
-        ? [...sources].sort((a) => (a.source.includes('sudanakhbar') ? -1 : 1))
-        : sources;
-      const answer = formatMultiSourceAnswer(ordered, {
-        storedAt: db.getRatesSnapshot()?.fetchedAt,
-      });
-      return res.json({
-        reply: answer,
-        model: 'rates-multi-source',
-        sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt })),
-      });
+      if (sources.length) {
+        const ordered = [...sources].sort((a, b) => {
+          const rank = (x: any) => (x.source.includes('sudanakhbar') ? 0 : 1);
+          return rank(a) - rank(b);
+        });
+        const answer = formatMultiSourceAnswer(ordered, {
+          storedAt: db.getRatesSnapshot()?.fetchedAt,
+        });
+        return res.json({
+          reply: answer,
+          model: 'rates-multi-source',
+          sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt })),
+        });
+      }
+      /* فشل المصدران معاً → نكمل للكاش/النموذج بالأسفل */
     }
 
     /*
