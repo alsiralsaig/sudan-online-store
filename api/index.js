@@ -9200,25 +9200,9 @@ apiRouter.post("/assistant/chat", async (req, res) => {
   try {
     let liveRates = db.getRatesSnapshot();
     const newsOnly = isNewsQuery(message);
-    const asksAboutRates = isRateQuery(message) && !newsOnly;
+    const isMath = isCalcQuery(message) || isConversionQuery(message);
+    const asksAboutRates = isRateQuery(message) && !newsOnly && !isMath;
     const wantsSources = asksForSources(message);
-    if (asksAboutRates) {
-      const sources = await fetchAllSources().catch(() => []);
-      if (sources.length) {
-        const ordered = [...sources].sort((a, b) => {
-          const rank = (x) => x.source.includes("sudanakhbar") ? 0 : 1;
-          return rank(a) - rank(b);
-        });
-        const answer = formatMultiSourceAnswer(ordered, {
-          storedAt: db.getRatesSnapshot()?.fetchedAt
-        });
-        return res.json({
-          reply: answer,
-          model: "rates-multi-source",
-          sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt }))
-        });
-      }
-    }
     if (isCalcQuery(message) || isConversionQuery(message)) {
       const usable = (snap2) => snap2?.rates?.length ? snap2 : null;
       let snap = usable(db.getRatesSnapshot());
@@ -9257,6 +9241,23 @@ apiRouter.post("/assistant/chat", async (req, res) => {
           reply: `${amount.toLocaleString("en-US")} ${name} \xD7 ${sell.toLocaleString("en-US")} = ${Math.round(total).toLocaleString("en-US")} \u062C.\u0633
 (\u0628\u0633\u0639\u0631 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A: ${sell.toLocaleString("en-US")} \u062C.\u0633)`,
           model: "convert-local"
+        });
+      }
+    }
+    if (asksAboutRates) {
+      const sources = await fetchAllSources().catch(() => []);
+      if (sources.length) {
+        const ordered = [...sources].sort((a, b) => {
+          const rank = (x) => x.source.includes("sudanakhbar") ? 0 : 1;
+          return rank(a) - rank(b);
+        });
+        const answer = formatMultiSourceAnswer(ordered, {
+          storedAt: db.getRatesSnapshot()?.fetchedAt
+        });
+        return res.json({
+          reply: answer,
+          model: "rates-multi-source",
+          sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt }))
         });
       }
     }

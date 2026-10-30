@@ -3912,7 +3912,12 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
      * → سؤال أخبار، وإلا يبقى سؤال أسعار.
      */
     const newsOnly = isNewsQuery(message);
-    const asksAboutRates = isRateQuery(message) && !newsOnly;
+    /*
+     * سؤال تحويل مبلغ («300 دولار كم بالجنيه؟») أو حساب تجاري لا يستحق جدول
+     * عملات كامل — يُحسب مباشرة في الكتلة التالية.
+     */
+    const isMath = isCalcQuery(message) || isConversionQuery(message);
+    const asksAboutRates = isRateQuery(message) && !newsOnly && !isMath;
     const wantsSources = asksForSources(message);
 
     /**
@@ -3928,25 +3933,6 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
      * غير مطابق للمصدر. الآن: المصدران دائماً، وأخبار السودان أولاً (لأنها
      * أحدث نشراً وأقرب لسعر التداول)، مع شراء/بيع كما هما منشوران.
      */
-    if (asksAboutRates) {
-      const sources = await fetchAllSources().catch(() => []);
-      if (sources.length) {
-        const ordered = [...sources].sort((a, b) => {
-          const rank = (x: any) => (x.source.includes('sudanakhbar') ? 0 : 1);
-          return rank(a) - rank(b);
-        });
-        const answer = formatMultiSourceAnswer(ordered, {
-          storedAt: db.getRatesSnapshot()?.fetchedAt,
-        });
-        return res.json({
-          reply: answer,
-          model: 'rates-multi-source',
-          sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt })),
-        });
-      }
-      /* فشل المصدران معاً → نكمل للكاش/النموذج بالأسفل */
-    }
-
     /* ==== حساب تجاري أو تحويل مبلغ: جواب رقمي مباشر، لا جدول عملات ==== */
     if (isCalcQuery(message) || isConversionQuery(message)) {
       const usable = (snap: any) =>
@@ -3995,6 +3981,25 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
         });
       }
       /* ما في سعر متاح؟ نكمل للنموذج بدل اختراع رقم */
+    }
+
+    if (asksAboutRates) {
+      const sources = await fetchAllSources().catch(() => []);
+      if (sources.length) {
+        const ordered = [...sources].sort((a, b) => {
+          const rank = (x: any) => (x.source.includes('sudanakhbar') ? 0 : 1);
+          return rank(a) - rank(b);
+        });
+        const answer = formatMultiSourceAnswer(ordered, {
+          storedAt: db.getRatesSnapshot()?.fetchedAt,
+        });
+        return res.json({
+          reply: answer,
+          model: 'rates-multi-source',
+          sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt })),
+        });
+      }
+      /* فشل المصدران معاً → نكمل للكاش/النموذج بالأسفل */
     }
 
     /*
