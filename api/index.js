@@ -2717,7 +2717,8 @@ var Database = class {
     const auction = {
       ...input,
       id: `auc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      status: "approved",
+      /* لا نشر تلقائي: كل مزاد جديد يبدأ «قيد المراجعة» حتى تقرر الإدارة */
+      status: "pending",
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     this.data.marketAuctions = [auction, ...this.data.marketAuctions || []];
@@ -2735,6 +2736,23 @@ var Database = class {
       ...current,
       topBidSdg: amountSdg,
       topBidder: bidder
+    };
+    list2[idx] = updated;
+    this.data.marketAuctions = list2;
+    this.save();
+    return updated;
+  }
+  /** قرار الإدارة على مزاد: نشر أو رفض (مع سبب). */
+  reviewMarketAuction(id, decision) {
+    const list2 = this.data.marketAuctions || [];
+    const idx = list2.findIndex((a) => a.id === id);
+    if (idx < 0) return null;
+    const updated = {
+      ...list2[idx],
+      status: decision.decision,
+      rejectionReason: decision.decision === "rejected" ? decision.note || "" : void 0,
+      reviewedBy: decision.reviewedBy || "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F",
+      reviewedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     list2[idx] = updated;
     this.data.marketAuctions = list2;
@@ -9796,6 +9814,7 @@ apiRouter.post("/market/auctions", async (req, res) => {
     return res.status(400).json({ success: false, message: "\u0623\u0636\u0641 \u0635\u0648\u0631\u0629 \u0648\u0627\u062D\u062F\u0629 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644 \u0644\u0644\u0645\u0632\u0627\u062F." });
   }
   const auction = db.createMarketAuction({
+    /* يُنشأ قيد المراجعة — لا يظهر للسوق قبل موافقة الإدارة */
     title,
     category: String(b.category || "other"),
     description: String(b.description || "").slice(0, 1200),
@@ -9814,22 +9833,33 @@ apiRouter.post("/market/auctions", async (req, res) => {
   await db.flush({ lock: false }).catch(() => {
   });
   notify({
-    app: "client",
+    app: "admin",
     kind: "new_ad",
-    title: "\u0645\u0632\u0627\u062F \u062C\u062F\u064A\u062F \u0641\u064A \u0633\u0646\u062F",
-    body: `\xAB${title}\xBB \u2014 \u064A\u0628\u062F\u0623 \u0645\u0646 ${startPriceSdg.toLocaleString("en-US")} \u062C.\u0633. \u0634\u0627\u0631\u0643 \u0628\u0645\u0632\u0627\u064A\u062F\u062A\u0643!`,
-    linkTab: "auctions"
+    title: "\u0637\u0644\u0628 \u0645\u0632\u0627\u062F \u062C\u062F\u064A\u062F",
+    body: `\xAB${title}\xBB \u2014 \u0633\u0639\u0631 \u0627\u0644\u0627\u0641\u062A\u062A\u0627\u062D ${startPriceSdg.toLocaleString("en-US")} \u062C.\u0633. \u064A\u062D\u062A\u0627\u062C \u0645\u0631\u0627\u062C\u0639\u0629 \u0642\u0628\u0644 \u0627\u0644\u0646\u0634\u0631.`,
+    linkTab: "market_auctions"
+  }).catch(() => {
   });
-  res.json({ success: true, auction, message: "\u062A\u0645 \u0646\u0634\u0631 \u0627\u0644\u0645\u0632\u0627\u062F \u2014 \u0634\u0627\u0631\u0643 \u0627\u0644\u0631\u0627\u0628\u0637 \u0645\u0639 \u0645\u0646 \u062A\u062D\u0628." });
+  res.json({
+    success: true,
+    auction,
+    message: "\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0645\u0632\u0627\u062F\u0643 \u0644\u0644\u0645\u0631\u0627\u062C\u0639\u0629 \u2014 \u0633\u064A\u0638\u0647\u0631 \u0641\u064A \u0627\u0644\u0633\u0648\u0642 \u0628\u0639\u062F \u0645\u0648\u0627\u0641\u0642\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629."
+  });
 });
 apiRouter.post("/market/auctions/:id/bid", async (req, res) => {
   closeExpiredAuctions();
   const { id } = req.params;
   const amount = Number(req.body?.amountSdg);
-  const bidder = String(req.body?.bidder || req.body?.ownerToken || "\u0632\u0627\u0626\u0631").slice(0, 40);
+  const bidder = String(req.body?.bidderName || req.body?.bidder || "\u0632\u0627\u0626\u0631").slice(0, 40);
   const target = db.getMarketAuctions().find((a) => a.id === id);
   if (!target) return res.status(404).json({ success: false, message: "\u0627\u0644\u0645\u0632\u0627\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
-  if (target.status === "closed" || Date.parse(target.endsAt) < Date.now()) {
+  if (target.status === "pending") {
+    return res.status(400).json({ success: false, message: "\u0627\u0644\u0645\u0632\u0627\u062F \u0642\u064A\u062F \u0645\u0631\u0627\u062C\u0639\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u2014 \u0627\u0644\u0645\u0632\u0627\u064A\u062F\u0629 \u062A\u064F\u0641\u062A\u062D \u0628\u0639\u062F \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629." });
+  }
+  if (target.status !== "approved") {
+    return res.status(400).json({ success: false, message: "\u0647\u0630\u0627 \u0627\u0644\u0645\u0632\u0627\u062F \u0645\u0631\u0641\u0648\u0636 \u0623\u0648 \u0645\u0646\u062A\u0647\u064D." });
+  }
+  if (Date.parse(target.endsAt) < Date.now()) {
     return res.status(400).json({ success: false, message: "\u0627\u0646\u062A\u0647\u0649 \u0647\u0630\u0627 \u0627\u0644\u0645\u0632\u0627\u062F \u2014 \u0644\u0627 \u064A\u0645\u0643\u0646 \u0627\u0644\u0645\u0632\u0627\u064A\u062F\u0629." });
   }
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -10016,6 +10046,67 @@ apiRouter.get("/admin/market-ads", adminAuthMiddleware, (req, res) => {
     },
     pricing: AD_PRICING
   });
+});
+apiRouter.get("/admin/market-auctions", adminAuthMiddleware, (req, res) => {
+  closeExpiredAuctions();
+  const status = String(req.query.status || "all");
+  const all = db.getMarketAuctions();
+  const filtered = status === "all" ? all : all.filter((a) => a.status === status);
+  res.json({
+    auctions: filtered.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+    counts: {
+      pending: all.filter((a) => a.status === "pending").length,
+      approved: all.filter((a) => a.status === "approved").length,
+      rejected: all.filter((a) => a.status === "rejected").length,
+      closed: all.filter((a) => a.status === "closed").length
+    }
+  });
+});
+apiRouter.post("/admin/market-auctions/:id/review", adminAuthMiddleware, async (req, res) => {
+  const { decision, note, reviewedBy } = req.body || {};
+  if (decision !== "approved" && decision !== "rejected") {
+    return res.status(400).json({ error: "BAD_DECISION", message: "\u0627\u0644\u0642\u0631\u0627\u0631 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 approved \u0623\u0648 rejected." });
+  }
+  const before = db.getMarketAuctions().find((a) => a.id === req.params.id);
+  if (!before) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0645\u0632\u0627\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const wasApproved = before.status === "approved";
+  const auction = db.reviewMarketAuction(req.params.id, {
+    decision,
+    note,
+    reviewedBy: reviewedBy || "\u0625\u062F\u0627\u0631\u0629 \u0633\u0646\u062F"
+  });
+  if (!auction) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0645\u0632\u0627\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  await db.flush({ lock: false }).catch(() => {
+  });
+  if (decision === "approved" && !wasApproved) {
+    notify({
+      app: "client",
+      kind: "new_ad",
+      title: "\u0645\u0632\u0627\u062F \u062C\u062F\u064A\u062F \u0641\u064A \u0633\u0646\u062F",
+      body: `\xAB${auction.title}\xBB \u2014 \u064A\u0628\u062F\u0623 \u0645\u0646 ${auction.startPriceSdg.toLocaleString("en-US")} \u062C.\u0633. \u0634\u0627\u0631\u0643 \u0628\u0645\u0632\u0627\u064A\u062F\u062A\u0643!`,
+      linkTab: "auctions"
+    }).catch(() => {
+    });
+  }
+  notify({
+    app: "client",
+    kind: "ad_reviewed",
+    title: decision === "approved" ? "\u062A\u0645\u062A \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629 \u0639\u0644\u0649 \u0645\u0632\u0627\u062F\u0643 \u2705" : "\u062A\u0645 \u0631\u0641\u0636 \u0645\u0632\u0627\u062F\u0643",
+    body: decision === "approved" ? `\xAB${auction.title}\xBB \u0635\u0627\u0631 \u0638\u0627\u0647\u0631\u0627\u064B \u0641\u064A \u0627\u0644\u0633\u0648\u0642 \u2014 \u0634\u0627\u0631\u0643 \u0627\u0644\u0631\u0627\u0628\u0637 \u0645\u0639 \u0645\u0646 \u062A\u062D\u0628.` : `\xAB${auction.title}\xBB \u2014 ${auction.rejectionReason || "\u0644\u0645 \u064A\u0633\u062A\u0648\u0641\u0650 \u0634\u0631\u0648\u0637 \u0627\u0644\u0646\u0634\u0631."}`,
+    linkTab: "auctions",
+    recipientToken: auction.ownerToken
+  }).catch(() => {
+  });
+  res.json({ success: true, auction });
+});
+apiRouter.delete("/admin/market-auctions/:id", adminAuthMiddleware, async (req, res) => {
+  const list2 = db.getMarketAuctions();
+  const target = list2.find((a) => a.id === req.params.id);
+  if (!target) return res.status(404).json({ success: false, message: "\u0627\u0644\u0645\u0632\u0627\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  db.deleteMarketAuction(target.id, target.ownerToken);
+  await db.flush({ lock: false }).catch(() => {
+  });
+  res.json({ success: true });
 });
 apiRouter.post("/admin/market-ads/:id/review", adminAuthMiddleware, (req, res) => {
   const { decision, note, reviewedBy, paymentConfirmed } = req.body || {};

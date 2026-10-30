@@ -4603,6 +4603,7 @@ apiRouter.get('/market/auctions', (req, res) => {
   closeExpiredAuctions();
   const ownerToken = String(req.headers['x-owner-token'] || '');
   const all = db.getMarketAuctions();
+  /* السوق يرى المعتمد والمنتهي فقط — المعلّق والمرفوض لا يظهران لأحد */
   const live = all
     .filter((a) => a.status === 'approved' || a.status === 'closed')
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -4648,6 +4649,7 @@ apiRouter.post('/market/auctions', async (req, res) => {
   }
 
   const auction = db.createMarketAuction({
+    /* يُنشأ قيد المراجعة — لا يظهر للسوق قبل موافقة الإدارة */
     title,
     category: String(b.category || 'other'),
     description: String(b.description || '').slice(0, 1200),
@@ -4669,16 +4671,21 @@ apiRouter.post('/market/auctions', async (req, res) => {
 
   await db.flush({ lock: false }).catch(() => {});
 
-  /* تنبيه للمهتمين — نفس قناة إشعارات السوق */
-  notifyUser({
-    app: 'client',
-    kind: 'new_ad',
-    title: 'مزاد جديد في سند',
-    body: `«${title}» — يبدأ من ${startPriceSdg.toLocaleString('en-US')} ج.س. شارك بمزايدتك!`,
-    linkTab: 'auctions',
-  });
+  /* لا تنبيه للسوق الآن: المزاد قيد المراجعة — التنبيه العام يُرسل لحظة الموافقة فقط */
 
-  res.json({ success: true, auction, message: 'تم نشر المزاد — شارك الرابط مع من تحب.' });
+  notifyUser({
+    app: 'admin',
+    kind: 'new_ad',
+    title: 'طلب مزاد جديد',
+    body: `«${title}» — سعر الافتتاح ${startPriceSdg.toLocaleString('en-US')} ج.س. يحتاج مراجعة قبل النشر.`,
+    linkTab: 'market_auctions',
+  }).catch(() => {});
+
+  res.json({
+    success: true,
+    auction,
+    message: 'تم إرسال مزادك للمراجعة — سيظهر في السوق بعد موافقة الإدارة.',
+  });
 });
 
 /** مزايدة على مزاد. */
@@ -4686,11 +4693,17 @@ apiRouter.post('/market/auctions/:id/bid', async (req, res) => {
   closeExpiredAuctions();
   const { id } = req.params;
   const amount = Number(req.body?.amountSdg);
-  const bidder = String(req.body?.bidder || req.body?.ownerToken || 'زائر').slice(0, 40);
+  const bidder = String(req.body?.bidderName || req.body?.bidder || 'زائر').slice(0, 40);
 
   const target = db.getMarketAuctions().find((a) => a.id === id);
   if (!target) return res.status(404).json({ success: false, message: 'المزاد غير موجود.' });
-  if (target.status === 'closed' || Date.parse(target.endsAt) < Date.now()) {
+  if (target.status === 'pending') {
+    return res.status(400).json({ success: false, message: 'المزاد قيد مراجعة الإدارة — المزايدة تُفتح بعد الموافقة.' });
+  }
+  if (target.status !== 'approved') {
+    return res.status(400).json({ success: false, message: 'هذا المزاد مرفوض أو منتهٍ.' });
+  }
+  if (Date.parse(target.endsAt) < Date.now()) {
     return res.status(400).json({ success: false, message: 'انتهى هذا المزاد — لا يمكن المزايدة.' });
   }
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -4890,6 +4903,78 @@ apiRouter.get('/admin/market-ads', adminAuthMiddleware, (req, res) => {
     },
     pricing: AD_PRICING,
   });
+});
+
+/* ---------------- إدارة المزادات: قائمة المراجعة والقرار ---------------- */
+apiRouter.get('/admin/market-auctions', adminAuthMiddleware, (req, res) => {
+  closeExpiredAuctions();
+  const status = String(req.query.status || 'all');
+  const all = db.getMarketAuctions();
+  const filtered = status === 'all' ? all : all.filter((a) => a.status === status);
+  res.json({
+    auctions: filtered.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+    counts: {
+      pending: all.filter((a) => a.status === 'pending').length,
+      approved: all.filter((a) => a.status === 'approved').length,
+      rejected: all.filter((a) => a.status === 'rejected').length,
+      closed: all.filter((a) => a.status === 'closed').length,
+    },
+  });
+});
+
+apiRouter.post('/admin/market-auctions/:id/review', adminAuthMiddleware, async (req, res) => {
+  const { decision, note, reviewedBy } = req.body || {};
+  if (decision !== 'approved' && decision !== 'rejected') {
+    return res.status(400).json({ error: 'BAD_DECISION', message: 'القرار يجب أن يكون approved أو rejected.' });
+  }
+
+  const before = db.getMarketAuctions().find((a) => a.id === req.params.id);
+  if (!before) return res.status(404).json({ error: 'NOT_FOUND', message: 'المزاد غير موجود.' });
+  /* «تمت الموافقة مسبقاً» ليست حدثاً جديداً — لا إشعار مكرر للسوق */
+  const wasApproved = before.status === 'approved';
+
+  const auction = db.reviewMarketAuction(req.params.id, {
+    decision,
+    note,
+    reviewedBy: reviewedBy || 'إدارة سند',
+  });
+  if (!auction) return res.status(404).json({ error: 'NOT_FOUND', message: 'المزاد غير موجود.' });
+
+  await db.flush({ lock: false }).catch(() => {});
+
+  /* عند الموافقة فقط: تنبيه السوق أن المزاد صار مباشراً */
+  if (decision === 'approved' && !wasApproved) {
+    notifyUser({
+      app: 'client',
+      kind: 'new_ad',
+      title: 'مزاد جديد في سند',
+      body: `«${auction.title}» — يبدأ من ${auction.startPriceSdg.toLocaleString('en-US')} ج.س. شارك بمزايدتك!`,
+      linkTab: 'auctions',
+    }).catch(() => {});
+  }
+
+  notifyUser({
+    app: 'client',
+    kind: 'ad_reviewed',
+    title: decision === 'approved' ? 'تمت الموافقة على مزادك ✅' : 'تم رفض مزادك',
+    body:
+      decision === 'approved'
+        ? `«${auction.title}» صار ظاهراً في السوق — شارك الرابط مع من تحب.`
+        : `«${auction.title}» — ${auction.rejectionReason || 'لم يستوفِ شروط النشر.'}`,
+    linkTab: 'auctions',
+    recipientToken: auction.ownerToken,
+  }).catch(() => {});
+
+  res.json({ success: true, auction });
+});
+
+apiRouter.delete('/admin/market-auctions/:id', adminAuthMiddleware, async (req, res) => {
+  const list = db.getMarketAuctions();
+  const target = list.find((a) => a.id === req.params.id);
+  if (!target) return res.status(404).json({ success: false, message: 'المزاد غير موجود.' });
+  db.deleteMarketAuction(target.id, target.ownerToken);
+  await db.flush({ lock: false }).catch(() => {});
+  res.json({ success: true });
 });
 
 apiRouter.post('/admin/market-ads/:id/review', adminAuthMiddleware, (req, res) => {

@@ -950,6 +950,29 @@ class ApiClient {
     return this.request(`/admin/market-ads?status=${encodeURIComponent(status)}`);
   }
 
+  /* ---------------- Admin: auctions moderation ---------------- */
+
+  public async getAdminMarketAuctions(status: string = 'all'): Promise<{
+    auctions: any[]; counts: any;
+  }> {
+    return this.request(`/admin/market-auctions?status=${encodeURIComponent(status)}`);
+  }
+
+  public async reviewMarketAuction(
+    id: string,
+    decision: 'approved' | 'rejected',
+    note?: string
+  ): Promise<{ success: boolean; auction: any }> {
+    return this.request(`/admin/market-auctions/${id}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, note }),
+    });
+  }
+
+  public async deleteAdminMarketAuction(id: string): Promise<{ success: boolean }> {
+    return this.request(`/admin/market-auctions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   public async reviewMarketAd(
     id: string,
     decision: 'approved' | 'rejected',

@@ -1900,7 +1900,8 @@ class Database {
     const auction: MarketAuction = {
       ...input,
       id: `auc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      status: 'approved',
+      /* لا نشر تلقائي: كل مزاد جديد يبدأ «قيد المراجعة» حتى تقرر الإدارة */
+      status: 'pending',
       createdAt: new Date().toISOString(),
     };
     this.data.marketAuctions = [auction, ...(this.data.marketAuctions || [])];
@@ -1919,6 +1920,27 @@ class Database {
       ...current,
       topBidSdg: amountSdg,
       topBidder: bidder,
+    };
+    list[idx] = updated;
+    this.data.marketAuctions = list;
+    this.save();
+    return updated;
+  }
+
+  /** قرار الإدارة على مزاد: نشر أو رفض (مع سبب). */
+  public reviewMarketAuction(
+    id: string,
+    decision: { decision: 'approved' | 'rejected'; note?: string; reviewedBy?: string }
+  ): MarketAuction | null {
+    const list = this.data.marketAuctions || [];
+    const idx = list.findIndex((a) => a.id === id);
+    if (idx < 0) return null;
+    const updated: MarketAuction = {
+      ...list[idx],
+      status: decision.decision,
+      rejectionReason: decision.decision === 'rejected' ? decision.note || '' : undefined,
+      reviewedBy: decision.reviewedBy || 'إدارة سند',
+      reviewedAt: new Date().toISOString(),
     };
     list[idx] = updated;
     this.data.marketAuctions = list;

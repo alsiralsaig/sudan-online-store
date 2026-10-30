@@ -786,6 +786,10 @@ export interface MarketAuction {
   /** أعلى مزايدة مسجلة */
   topBidSdg?: number;
   topBidder?: string;
+  /** سبب الرفض (يظهر لصاحب المزاد فقط) */
+  rejectionReason?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
 }
 
 export interface MarketAdPricing {

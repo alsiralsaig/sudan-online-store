@@ -28,19 +28,20 @@ import { api } from '../../lib/api.ts';
 import { ThermalReceiptSettingsView } from './ThermalReceiptSettingsView.tsx';
 import { PromotionsSettingsView } from './PromotionsSettingsView.tsx';
 import { MarketAdsAdminView } from './MarketAdsAdminView.tsx';
+import { MarketAuctionsAdminView } from './MarketAuctionsAdminView.tsx';
 import { TenantApplicationsAdminView } from './TenantApplicationsAdminView.tsx';
 import { MarketBannersAdminView } from './MarketBannersAdminView.tsx';
 import { NotificationBell } from '../Common/NotificationBell.tsx';
 
 export const CentralAdminView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads' | 'tenant_requests' | 'banners'>('merchants');
+  const [activeTab, setActiveTab] = useState<'merchants' | 'payments_queue' | 'audit_trail' | 'receipt_settings' | 'promotions' | 'market_ads' | 'market_auctions' | 'tenant_requests' | 'banners'>('merchants');
   const [navOpen, setNavOpen] = useState(false);
 
 
   // Notification taps can open a specific admin tab via ?tab=
   useEffect(() => {
     const applyTab = (tab: string) => {
-      const allowed = ['merchants', 'payments_queue', 'audit_trail', 'receipt_settings', 'promotions', 'market_ads', 'tenant_requests', 'banners'];
+      const allowed = ['merchants', 'payments_queue', 'audit_trail', 'receipt_settings', 'promotions', 'market_ads', 'market_auctions', 'tenant_requests', 'banners'];
       if (allowed.includes(tab)) setActiveTab(tab as any);
     };
     const fromUrl = new URLSearchParams(window.location.search).get('tab');
@@ -156,6 +157,7 @@ export const CentralAdminView: React.FC = () => {
     { id: 'receipt_settings', label: 'إعدادات الفاتورة الحرارية', count: null },
     { id: 'promotions', label: 'نظام العروض الترويجية', count: null },
     { id: 'market_ads', label: 'إعلانات السوق', count: null },
+    { id: 'market_auctions', label: 'مراجعة المزادات', count: null },
     { id: 'tenant_requests', label: 'طلبات المتاجر', count: null },
     { id: 'banners', label: 'بانرات السوق', count: null },
   ];
@@ -524,6 +526,7 @@ export const CentralAdminView: React.FC = () => {
       {/* Tab 5: Promotional Offers Management */}
       {activeTab === 'promotions' && <PromotionsSettingsView products={products} />}
       {activeTab === 'market_ads' && <MarketAdsAdminView />}
+      {activeTab === 'market_auctions' && <MarketAuctionsAdminView />}
       {activeTab === 'tenant_requests' && <TenantApplicationsAdminView />}
       {activeTab === 'banners' && <MarketBannersAdminView />}
 

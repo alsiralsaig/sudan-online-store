@@ -31,6 +31,7 @@ interface Auction {
   createdAt: string;
   topBidSdg?: number;
   topBidder?: string;
+  rejectionReason?: string;
 }
 
 interface Props {
@@ -86,7 +87,15 @@ export const ClientAuctionsView: React.FC<Props> = ({ ownerToken }) => {
     setError('');
     try {
       const res = await api.getMarketAuctions(ownerToken);
-      setAuctions((res.auctions || []) as Auction[]);
+      /*
+       * السوق يرى المعتمد فقط، لكن صاحب المزاد يجب أن يرى مزاده المعلّق
+       * والمرفوض (مع السبب) حتى يعرف ماذا حدث — بنفس أسلوب إعلانات السوق.
+       */
+      const live = (res.auctions || []) as Auction[];
+      const mineOnly = ((res.mine || []) as Auction[]).filter(
+        (m) => !live.some((l) => l.id === m.id)
+      );
+      setAuctions([...mineOnly, ...live]);
     } catch (e) {
       setError((e as Error).message || 'تعذّر تحميل المزادات.');
     } finally {
@@ -168,10 +177,22 @@ export const ClientAuctionsView: React.FC<Props> = ({ ownerToken }) => {
                       <h4 className="text-[13px] font-black text-slate-900 leading-tight line-clamp-2">{a.title}</h4>
                       <span
                         className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-black ${
-                          ended ? 'bg-slate-200 text-slate-700' : 'bg-emerald-100 text-emerald-800'
+                          a.status === 'pending'
+                            ? 'bg-amber-100 text-amber-800'
+                            : a.status === 'rejected'
+                              ? 'bg-rose-100 text-rose-800'
+                              : ended
+                                ? 'bg-slate-200 text-slate-700'
+                                : 'bg-emerald-100 text-emerald-800'
                         }`}
                       >
-                        {ended ? 'انتهى' : 'جارٍ'}
+                        {a.status === 'pending'
+                          ? 'قيد المراجعة'
+                          : a.status === 'rejected'
+                            ? 'مرفوض'
+                            : ended
+                              ? 'انتهى'
+                              : 'جارٍ'}
                       </span>
                     </div>
                     <p className="text-[13px] font-black text-sky-700 font-mono">
@@ -185,9 +206,19 @@ export const ClientAuctionsView: React.FC<Props> = ({ ownerToken }) => {
                     </p>
                   </div>
                 </div>
+                {a.status === 'pending' && (
+                  <p className="px-2.5 pb-1 text-[11px] font-bold text-amber-700">
+                    مزادك قيد مراجعة الإدارة — سيظهر للسوق بعد الموافقة.
+                  </p>
+                )}
+                {a.status === 'rejected' && (
+                  <p className="px-2.5 pb-1 text-[11px] font-bold text-rose-700">
+                    رُفض المزاد{a.rejectionReason ? `: ${a.rejectionReason}` : ''}
+                  </p>
+                )}
                 <div className="px-2.5 pb-2.5 flex gap-1.5">
                   <button
-                    disabled={ended}
+                    disabled={ended || a.status !== 'approved'}
                     onClick={() => setBidFor(a)}
                     className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-[12px] font-black disabled:bg-slate-300 disabled:text-slate-500"
                   >

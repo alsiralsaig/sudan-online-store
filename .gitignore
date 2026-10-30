@@ -34,3 +34,4 @@ native-wrapper/app/build/
 native-wrapper/build/
 native-wrapper/.gradle/
 native-wrapper/sanad.props
+serve-local.ts
