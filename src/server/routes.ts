@@ -3902,7 +3902,13 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   try {
     // Rate questions (and anything touching money) need the live parallel table.
     let liveRates: any = db.getRatesSnapshot();
-    const asksAboutRates = isRateQuery(message);
+    /*
+     * «أخبار السودان» كانت تُحسب سؤال أسعار (لأنها اسم مصدر للأسعار)، فيرد
+     * بجدول العملات بدل العناوين. الآن: لو الكلام عن أخبار بلا أي كلمة مال
+     * → سؤال أخبار، وإلا يبقى سؤال أسعار.
+     */
+    const newsOnly = isNewsQuery(message);
+    const asksAboutRates = isRateQuery(message) && !newsOnly;
     const wantsSources = asksForSources(message);
 
     /**
@@ -3932,7 +3938,7 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
      * السبب: النموذج كان يجاوب «من الذاكرة» (أو يقول إنه لا يصل للموقع)،
      * وهذا خطأ في موضوع حسّاس زي أخبار السودان.
      */
-    if (!asksAboutRates && isNewsQuery(message)) {
+    if (newsOnly && !asksAboutRates) {
       const items = await fetchSudanAkhbarNews(6).catch(() => []);
       if (items.length) {
         const lines = items.map((it, i) => `${i + 1}. ${it.title}`).join('\n');

@@ -9056,7 +9056,8 @@ apiRouter.post("/assistant/chat", async (req, res) => {
   turns.push({ role: "user", parts: [{ text: message.slice(0, 3e3) }] });
   try {
     let liveRates = db.getRatesSnapshot();
-    const asksAboutRates = isRateQuery(message);
+    const newsOnly = isNewsQuery(message);
+    const asksAboutRates = isRateQuery(message) && !newsOnly;
     const wantsSources = asksForSources(message);
     if (asksAboutRates && wantsSources) {
       const sources = await fetchAllSources().catch(() => []);
@@ -9071,7 +9072,7 @@ apiRouter.post("/assistant/chat", async (req, res) => {
         sources: sources.map((s) => ({ name: s.source, fetchedAt: s.fetchedAt }))
       });
     }
-    if (!asksAboutRates && isNewsQuery(message)) {
+    if (newsOnly && !asksAboutRates) {
       const items = await fetchSudanAkhbarNews(6).catch(() => []);
       if (items.length) {
         const lines = items.map((it, i) => `${i + 1}. ${it.title}`).join("\n");
