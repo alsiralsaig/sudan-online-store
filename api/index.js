@@ -3906,6 +3906,9 @@ var Database = class {
 };
 var db = new Database();
 
+// src/server/routes.ts
+init_pg();
+
 // src/lib/sudaneseUnits.ts
 var SUDANESE_UNITS = [
   {
@@ -9195,6 +9198,28 @@ apiRouter.post("/admin/tenants/:id/segment", adminAuthMiddleware, (req, res) => 
       isVip: Boolean(tenant.isVip)
     }
   });
+});
+apiRouter.get("/diagnostics/columns", async (_req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name IN ('accountSegment', 'isVip')
+        ORDER BY table_name, column_name`
+    );
+    const tenants = db.getSchema().tenants;
+    res.json({
+      columns: rows,
+      tenantsTotal: tenants.length,
+      tenantsWithSegment: tenants.filter((t) => Boolean(t.accountSegment)).length,
+      segments: tenants.reduce((acc, t) => {
+        const k = t.accountSegment || "\u0628\u0644\u0627 \u0646\u0648\u0639";
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {})
+    });
+  } catch (err) {
+    res.status(500).json({ error: "DIAG_FAILED", message: err.message });
+  }
 });
 apiRouter.post("/admin/tenants/:id/status", adminAuthMiddleware, (req, res) => {
   const { status, reason } = req.body;

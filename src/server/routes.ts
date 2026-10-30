@@ -3,6 +3,7 @@ import { barcodeLookupHandler } from './barcodeLookup.ts';
 import { resolveActorPerms } from '../lib/staffPermissions.ts';
 import { normalizeBarcode } from '../lib/barcodeMatch.ts';
 import { db } from './db.ts';
+import { query } from './pg.ts';
 import { parseSudaneseSale } from '../lib/sudaneseSpeech.ts';
 import { findUnitInText, priceForUnit, resolveProductBaseUnit } from '../lib/sudaneseUnits.ts';
 import {
@@ -3603,6 +3604,33 @@ apiRouter.post('/admin/tenants/:id/segment', adminAuthMiddleware, (req, res) => 
       isVip: Boolean((tenant as any).isVip),
     },
   });
+});
+
+/**
+ * تشخيص عام (قراءة فقط، بلا بيانات حساسة): هل أعمدة الطبقات موجودة فعلاً
+ * في قاعدة البيانات؟ يُستخدم للتحقق بعد النشر.
+ */
+apiRouter.get('/diagnostics/columns', async (_req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name IN ('accountSegment', 'isVip')
+        ORDER BY table_name, column_name`,
+    );
+    const tenants = db.getSchema().tenants;
+    res.json({
+      columns: rows,
+      tenantsTotal: tenants.length,
+      tenantsWithSegment: tenants.filter((t) => Boolean((t as any).accountSegment)).length,
+      segments: tenants.reduce((acc: Record<string, number>, t) => {
+        const k = (t as any).accountSegment || 'بلا نوع';
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {}),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'DIAG_FAILED', message: (err as Error).message });
+  }
 });
 
 apiRouter.post('/admin/tenants/:id/status', adminAuthMiddleware, (req, res) => {
