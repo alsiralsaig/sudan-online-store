@@ -292,12 +292,30 @@ class ApiClient {
     return this.request('/auth/status');
   }
   public async merchantLogin(code: string, hint?: string): Promise<{ success: boolean; token: string; tenant: any }> {
-    const res = await this.request<{ success: boolean; token: string; tenant: any }>(
-      '/auth/merchant/login',
-      { method: 'POST', body: JSON.stringify({ code, slug: hint, tenantId: hint }) }
-    );
-    if (res?.token) writeStoredToken(MERCHANT_TOKEN_KEY, res.token);
-    return res;
+    /*
+     * مدخل واحد «متجري»: يقبل كود المتجر أو كود الطلب المعتمد، ويُنشئ متجر
+     * المتجر الجديد ويدخله في نفس الطلب — بلا تفعيل منفصل ولا انتظار.
+     */
+    try {
+      const res = await this.request<{ success: boolean; token: string; tenant: any; merchantCode?: string | null; welcomeMessage?: string }>(
+        '/auth/merchant/enter',
+        { method: 'POST', body: JSON.stringify({ code }) }
+      );
+      if (res?.token) writeStoredToken(MERCHANT_TOKEN_KEY, res.token);
+      return res as any;
+    } catch (primary: any) {
+      /* توافق خلفي: المسار القديم ما زال يعمل (أكواد قديمة ٤٤ خانة) */
+      try {
+        const res = await this.request<{ success: boolean; token: string; tenant: any }>(
+          '/auth/merchant/login',
+          { method: 'POST', body: JSON.stringify({ code, slug: hint, tenantId: hint }) }
+        );
+        if (res?.token) writeStoredToken(MERCHANT_TOKEN_KEY, res.token);
+        return res;
+      } catch {
+        throw primary;
+      }
+    }
   }
   /** يسترجع/يصدر كود دخول المتجر لتاجر يملك كود الطلب المعتمد. */
   public async getStoreAccessCode(applicationCode: string, rotate = false): Promise<{ success: boolean; issued?: boolean; tenant?: any; merchantCode: string | null; merchantCodeMessage?: string; canRotate?: boolean }> {

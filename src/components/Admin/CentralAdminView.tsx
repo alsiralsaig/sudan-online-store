@@ -367,10 +367,18 @@ export const CentralAdminView: React.FC = () => {
                     className="shrink-0 rounded-lg bg-sky-700 px-2 py-0.5 text-[10px] font-bold text-white"
                   >نسخ</button>
                   <a
-                    href={`https://wa.me/?text=${encodeURIComponent(`كود دخول متجرك في سند: ${t.merchantCode}\nادخل به من شاشة «دخول المتجر».`)}`}
+                    /* الكود لوحده في رسالة الواتساب — ليكون النسخ نظيفاً */
+                    href={`https://wa.me/?text=${encodeURIComponent(String(t.merchantCode || '').trim().toUpperCase())}`}
                     target="_blank" rel="noreferrer"
                     className="shrink-0 rounded-lg bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white"
-                  >واتساب</a>
+                  >الكود</a>
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(
+                      `مرحباً بك في سند 🌿\nتم تفعيل متجر «${t.name}» على منصة سند.\n\nطريقة الدخول:\n١) افتح تطبيق التاجر أو: https://sudan-online-store-eta.vercel.app/login\n٢) في «دخول المتجر» الصق كود متجرك (وصلك في رسالة منفصلة).\n٣) اضغط «دخول المتجر» — يدخلك متجرك مباشرة.\n\nالكود واحد فقط لمتجرك، احفظه ولا تشاركه.`
+                    )}`}
+                    target="_blank" rel="noreferrer"
+                    className="shrink-0 rounded-lg bg-slate-700 px-2 py-0.5 text-[10px] font-bold text-white"
+                  >ترحيب</a>
                 </>
               ) : (
                 <span className="text-[10px] font-bold text-amber-700">بلا كود ظاهر</span>
@@ -741,28 +749,92 @@ export const CentralAdminView: React.FC = () => {
           </form>
         </div>
       )}
-      {codeFor && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4" dir="rtl">
-          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl border border-slate-200">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-sm">رمز المتجر — {codeFor.name}</h3>
-                <p className="text-[11px] text-slate-400">انسخه وأرسله للتاجر عبر واتساب آمن — ويبقى متاحاً في زر «عرض الرمز».</p>
+      {codeFor && (() => {
+        /*
+         * رسالتان منفصلتان — لا تُدمجان أبداً:
+         *   1) الكود لوحده (سطر واحد) ليكون النسخ نظيفاً.
+         *   2) الترحيب وطريقة وضع الكود، بلا كود داخلها.
+         */
+        const cleanCode = String(codeFor.code || '').trim().toUpperCase();
+        const welcome = [
+          `مرحباً بك في سند 🌿`,
+          `تم تفعيل متجر «${codeFor.name}» على منصة سند، ومن اليوم تدير بيعه ومخزونه وكاشيره من مكان واحد.`,
+          ``,
+          `طريقة الدخول (مرة واحدة فقط):`,
+          `١) افتح تطبيق التاجر — أو من المتصفح: `,
+          `   https://sudan-online-store-eta.vercel.app/login`,
+          `٢) في خانة «دخول المتجر» انسخ كود متجرك من الرسالة المنفصلة والصقه كما هو.`,
+          `٣) اضغط «دخول المتجر» — يدخلك متجرك مباشرة، ولا يظهر لك أي متجر آخر.`,
+          ``,
+          `ملاحظات:`,
+          `• الكود واحد فقط لمتجرك، احفظه ولا تشاركه.`,
+          `• لا تكتبه بيدك: انسخ رسالة الكود فقط لتفادي الخطأ.`,
+          `• أول موظف (المالك) جاهز برمز سري 1234.`,
+        ].join('\n');
+        const copy = async (text: string, label: string) => {
+          try {
+            await navigator.clipboard.writeText(text);
+            alert(label);
+          } catch {
+            alert('تعذّر النسخ — حدّد النص وانسخه يدوياً.');
+          }
+        };
+        return (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4" dir="rtl">
+            <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto">
+              <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-sm">كود الدخول — {codeFor.name}</h3>
+                  <p className="text-[11px] text-slate-400">رسالتان منفصلتان: الكود لوحده، والترحيب لوحده.</p>
+                </div>
+                <button onClick={() => setCodeFor(null)} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
               </div>
-              <button onClick={() => setCodeFor(null)} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-6 space-y-3">
-              <p className="text-[11px] text-slate-600">القديم (إن وجد) أُلغي. الجديد:</p>
-              <div className="rounded-xl bg-slate-950 text-emerald-300 font-mono text-sm tracking-widest px-4 py-4 text-center select-all border border-slate-800">{codeFor.code}</div>
-              <div className="flex gap-2">
-                <button onClick={async()=>{ await navigator.clipboard.writeText(codeFor.code); alert('تم النسخ'); }} className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-black">نسخ الرمز</button>
-                <a href={`https://wa.me/?text=${encodeURIComponent(codeFor.code)}`} target="_blank" rel="noreferrer" className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black text-center">إرسال واتساب</a>
+
+              <div className="p-5 space-y-4">
+                {/* 1) الكود لوحده */}
+                <div className="space-y-2">
+                  <p className="text-[11px] font-black text-slate-700">١) رسالة الكود (لوحده فقط)</p>
+                  <div dir="ltr" className="rounded-xl bg-slate-950 text-emerald-300 font-mono text-[15px] tracking-[0.18em] px-4 py-4 text-center select-all border border-slate-800">
+                    {cleanCode || '—'}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => copy(cleanCode, 'تم نسخ الكود لوحده ✅')}
+                      className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-black"
+                    >نسخ الكود</button>
+                    <a
+                      href={`https://wa.me/?text=${encodeURIComponent(cleanCode)}`}
+                      target="_blank" rel="noreferrer"
+                      className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black text-center"
+                    >إرسال الكود واتساب</a>
+                  </div>
+                </div>
+
+                {/* 2) الترحيب لوحده */}
+                <div className="space-y-2 border-t border-slate-200 pt-4">
+                  <p className="text-[11px] font-black text-slate-700">٢) رسالة الترحيب وطريقة وضع الكود (بدون كود)</p>
+                  <pre dir="rtl" className="whitespace-pre-wrap text-[11.5px] leading-6 text-slate-800 bg-slate-50 border border-slate-200 rounded-xl p-3 max-h-52 overflow-y-auto font-sans">
+{welcome}
+                  </pre>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => copy(welcome, 'تم نسخ رسالة الترحيب ✅')}
+                      className="flex-1 py-2.5 bg-sky-700 text-white rounded-xl text-xs font-black"
+                    >نسخ رسالة الترحيب</button>
+                    <a
+                      href={`https://wa.me/?text=${encodeURIComponent(welcome)}`}
+                      target="_blank" rel="noreferrer"
+                      className="flex-1 py-2.5 bg-slate-700 text-white rounded-xl text-xs font-black text-center"
+                    >إرسال الترحيب واتساب</a>
+                  </div>
+                </div>
+
+                <button onClick={() => setCodeFor(null)} className="w-full py-2 text-xs text-slate-600">إغلاق</button>
               </div>
-              <button onClick={()=>setCodeFor(null)} className="w-full py-2 text-xs text-slate-600">إغلاق</button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

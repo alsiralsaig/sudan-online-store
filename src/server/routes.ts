@@ -56,6 +56,7 @@ import type {
   InventoryAlert,
 } from '../types/index.ts';
 import { getPublicKey as getPushPublicKey, notify as notifyUser, notifyLowStock, runNotificationScan } from './notifications.ts';
+import { codeOnlyMessage, welcomeMessage } from './storeMessages.ts';
 import {
   createApprovalRequest,
   getApproval,
@@ -173,6 +174,176 @@ apiRouter.post('/auth/admin/logout', (req, res) => {
 
 apiRouter.get('/auth/admin/me', adminAuthMiddleware, (req, res) => {
   res.json({ authenticated: true, role: 'admin' });
+});
+
+/*
+ * «متجري» — مدخل واحد يعمل مع أي كود متجر، في أي لحظة.
+ * -------------------------------------------------------------------------
+ * القاعدة العامة: كود المتجر (SND-XXXX-XXXX-XXXX أو كود الطلب) يُقبل مباشرة
+ * ويُدخل التاجر متجره:
+ *   • متجر جديد مُعتمد لم يُفعّل بعد → يُنشأ متجره (فرع واحد + حساب المالك)
+ *     ويُربط الكود به، ثم يدخل في نفس الطلب.
+ *   • متجر مفعّل → يدخل متجره هو فقط.
+ * لا خطوة تفعيل ثانية ولا انتظار. البصمة تُصحَّح ذاتياً لو اختلفت مع النص.
+ * هذا المسار يُستخدم كشبكة أمان أيضاً عندما يرفض المسار الأساسي الكود.
+ */
+apiRouter.post('/auth/merchant/enter', async (req, res) => {
+  const rawCode = String(req.body?.code || '').trim().toUpperCase();
+  if (!rawCode) return res.status(400).json({ error: 'CODE_REQUIRED', message: 'اكتب كود متجرك.' });
+  if (!validSigningSecret(process.env.SANAD_AUTH_SECRET)) {
+    return res.status(500).json({ error: 'AUTH_NOT_CONFIGURED', message: 'مفتاح الجلسات غير مُهيأ في الخادم.' });
+  }
+
+  const compact = rawCode.replace(/[^A-Z0-9]/g, '');
+  const hash = merchantCodeHash(rawCode);
+  const applications = db.getTenantApplications();
+
+  /* 1) المتجر صاحب الكود (بالبصمة أو بالنص المحفوظ) */
+  let tenant =
+    (hash ? db.findTenantByMerchantCodeHash(hash) : undefined) ||
+    db.getSchema().tenants.find((t) => String((t as any).merchantCodeDisplay || '') === compact);
+
+  /* 2) كود طلب معتمد؟ */
+  const application = applications.find((a) => (a.activationCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === compact);
+
+
+  if (!tenant && !application) {
+    return res.status(401).json({ error: 'INVALID_CODE', message: 'الكود غير صحيح — انسخ رسالة الكود كما هي من إدارة سند.' });
+  }
+
+  let createdNow = false;
+  if (!tenant && application) {
+    if (application.status !== 'approved') {
+      return res.status(400).json({
+        error: 'NOT_APPROVED',
+        message:
+          application.status === 'pending'
+            ? 'طلبك لسه قيد المراجعة — كود الدخول يصبح صالحاً بعد الموافقة.'
+            : 'هذا الطلب مرفوض، تواصل مع إدارة سند.',
+      });
+    }
+
+    /* متجر موجود مرتبط بالطلب؟ */
+    tenant =
+      (application.tenantId ? db.getTenant(application.tenantId) : undefined) ||
+      db.getSchema().tenants.find((t) => t.phone === application.phone);
+
+    /* 3) متجر جديد: يُنشأ الآن بفرع واحد وحساب مالك — بلا أي خطوة إضافية */
+    if (!tenant) {
+      const now = new Date();
+      const tenantId = `tenant_${application.id.replace(/^tapp_?/, '').slice(0, 10) || Date.now()}`;
+      const created: any = {
+        id: tenantId,
+        ownerName: application.ownerName,
+        slug: (application.storeName || 'store').trim().replace(/\s+/g, '-').slice(0, 40) + '-' + tenantId.slice(-4),
+        name: application.storeName,
+        tradeName: application.storeName,
+        phone: application.phone,
+        city: application.city || 'الخرطوم',
+        address: [application.wilaya, application.city].filter(Boolean).join(' - '),
+        currency: 'SDG',
+        status: 'active',
+        subscriptionPlanId: 'plan_starter',
+        subscriptionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        settings: {
+          receiptHeader: `${application.storeName}${application.city ? ` — ${application.city}` : ''}\nهاتف: ${application.phone}`,
+          receiptFooter: 'شكراً لزيارتكم!',
+          allowNegativeStock: false,
+          defaultMaxDiscountPct: 10,
+          zatcaQrEnabled: false,
+          costingMethod: 'weighted_average',
+          vatEnabled: false,
+          defaultVatPct: 0,
+          pricesIncludeVat: false,
+          showVatBreakdown: true,
+          showTaxPerItem: true,
+          loyaltyRateSdgPerPoint: 1000,
+        },
+        createdAt: now.toISOString(),
+      };
+      db.getSchema().tenants.push(created);
+      const branches = Math.max(1, Number(application.branchesCount) || 1);
+      for (let i = 1; i <= branches; i++) {
+        db.getSchema().branches.push({
+          id: `branch_${tenantId}_${i}`,
+          tenantId,
+          name: i === 1 ? 'الفرع الرئيسي' : `فرع ${i}`,
+          code: `B${i}`,
+          city: application.city || 'الخرطوم',
+          address: application.wilaya ? `${application.wilaya} - ${application.city || ''}` : '',
+          phone: application.phone,
+          isMain: i === 1,
+          isActive: true,
+        } as any);
+      }
+      ensureOwnerEmployee(tenantId, application.ownerName, application.phone);
+      createdNow = true;
+      (application as any).tenantId = tenantId;
+      (application as any).activatedAt = now.toISOString();
+      tenant = created;
+
+      notifyUser({
+        app: 'admin',
+        kind: 'new_store_request',
+        title: 'متجر جديد دخل بكوده',
+        body: `${created.name} — ${created.city} • تم إنشاء المتجر تلقائياً عند الدخول`,
+        linkTab: 'merchants',
+        tenantId,
+      }).catch(() => {});
+    }
+  }
+
+  if (!tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'تعذّر العثور على المتجر — تواصل مع إدارة سند.' });
+  if (tenant.status === 'suspended') return res.status(403).json({ error: 'TENANT_SUSPENDED', message: 'المتجر موقوف — تواصل مع إدارة سند.' });
+
+  /*
+   * الأحدث يفوز: لو المتجر له كود أحدث مُصدر من المنصة، لا يُقبل كود أقدم
+   * (كود الطلب أو كود سابق) ولا يُعيد نفسه — وإلا صار «تجديد الكود» بلا فائدة.
+   */
+  const storedHashNow = String((tenant as any).merchantCodeHash || '');
+  const storedDisplayNow = String((tenant as any).merchantCodeDisplay || '');
+  if (!createdNow && hash && storedHashNow && storedHashNow !== hash && storedDisplayNow && storedDisplayNow !== compact) {
+    return res.status(401).json({
+      error: 'CODE_REPLACED',
+      message: 'هذا كود قديم — استخدم آخر رسالة كود أرسلتها لك إدارة سند.',
+    });
+  }
+
+  /*
+   * نُثبّت الكود على المتجر (بصمة + نص) حتى لا يضيع بعد اليوم، ونصلح أي
+   * انحراف بين ما أرسلناه للتاجر وما في قاعدة البيانات.
+   */
+  let codeUsed = String((tenant as any).merchantCodeDisplay || '');
+  if (hash) {
+    const storedHash = String((tenant as any).merchantCodeHash || '');
+    /* نُصلح البصمة فقط عندما تكون مطابقة للنص المستخدم أو غير موجودة */
+    const sameCode = !codeUsed || codeUsed === compact;
+    if (sameCode && storedHash !== hash) {
+      db.setMerchantCode(tenant.id, hash, 'enter_self_heal', compact);
+    }
+    codeUsed = codeUsed || compact;
+  }
+  db.commit();
+
+  const token = issueMerchantSession(tenant.id, String((tenant as any).merchantCodeHash), res);
+  if (!token) return res.status(500).json({ error: 'ISSUE_FAILED', message: 'تعذّر إنشاء الجلسة — أعد المحاولة.' });
+  db.logAudit({
+    tenantId: tenant.id,
+    actorId: 'owner',
+    actorName: tenant.ownerName || tenant.tradeName || 'صاحب المتجر',
+    action: 'MERCHANT_LOGIN',
+    entity: 'Tenant',
+    entityId: tenant.id,
+    details: 'دخول المتجر بكوده (مدخل «متجري» العام)',
+  });
+
+  res.json({
+    success: true,
+    token,
+    tenant: { id: tenant.id, name: tenant.name, tradeName: tenant.tradeName, slug: tenant.slug, city: tenant.city },
+    merchantCode: codeUsed ? codeOnlyMessage(codeUsed) : null,
+    welcomeMessage: welcomeMessage({ code: codeUsed, storeName: tenant.name || tenant.tradeName }),
+  });
 });
 
 apiRouter.post('/auth/merchant/login', (req, res) => {
@@ -5383,9 +5554,8 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
       created: false,
       tenant: existing,
       merchantCode: repeatCode,
-      merchantCodeMessage: repeatCode
-        ? `متجرك مفعّل. كود الدخول هو نفسه: ${repeatCode}`
-        : 'متجرك مفعّل — اطلب كودك من إدارة سند إن فقدته.',
+      merchantCodeMessage: repeatCode ? codeOnlyMessage(repeatCode) : 'متجرك مفعّل — اطلب كودك من إدارة سند إن فقدته.',
+      welcomeMessage: welcomeMessage({ code: repeatCode || '', storeName: existing.name }),
     });
   }
 
@@ -5494,8 +5664,9 @@ apiRouter.post('/tenant-applications/activate', (req, res) => {
     tenant,
     merchantCode: storeAccessCode,
     merchantCodeMessage: storeAccessCode
-      ? `تم تفعيل متجرك — كود الدخول هو نفسه الكود الذي وصلك: ${storeAccessCode}`
+      ? codeOnlyMessage(storeAccessCode)
       : 'تعذّر تجهيز كود الدخول — تواصل مع إدارة سند عبر واتساب.',
+    welcomeMessage: welcomeMessage({ code: storeAccessCode || '', storeName: tenant.name }),
   });
 });
 
@@ -5564,9 +5735,10 @@ apiRouter.post('/admin/tenant-applications/:id/review', adminAuthMiddleware, (re
   res.json({
     success: true,
     application,
+    /* رسالة الواجهة: الكود لوحده عند الموافقة — رسالة الترحيب تُعرض مستقلة */
     message:
       decision === 'approved'
-        ? `تمت الموافقة. كود الدخول: ${application?.activationCode} — قيمة التسجيل ${(application?.registrationFeeSdg || 0).toLocaleString('en-US')} ج.س.`
+        ? codeOnlyMessage(String(application?.activationCode || ''))
         : 'تم رفض الطلب.',
   });
 });
