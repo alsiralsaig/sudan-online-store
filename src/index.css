@@ -300,3 +300,38 @@ textarea::placeholder {
 /* 5) النصوص الصغيرة جداً كانت 9–10px — حد أدنى للقراءة */
 .text-\[9px\] { font-size: 10.5px; }
 .text-\[10px\] { font-size: 11.5px; }
+
+/* 6) البطاقات في الوضع الداكن: كانت .bg-white تُبقى بيضاء بسبب قاعدة (2)
+      فيظهر الرمادي الفاتح على الأبيض = باهت. هنا نُعيدها داكنة ونجبر النصوص
+      الرمادية داخلها على لون فاتح واضح (الوضع الداكن الحقيقي). */
+[data-theme='dark'] .merchant-shell main .bg-white {
+  background-color: #0f172a !important;
+  border-color: #1e293b !important;
+  color: #e2e8f0 !important;
+}
+[data-theme='dark'] .merchant-shell main .bg-white .text-slate-400,
+[data-theme='dark'] .merchant-shell main .bg-white .text-slate-500,
+[data-theme='dark'] .merchant-shell main .bg-white .text-slate-600,
+[data-theme='dark'] .merchant-shell main .bg-white .text-slate-700,
+[data-theme='dark'] .merchant-shell main .bg-white .text-slate-800,
+[data-theme='dark'] .merchant-shell main .bg-white .text-slate-900 {
+  color: #e2e8f0 !important;
+}
+[data-theme='dark'] .merchant-shell main .bg-slate-50,
+[data-theme='dark'] .merchant-shell main .bg-slate-100 {
+  background-color: #0b1220 !important;
+  color: #e2e8f0 !important;
+}
+[data-theme='dark'] .merchant-shell main .bg-slate-50 .text-slate-400,
+[data-theme='dark'] .merchant-shell main .bg-slate-50 .text-slate-500,
+[data-theme='dark'] .merchant-shell main .bg-slate-50 .text-slate-600,
+[data-theme='dark'] .merchant-shell main .bg-slate-100 .text-slate-500,
+[data-theme='dark'] .merchant-shell main .bg-slate-100 .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+/* النصوص الفاتحة جداً داخل الداكن: أفتح قليلاً لتباين أعلى */
+[data-theme='dark'] .merchant-shell main .text-slate-400 { color: #cbd5e1 !important; }
+[data-theme='dark'] .merchant-shell main .text-slate-500 { color: #e2e8f0 !important; }
+/* النص الثانوي على خلفية داكنة (بدون بطاقة) */
+[data-theme='dark'] .merchant-shell p.text-slate-500,
+[data-theme='dark'] .merchant-shell span.text-slate-500 { color: #cbd5e1 !important; }

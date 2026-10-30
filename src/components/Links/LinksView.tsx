@@ -373,7 +373,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                   <div className="space-y-1 pt-1 border-t border-slate-100">
                     {b.items.map((it: any) => (
                       <div key={it.linkId} className="flex items-center justify-between gap-2 text-[10.5px]">
-                        <span className="text-slate-700 truncate">{it.myItemName}</span>
+                        <span className="text-slate-700 truncate">{it.myItemName} <span className="text-slate-500">← عندهم: {it.theirItemName}</span></span>
                         <span className="font-mono text-slate-500 shrink-0">
                           {Number(it.myPriceSdg).toLocaleString('en-US')} → <b className="text-emerald-700">{Number(it.theirPriceSdg).toLocaleString('en-US')}</b> (+{it.marginPercent}%)
                         </span>
@@ -391,7 +391,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
       <div className="rounded-2xl bg-white border border-slate-200 p-3 space-y-2">
         <div className="flex items-center justify-between">
           <h3 className="text-[12.5px] font-black text-slate-800 flex items-center gap-1.5">
-            <Sparkles className="w-4 h-4 text-emerald-700" /> الأصناف المربوطة
+            <Sparkles className="w-4 h-4 text-emerald-700" /> الأصناف المربوطة بي (مصادرها)
           </h3>
           <span className="text-[10.5px] font-bold text-slate-500">
             {totals.count} صنف{totals.manual ? ` • ${totals.manual} معدّل يدوياً` : ''}
@@ -402,7 +402,9 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
           <div className="py-6 text-center text-[11.5px] text-slate-500"><Loader2 className="w-4 h-4 animate-spin inline" /> جارٍ التحميل…</div>
         ) : links.length === 0 ? (
           <p className="py-4 text-center text-[11.5px] text-slate-500">
-            لا توجد أصناف مربوطة بعد — اختر متجراً من الأعلى واربط أول سلعة.
+            {viewer.accountSegment === 'supplier' || viewer.accountSegment === 'wholesaler'
+              ? 'هذا القسم يعرض الأصناف التي ربطتها أنت بمتجر أعلى. أنت الطبقة الأعلى: تابع من ربط ببضاعتك في قسم «من ربط بأصنافي».'
+              : 'لا توجد أصناف مربوطة بعد — اختر متجراً من الأعلى واربط أول سلعة.'}
           </p>
         ) : (
           <div className="space-y-2">
