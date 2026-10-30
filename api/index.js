@@ -817,7 +817,7 @@ function inferColumns(rows) {
 function buildTableDefs(seed) {
   return Object.entries(seed).filter(([, rows]) => Array.isArray(rows)).map(([collection, rows]) => {
     const primaryKey = primaryKeyFor(collection, rows);
-    const columns = inferColumns(rows);
+    const columns = { ...ALWAYS_COLUMNS, ...inferColumns(rows) };
     delete columns[primaryKey];
     return {
       collection,
@@ -831,8 +831,12 @@ function toTableName(collection) {
   return `sanad_${collection.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)}`;
 }
 var q = (identifier) => `"${identifier.replace(/"/g, '""')}"`;
+var ALWAYS_COLUMNS = {
+  accountSegment: "text",
+  isVip: "boolean"
+};
 function ddlStatementsFor(def) {
-  const cols = Object.entries(def.columns).map(
+  const cols = Object.entries({ ...ALWAYS_COLUMNS, ...def.columns }).map(
     ([name, type]) => `  ${q(name)} ${type}`
   );
   const statements = [

@@ -97,7 +97,7 @@ export function buildTableDefs(seed: Record<string, any[]>): TableDef[] {
     .filter(([, rows]) => Array.isArray(rows))
     .map(([collection, rows]) => {
       const primaryKey = primaryKeyFor(collection, rows);
-      const columns = inferColumns(rows);
+      const columns: Record<string, SqlType> = { ...ALWAYS_COLUMNS, ...inferColumns(rows) };
       delete columns[primaryKey];
       // A collection with no rows still needs a stable shape: key-only.
       return {
@@ -115,8 +115,17 @@ export function toTableName(collection: string): string {
 
 const q = (identifier: string) => `"${identifier.replace(/"/g, '""')}"`;
 
+/**
+ * أعمدة تُضمن في كل جدول من أول إنشائه (حتى لو الجدول فاضي في البذرة).
+ * accountSegment/isVip يُكتبان على المتاجر ويجب أن يكونا عمودين فعليين.
+ */
+const ALWAYS_COLUMNS: Record<string, SqlType> = {
+  accountSegment: 'text',
+  isVip: 'boolean',
+};
+
 export function ddlStatementsFor(def: TableDef): string[] {
-  const cols = Object.entries(def.columns).map(
+  const cols = Object.entries({ ...ALWAYS_COLUMNS, ...def.columns }).map(
     ([name, type]) => `  ${q(name)} ${type}`
   );
 
