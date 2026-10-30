@@ -3570,6 +3570,29 @@ apiRouter.get('/admin/tenants', adminAuthMiddleware, (req, res) => {
 });
 
 /** المنصة: تحديد نوع الحساب (قطاعي/جملة/مورد) وتشغيل/إيقاف VIP. */
+/**
+ * حقيقة حيّة: ماذا تُرجع قاعدة البيانات فعلاً لحقول الطبقات؟
+ * (يقرأ صفوف المتاجر/الطلبات مباشرة بدل الذاكرة)
+ */
+apiRouter.get('/diagnostics/segments', async (_req, res) => {
+  try {
+    const { rows: tenantRows } = await query(
+      `SELECT "id", COALESCE(to_jsonb(t)->>'accountSegment', '—') AS segment,
+              COALESCE(to_jsonb(t)->>'isVip', '—') AS vip,
+              COALESCE(t."tradeName", t."name", t."storeName") AS name
+         FROM "sanad_tenants" t ORDER BY t."id" LIMIT 20`,
+    );
+    const { rows: appRows } = await query(
+      `SELECT "id", COALESCE(to_jsonb(t)->>'accountSegment', '—') AS segment,
+              COALESCE(t."storeName", t."name") AS name
+         FROM "sanad_tenant_applications" t ORDER BY t."id" LIMIT 20`,
+    );
+    res.json({ tenants: tenantRows, applications: appRows });
+  } catch (err) {
+    res.status(500).json({ error: 'DIAG_FAILED', message: (err as Error).message });
+  }
+});
+
 apiRouter.post('/admin/tenants/:id/segment', adminAuthMiddleware, (req, res) => {
   const tenant = db.getTenant(req.params.id);
   if (!tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });

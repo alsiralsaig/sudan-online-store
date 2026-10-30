@@ -9194,6 +9194,24 @@ apiRouter.get("/admin/tenants", adminAuthMiddleware, (req, res) => {
   });
   res.json({ tenants: summary });
 });
+apiRouter.get("/diagnostics/segments", async (_req, res) => {
+  try {
+    const { rows: tenantRows } = await query(
+      `SELECT "id", COALESCE(to_jsonb(t)->>'accountSegment', '\u2014') AS segment,
+              COALESCE(to_jsonb(t)->>'isVip', '\u2014') AS vip,
+              COALESCE(t."tradeName", t."name", t."storeName") AS name
+         FROM "sanad_tenants" t ORDER BY t."id" LIMIT 20`
+    );
+    const { rows: appRows } = await query(
+      `SELECT "id", COALESCE(to_jsonb(t)->>'accountSegment', '\u2014') AS segment,
+              COALESCE(t."storeName", t."name") AS name
+         FROM "sanad_tenant_applications" t ORDER BY t."id" LIMIT 20`
+    );
+    res.json({ tenants: tenantRows, applications: appRows });
+  } catch (err) {
+    res.status(500).json({ error: "DIAG_FAILED", message: err.message });
+  }
+});
 apiRouter.post("/admin/tenants/:id/segment", adminAuthMiddleware, (req, res) => {
   const tenant = db.getTenant(req.params.id);
   if (!tenant) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
