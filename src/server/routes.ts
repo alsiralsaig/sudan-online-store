@@ -3584,7 +3584,7 @@ apiRouter.get('/diagnostics/segments', async (_req, res) => {
     );
     const { rows: appRows } = await query(
       `SELECT "id", COALESCE(to_jsonb(t)->>'accountSegment', '—') AS segment,
-              COALESCE(t."storeName", t."name") AS name
+              COALESCE(to_jsonb(t)->>'storeName', to_jsonb(t)->>'name', '—') AS name
          FROM "sanad_tenant_applications" t ORDER BY t."id" LIMIT 20`,
     );
     res.json({ tenants: tenantRows, applications: appRows });
