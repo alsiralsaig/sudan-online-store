@@ -20,6 +20,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   const [error, setError] = useState('');
   const [sources, setSources] = useState<any[]>([]);
   const [viewer, setViewer] = useState<{ accountSegment: string; isVip: boolean }>({ accountSegment: 'retailer', isVip: false });
+  const [platform, setPlatform] = useState<{ wholesalers: number; suppliers: number; retailers: number }>({ wholesalers: 0, suppliers: 0, retailers: 0 });
   const [links, setLinks] = useState<any[]>([]);
   const [incoming, setIncoming] = useState<{ buyers: any[]; totals: { buyers: number; links: number; itemsLinked: number } }>({ buyers: [], totals: { buyers: 0, links: 0, itemsLinked: 0 } });
 
@@ -54,6 +55,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
       ]);
       setSources(src.sources || []);
       setViewer(src.viewer);
+      setPlatform((src as any).platform || { wholesalers: 0, suppliers: 0, retailers: 0 });
       setLinks(lnk.links || []);
       setIncoming(inc as any);
       const ord = await api.getSupplyOrders().catch(() => null);
@@ -299,12 +301,17 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
             </p>
           </div>
         ) : sources.length === 0 ? (
-          <p className="text-[11px] text-slate-500 leading-6">
-            لا توجد متاجر في طبقتك الأعلى بعد.
-            {viewer.accountSegment === 'retailer' && !viewer.isVip
-              ? ' التعامل مع المورد يحتاج باقة VIP — رقِّ اشتراكك من تبويب «الاشتراك والباقات».'
-              : ''}
-          </p>
+          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-1">
+            <p className="text-[11.5px] font-black text-amber-900">لا يوجد متجر يمكنك الربط به الآن</p>
+            <p className="text-[11px] text-amber-900/90 leading-6">
+              السبب: في المنصة الآن <b>{platform.wholesalers}</b> متجر جملة و<b>{platform.suppliers}</b> مورد و<b>{platform.retailers}</b> قطاعي
+              {viewer.accountSegment === 'retailer' && !viewer.isVip ? ' — والتعامل مع المورد يحتاج باقة VIP' : ''}.
+              المتاجر التي لم يُحدَّد نوعها لا تظهر هنا.
+              <br />الحل: خلّي المورد يضيف أصنافه، ثم من <b>لوحة المنصة ← المنشآت</b> صنّف متجره
+              <b> جملة</b> — وسيظهر لك هنا فوراً بعد «تحديث».
+              {viewer.accountSegment === 'retailer' && !viewer.isVip ? ' ولو تريد المورد مباشرة رقِّ حسابك إلى VIP من «الاشتراك والباقات».' : ''}
+            </p>
+          </div>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
             {sources.map((s: any) => (
@@ -365,18 +372,25 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
             <div className="space-y-1.5 max-h-80 overflow-y-auto">
               {catalog.map((p: any) => (
                 <div key={p.id} className={`rounded-xl border p-2 flex items-center gap-2 ${picked?.id === p.id ? 'border-sky-500 bg-sky-50' : 'border-slate-200'}`}>
-                  {p.imageUrl ? (
-                    <img src={p.imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
-                  ) : (
-                    <div className="w-9 h-9 rounded-lg bg-slate-100 shrink-0 flex items-center justify-center text-slate-400 text-[10px]">صنف</div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[11.5px] font-bold text-slate-800 truncate">{p.name}</div>
-                    <div className="text-[10.5px] text-slate-500 font-mono">
-                      {Number(p.sellingPriceSdg).toLocaleString('en-US')} ج.س
-                      {p.expiryDate ? ` • صلاحية ${String(p.expiryDate).slice(0, 10)}` : ''}
+                  <button
+                    type="button"
+                    onClick={() => { if (!p.linked) { setPicked(p); setNote(''); } }}
+                    className="flex items-center gap-2 min-w-0 flex-1 text-right active:opacity-70"
+                    title={p.linked ? 'مربوط بالفعل' : 'اضغط للربط'}
+                  >
+                    {p.imageUrl ? (
+                      <img src={p.imageUrl} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-slate-100 shrink-0 flex items-center justify-center text-slate-400 text-[10px]">صنف</div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11.5px] font-bold text-slate-800 truncate">{p.name}</div>
+                      <div className="text-[10.5px] text-slate-500 font-mono">
+                        {Number(p.sellingPriceSdg).toLocaleString('en-US')} ج.س
+                        {p.expiryDate ? ` • صلاحية ${String(p.expiryDate).slice(0, 10)}` : ''}
+                      </div>
                     </div>
-                  </div>
+                  </button>
                   <div className="shrink-0 flex items-center gap-1">
                     {cart[p.id] ? (
                       <div className="flex items-center gap-1 rounded-lg border border-sky-300 bg-sky-50 px-1">
@@ -393,9 +407,9 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                       <button
                         onClick={() => setQty(p.id, 1)}
                         title="أضف للطلب"
-                        className="rounded-lg border border-slate-300 text-slate-700 p-1.5"
+                        className="rounded-lg border border-sky-400 bg-sky-50 text-sky-800 px-2 py-1.5 text-[10px] font-black flex items-center gap-1"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-3.5 h-3.5" /> طلب
                       </button>
                     )}
                     {p.linked ? (
@@ -620,7 +634,9 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
           <p className="py-4 text-center text-[11.5px] text-slate-500 leading-6">
             لا توجد طلبات بعد. {isupplierSide
               ? 'عندما يطلب منك تاجر توريداً سيظهر هنا للقبول أو الرفض.'
-              : 'اضغط «+» بجانب أي صنف في كتالوج المورد ثم أرسل الطلب.'}
+              : sources.length > 0
+                ? 'افتح متجر الجملة من الأعلى، اضغط «طلب» بجانب كل صنف تريده، ثم «إرسال الطلب».'
+                : 'أول ما يظهر متجر جملة يمكنك الربط به، ستقدر تطلب منه من هنا.'}
           </p>
         ) : (
           <div className="space-y-2">

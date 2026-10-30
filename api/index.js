@@ -7194,7 +7194,17 @@ apiRouter.get("/links/sources", merchantAuthMiddleware, (req, res) => {
     accountSegment: t.accountSegment || "retailer",
     productCount: db.getSchema().products.filter((p) => p.tenantId === t.id && p.isActive !== false).length
   }));
-  res.json({ sources, viewer: { accountSegment: viewer.accountSegment || "retailer", isVip: Boolean(viewer.isVip) } });
+  const allTenants = db.getSchema().tenants.filter((t) => t.status === "active");
+  const countBy = (segment) => allTenants.filter((t) => (t.accountSegment || "retailer") === segment).length;
+  res.json({
+    sources,
+    viewer: { accountSegment: viewer.accountSegment || "retailer", isVip: Boolean(viewer.isVip) },
+    platform: {
+      wholesalers: countBy("wholesaler"),
+      suppliers: countBy("supplier"),
+      retailers: countBy("retailer")
+    }
+  });
 });
 apiRouter.get("/links/catalog/:tenantId", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);

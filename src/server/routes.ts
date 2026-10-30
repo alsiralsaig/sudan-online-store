@@ -1070,7 +1070,19 @@ apiRouter.get('/links/sources', merchantAuthMiddleware, (req, res) => {
       accountSegment: (t as any).accountSegment || 'retailer',
       productCount: db.getSchema().products.filter((p) => p.tenantId === t.id && p.isActive !== false).length,
     }));
-  res.json({ sources, viewer: { accountSegment: viewer.accountSegment || 'retailer', isVip: Boolean(viewer.isVip) } });
+  /* تشخيص مفيد للتاجر: كم متجر جملة/مورد في المنصة أصلاً وبكم صنف */
+  const allTenants = db.getSchema().tenants.filter((t) => t.status === 'active');
+  const countBy = (segment: string) =>
+    allTenants.filter((t) => ((t as any).accountSegment || 'retailer') === segment).length;
+  res.json({
+    sources,
+    viewer: { accountSegment: viewer.accountSegment || 'retailer', isVip: Boolean(viewer.isVip) },
+    platform: {
+      wholesalers: countBy('wholesaler'),
+      suppliers: countBy('supplier'),
+      retailers: countBy('retailer'),
+    },
+  });
 });
 
 /** كتالوج أصناف متجر مصدر (أصناف فقط — بلا أي بيانات عملاء أو مبيعات). */
