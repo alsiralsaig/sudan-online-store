@@ -4558,7 +4558,7 @@ var BROWSER_HEADERS = {
 };
 var SUDANAKHBAR_HOME = "https://www.sudanakhbar.com/business-news/currency-rates-prices";
 var READER = (url) => `https://r.jina.ai/${url}`;
-var fetchViaReader = async (url, timeoutMs = 14e3) => {
+var fetchViaReader = async (url, timeoutMs = 9e3) => {
   try {
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), timeoutMs);
@@ -4645,16 +4645,16 @@ var pickArticleFromPosts = (posts, method, diag) => {
   diag.push({ method, ok: false, detail: "no post with a rate table" });
   return null;
 };
-var fetchSudanAkhbarViaApi = async (diag) => {
-  const queries = ["\u0633\u0639\u0631 \u0627\u0644\u062F\u0648\u0644\u0627\u0631", "\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A", "\u0627\u0644\u0639\u0645\u0644\u0627\u062A"];
+var fetchSudanAkhbarViaApi = async (diag, opts = {}) => {
+  const queries = opts.fast ? ["\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A"] : ["\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A", "\u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0633\u0648\u062F\u0627\u0621", "\u0633\u0639\u0631 \u0627\u0644\u062F\u0648\u0644\u0627\u0631", "\u0627\u0644\u0639\u0645\u0644\u0627\u062A"];
   for (const q2 of queries) {
     try {
-      const url = `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q2)}&per_page=5&_fields=id,date,date_gmt,link,title,content`;
+      const url = `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q2)}&per_page=6&_fields=id,date,date_gmt,link,title,content`;
       let posts = null;
-      for (const attempt of [1, 2]) {
+      for (const attempt of [1]) {
         try {
           const c = new AbortController();
-          const t = setTimeout(() => c.abort(), 8e3);
+          const t = setTimeout(() => c.abort(), 7e3);
           const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
           clearTimeout(t);
           if (res.ok) {
@@ -4666,10 +4666,9 @@ var fetchSudanAkhbarViaApi = async (diag) => {
         } catch (err) {
           diag.push({ method: `wp-json:${q2}#${attempt}`, ok: false, detail: err.name });
         }
-        if (attempt === 1) await new Promise((r) => setTimeout(r, 400));
       }
       if (!posts || !posts.length) {
-        const raw = await fetchViaReader(url, 12e3);
+        const raw = await fetchViaReader(url, 9e3);
         if (raw) {
           const a = raw.indexOf("[");
           const b = raw.lastIndexOf("]");
@@ -4705,8 +4704,20 @@ var fetchSudanAkhbarViaApi = async (diag) => {
         const isBankOnly = /بنوك|مصارف/.test(t) && !/الموازي|السوداء/.test(t);
         return isCurrency && !isBankOnly;
       });
-      const picked = pickArticleFromPosts(currencyPosts.length ? currencyPosts : sorted, `wp-json:${q2}`, diag) || null;
-      if (picked) return picked;
+      const pool2 = (currencyPosts.length ? currencyPosts : sorted).slice(0, 6);
+      const withTables = pool2.map((post) => ({ post, parsed: parseSudanAkhbarArticle(String(post?.content?.rendered || "")) })).filter((x) => x.parsed.rates.length >= 3).sort((a, b) => Date.parse(b.post?.date_gmt || 0) - Date.parse(a.post?.date_gmt || 0));
+      if (withTables.length) {
+        const { post, parsed } = withTables[0];
+        const title = String(post?.title?.rendered || "").replace(/<[^>]+>/g, " ").trim();
+        diag.push({ method: `wp-json:${q2}`, ok: true, detail: `${parsed.rates.length} rates \xB7 ${post?.link || ""}` });
+        return {
+          rates: parsed.rates,
+          publishedAt: post?.date_gmt ? (/* @__PURE__ */ new Date(`${post.date_gmt}Z`)).toISOString() : parsed.publishedAt,
+          title: title || void 0,
+          url: post?.link
+        };
+      }
+      diag.push({ method: `wp-json:${q2}`, ok: false, detail: "no post with a rate table" });
     } catch (err) {
       diag.push({ method: `wp-json:${q2}`, ok: false, detail: err.name });
     }
@@ -4715,7 +4726,7 @@ var fetchSudanAkhbarViaApi = async (diag) => {
 };
 var ARTICLE_TTL_MS = 5 * 60 * 1e3;
 var articleCache = null;
-var fetchSudanAkhbarArticle = async (diag = []) => {
+var fetchSudanAkhbarArticle = async (diag = [], opts = {}) => {
   if (articleCache && Date.now() - articleCache.at < ARTICLE_TTL_MS) {
     if (articleCache.value) diag.push({ method: "cache", ok: true, detail: "article cached" });
     return articleCache.value;
@@ -4724,8 +4735,9 @@ var fetchSudanAkhbarArticle = async (diag = []) => {
     articleCache = { at: Date.now(), value };
     return value;
   };
-  const viaApi = await fetchSudanAkhbarViaApi(diag);
+  const viaApi = await fetchSudanAkhbarViaApi(diag, opts);
   if (viaApi) return store(viaApi);
+  if (opts.fast) return store(await fetchSudanAkhbarViaReader(diag));
   try {
     const c1 = new AbortController();
     const t1 = setTimeout(() => c1.abort(), 9e3);
@@ -4802,8 +4814,8 @@ var fetchLiveRates = async () => {
   }
   return null;
 };
-var fetchSudanAkhbarSnapshot = async (diag = []) => {
-  const article = await fetchSudanAkhbarArticle(diag);
+var fetchSudanAkhbarSnapshot = async (diag = [], opts = { fast: true }) => {
+  const article = await fetchSudanAkhbarArticle(diag, opts);
   if (!article?.rates.length) return null;
   return {
     rates: article.rates.filter((r) => r.parallel !== null && r.parallel >= 100),
@@ -8850,8 +8862,13 @@ apiRouter.put("/storefront-orders/:id/status", merchantAuthMiddleware, (req, res
   res.json({ success: true, order });
 });
 var RATES_REFRESH_HOURS = 6;
+var withTimeout2 = (p, ms) => Promise.race([p, new Promise((resolve) => setTimeout(() => resolve(null), ms))]);
 var refreshLiveRates = async (actorName) => {
-  const snapshot = await fetchLiveRates();
+  const authoritative = await withTimeout2(
+    fetchSudanAkhbarSnapshot([], { fast: true }).catch(() => null),
+    13e3
+  );
+  const snapshot = authoritative?.rates?.length ? authoritative : await fetchLiveRates();
   if (!snapshot) {
     const last = db.getRatesSnapshot();
     return {
@@ -8903,7 +8920,7 @@ apiRouter.get("/currency/parallel-rates", async (_req, res) => {
   }
   const guarded = db.getRatesSnapshot();
   if (!isSudanAkhbarSnapshot(guarded)) {
-    const akhbar = await fetchSudanAkhbarSnapshot().catch(() => null);
+    const akhbar = await withTimeout2(fetchSudanAkhbarSnapshot([], { fast: true }).catch(() => null), 12e3);
     if (akhbar?.rates.length) {
       const { updated } = db.applyLiveRates(akhbar, "\u0627\u0644\u0645\u0635\u062F\u0631 \u0627\u0644\u0645\u0639\u062A\u0645\u062F \u2014 \u0623\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646");
       if (updated > 0) await db.flush({ lock: false }).catch(() => {

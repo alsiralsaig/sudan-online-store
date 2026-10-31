@@ -378,7 +378,7 @@ const SUDANAKHBAR_HOME = 'https://www.sudanakhbar.com/business-news/currency-rat
  */
 const READER = (url: string) => `https://r.jina.ai/${url}`;
 
-const fetchViaReader = async (url: string, timeoutMs = 14000): Promise<string | null> => {
+const fetchViaReader = async (url: string, timeoutMs = 9000): Promise<string | null> => {
   try {
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), timeoutMs);
@@ -495,24 +495,29 @@ const WP_SEARCH = (q: string) =>
 
 /** WordPress REST search — structured content + the article's own date. */
 const fetchSudanAkhbarViaApi = async (
-  diag: SourceDiag[]
+  diag: SourceDiag[],
+  opts: { fast?: boolean } = {}
 ): Promise<{ rates: LiveRate[]; publishedAt?: string; title?: string; url?: string } | null> => {
-  const queries = ['سعر الدولار', 'السوق الموازي', 'العملات'];
+  /* في المسار السريع (تحديث تلقائي داخل طلب HTTP) نجرّب استعلاماً واحداً فقط */
+  /* «السوق الموازي» أولاً: مقالات السوق السوداء هي التي تحمل سعر التداول (10500) */
+  const queries = opts.fast
+    ? ['السوق الموازي']
+    : ['السوق الموازي', 'السوق السوداء', 'سعر الدولار', 'العملات'];
   for (const q of queries) {
     try {
       const url =
         `https://www.sudanakhbar.com/wp-json/wp/v2/posts?search=${encodeURIComponent(q)}` +
-        `&per_page=5&_fields=id,date,date_gmt,link,title,content`;
+        `&per_page=6&_fields=id,date,date_gmt,link,title,content`;
       /*
        * الموقع يرفض طلبات مراكز البيانات (403) بشكل متقطّع، ومعه حجب مؤقت
        * لأي طلب سريع يتكرر. نحاول مرتين مباشرة، ثم مرة عبر القارئ، ثم ننتقل
        * لكلمة بحث أخرى — بدل الاستسلام وعرض أسعار المصدر الآخر فقط.
        */
       let posts: any[] | null = null;
-      for (const attempt of [1, 2]) {
+      for (const attempt of [1]) {
         try {
           const c = new AbortController();
-          const t = setTimeout(() => c.abort(), 8000);
+          const t = setTimeout(() => c.abort(), 7000);
           const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
           clearTimeout(t);
           if (res.ok) {
@@ -524,12 +529,11 @@ const fetchSudanAkhbarViaApi = async (
         } catch (err) {
           diag.push({ method: `wp-json:${q}#${attempt}`, ok: false, detail: (err as Error).name });
         }
-        if (attempt === 1) await new Promise((r) => setTimeout(r, 400));
       }
 
       /* المسار البديل: نفس الـwp-json عبر نسخة القارئ */
       if (!posts || !posts.length) {
-        const raw = await fetchViaReader(url, 12000);
+        const raw = await fetchViaReader(url, 9000);
         if (raw) {
           const a = raw.indexOf('[');
           const b = raw.lastIndexOf(']');
@@ -577,10 +581,29 @@ const fetchSudanAkhbarViaApi = async (
         const isBankOnly = /بنوك|مصارف/.test(t) && !/الموازي|السوداء/.test(t);
         return isCurrency && !isBankOnly;
       });
-      const picked =
-        pickArticleFromPosts(currencyPosts.length ? currencyPosts : sorted, `wp-json:${q}`, diag) ||
-        null;
-      if (picked) return picked;
+      /*
+       * نختار **أحدث** مقال يحوي جدول أسعار حقيقياً (≥3 عملات) وليس جدول بنوك.
+       * الاعتماد على «أول نتيجة» كان يعطي أحياناً مقالاً قديماً أو مقالاً
+       * ناقص الجدول، فتظهر أسعار يوم سابق.
+       */
+      const pool = (currencyPosts.length ? currencyPosts : sorted).slice(0, 6);
+      const withTables = pool
+        .map((post) => ({ post, parsed: parseSudanAkhbarArticle(String(post?.content?.rendered || '')) }))
+        .filter((x) => x.parsed.rates.length >= 3)
+        .sort((a, b) => Date.parse(b.post?.date_gmt || 0) - Date.parse(a.post?.date_gmt || 0));
+
+      if (withTables.length) {
+        const { post, parsed } = withTables[0];
+        const title = String(post?.title?.rendered || '').replace(/<[^>]+>/g, ' ').trim();
+        diag.push({ method: `wp-json:${q}`, ok: true, detail: `${parsed.rates.length} rates · ${post?.link || ''}` });
+        return {
+          rates: parsed.rates,
+          publishedAt: post?.date_gmt ? new Date(`${post.date_gmt}Z`).toISOString() : parsed.publishedAt,
+          title: title || undefined,
+          url: post?.link,
+        };
+      }
+      diag.push({ method: `wp-json:${q}`, ok: false, detail: 'no post with a rate table' });
     } catch (err) {
       diag.push({ method: `wp-json:${q}`, ok: false, detail: (err as Error).name });
     }
@@ -602,7 +625,8 @@ const ARTICLE_TTL_MS = 5 * 60 * 1000;
 let articleCache: { at: number; value: ArticleResult | null } | null = null;
 
 export const fetchSudanAkhbarArticle = async (
-  diag: SourceDiag[] = []
+  diag: SourceDiag[] = [],
+  opts: { fast?: boolean } = {}
 ): Promise<ArticleResult | null> => {
   if (articleCache && Date.now() - articleCache.at < ARTICLE_TTL_MS) {
     if (articleCache.value) diag.push({ method: 'cache', ok: true, detail: 'article cached' });
@@ -613,8 +637,13 @@ export const fetchSudanAkhbarArticle = async (
     return value;
   };
 
-  const viaApi = await fetchSudanAkhbarViaApi(diag);
+  const viaApi = await fetchSudanAkhbarViaApi(diag, opts);
   if (viaApi) return store(viaApi);
+  /*
+   * المسار السريع: لا نجرّب قائمة الأخبار (خطوتان إضافيتان ~20 ثانية) بل
+   * ننتقل مباشرة إلى القارئ — يبقى الطلب داخل حدود مدة الدالة على Vercel.
+   */
+  if (opts.fast) return store(await fetchSudanAkhbarViaReader(diag));
 
   try {
     const c1 = new AbortController();
@@ -715,9 +744,10 @@ export const fetchLiveRates = async (): Promise<LiveRatesSnapshot | null> => {
 
 /** The backup source as a full snapshot (same shape as the primary). */
 export const fetchSudanAkhbarSnapshot = async (
-  diag: SourceDiag[] = []
+  diag: SourceDiag[] = [],
+  opts: { fast?: boolean } = { fast: true }
 ): Promise<LiveRatesSnapshot | null> => {
-  const article = await fetchSudanAkhbarArticle(diag);
+  const article = await fetchSudanAkhbarArticle(diag, opts);
   if (!article?.rates.length) return null;
   return {
     rates: article.rates.filter((r) => r.parallel !== null && (r.parallel as number) >= 100),

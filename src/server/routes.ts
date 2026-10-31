@@ -3156,9 +3156,22 @@ apiRouter.put('/storefront-orders/:id/status', merchantAuthMiddleware, (req, res
 
 const RATES_REFRESH_HOURS = 6;
 
+/** يقيّد أي وعد بمهلة زمنية (حماية من تعليق الطلب حتى 504 على Vercel). */
+const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+  Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+
+
 /** Pulls fresh numbers and applies them; returns what happened. */
 const refreshLiveRates = async (actorName?: string) => {
-  const snapshot = await fetchLiveRates();
+  /*
+   * المصدر المعتمد = أخبار السودان. نحاوله بمهلة قصيرة، ثم سوق السودان احتياطاً،
+   * ولو فشل الاثنان نُبقي آخر أسعار معروفة (بلا استبدال بمصدر أضعف).
+   */
+  const authoritative = await withTimeout(
+    fetchSudanAkhbarSnapshot([], { fast: true }).catch(() => null),
+    13000,
+  );
+  const snapshot = authoritative?.rates?.length ? authoritative : await fetchLiveRates();
   if (!snapshot) {
     const last = db.getRatesSnapshot();
     return {
@@ -3227,7 +3240,7 @@ apiRouter.get('/currency/parallel-rates', async (_req, res) => {
    */
   const guarded = db.getRatesSnapshot();
   if (!isSudanAkhbarSnapshot(guarded)) {
-    const akhbar = await fetchSudanAkhbarSnapshot().catch(() => null);
+    const akhbar = await withTimeout(fetchSudanAkhbarSnapshot([], { fast: true }).catch(() => null), 12000);
     if (akhbar?.rates.length) {
       const { updated } = db.applyLiveRates(akhbar, 'المصدر المعتمد — أخبار السودان');
       if (updated > 0) await db.flush({ lock: false }).catch(() => {});

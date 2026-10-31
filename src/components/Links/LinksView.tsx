@@ -45,6 +45,8 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   /* أسعار السوق الموازي الحيّة: تُستخدم لملء سعر الصرف تلقائياً */
   const [parallelRates, setParallelRates] = useState<Record<string, number>>({});
   const [ratesAt, setRatesAt] = useState<string | null>(null);
+  const [rateSource, setRateSource] = useState<{ name: string; url?: string; marketAt?: string } | null>(null);
+  const [rateDetail, setRateDetail] = useState<Record<string, { buy?: number; sell?: number }>>({});
   const [rateTouched, setRateTouched] = useState(false);
   const [orders, setOrders] = useState<{ incoming: any[]; outgoing: any[]; totals: { incomingPending: number; outgoingPending: number } }>({
     incoming: [], outgoing: [], totals: { incomingPending: 0, outgoingPending: 0 },
@@ -69,6 +71,16 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
       }
       setParallelRates(map);
       setRatesAt(res.snapshot?.fetchedAt || new Date().toISOString());
+      setRateSource({
+        name: String(res.snapshot?.source || ''),
+        url: res.snapshot?.sourceUrl,
+        marketAt: res.snapshot?.sourceUpdatedAt,
+      });
+      const detail: Record<string, { buy?: number; sell?: number }> = {};
+      for (const r of res.snapshot?.rates || []) {
+        detail[String(r.code).toUpperCase()] = { buy: r.buy, sell: r.sell };
+      }
+      setRateDetail(detail);
     } catch {
       /* نبقى على آخر أسعار معروفة */
     }
@@ -565,10 +577,23 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                           placeholder={parallelRates[payCurrency] ? String(Math.round(parallelRates[payCurrency])) : 'مثال: 2500'}
                           className="mt-1 w-full rounded-lg border border-sky-200 px-2 py-1 text-[12px] font-mono font-bold text-slate-900"
                         />
-                        <div className="mt-0.5 text-[9.5px] text-slate-500">
+                        <div className="mt-0.5 text-[9.5px] text-slate-500 leading-relaxed">
                           1 {payCurrency} = {Number(payRate) > 0 ? Number(payRate).toLocaleString('en-US') : '—'} ج.س
+                          {rateDetail[payCurrency]?.buy ? ` (شراء ${Number(rateDetail[payCurrency].buy).toLocaleString('en-US')})` : ''}
                           {ratesAt ? ` • آخر تحديث ${new Date(ratesAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}` : ''}
                         </div>
+                        {rateSource?.name && (
+                          <div className="mt-0.5 flex items-center gap-1 text-[9px] text-slate-500">
+                            <span className="rounded bg-sky-100 px-1 py-0.5 font-bold text-sky-800">
+                              المصدر: {rateSource.name.includes('اخبار السودان') ? 'أخبار السودان' : rateSource.name}
+                            </span>
+                            {rateSource.marketAt && (
+                              <span>
+                                سعر السوق {new Date(rateSource.marketAt).toLocaleDateString('ar-EG', { day: 'numeric', month: 'long' })}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
