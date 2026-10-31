@@ -1047,7 +1047,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </button>
             </div>
 
-            <div className="p-6 space-y-4 text-xs overflow-y-auto">
+            <div className="p-4 sm:p-6 space-y-4 text-xs overflow-y-auto overflow-x-hidden">
               <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 space-y-2">
                 <p className="font-bold text-emerald-600 flex items-center gap-1.5"><Barcode className="w-4 h-4" /> إضافة بالباركود</p>
                 <p className="text-slate-500">امسح أو أدخل الباركود للبحث عن بيانات الصنف في قواعد عامة عبر الإنترنت.</p>
@@ -1163,36 +1163,40 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              {/* صف الأسعار: يلتف على الشاشات الضيقة بدل قص الأرقام */}
+              <div className={canViewCogs ? 'grid grid-cols-2 sm:grid-cols-3 gap-2.5' : 'grid grid-cols-2 gap-2.5'}>
                 {canViewCogs && (
-                <div>
+                <div className="min-w-0">
                   <label className="block font-semibold text-slate-700 mb-1">سعر التكلفة:</label>
                   <input
                     type="number"
                     required
+                    inputMode="numeric"
                     value={newPurchaseCost}
                     onChange={(e) => setNewPurchaseCost(e.target.value)}
-                    className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
+                    className="w-full min-w-0 px-2.5 py-2 font-mono text-[13px] border border-slate-300 rounded-lg"
                   />
                 </div>
                 )}
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">سعر البيع (ج.س):</label>
+                <div className="min-w-0">
+                  <label className="block font-semibold text-slate-700 mb-1 whitespace-nowrap">سعر البيع (ج.س):</label>
                   <input
                     type="number"
                     required
+                    inputMode="numeric"
                     value={newSellingPrice}
                     onChange={(e) => setNewSellingPrice(e.target.value)}
-                    className="w-full px-3 py-2 font-mono font-bold text-emerald-800 border border-slate-300 rounded-lg"
+                    className="w-full min-w-0 px-2.5 py-2 font-mono text-[13px] font-bold text-emerald-800 border border-slate-300 rounded-lg"
                   />
                 </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">حد تنبيه النواقص:</label>
+                <div className="min-w-0 col-span-2 sm:col-span-1">
+                  <label className="block font-semibold text-slate-700 mb-1 whitespace-nowrap">حد تنبيه النواقص:</label>
                   <input
                     type="number"
+                    inputMode="numeric"
                     value={newMinAlert}
                     onChange={(e) => setNewMinAlert(e.target.value)}
-                    className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
+                    className="w-full min-w-0 px-2.5 py-2 font-mono text-[13px] border border-slate-300 rounded-lg"
                   />
                 </div>
               </div>
@@ -1201,9 +1205,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <label className="block font-semibold text-slate-700 mb-1">الرصيد الافتتاحي في هذا الفرع:</label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   value={newInitialStock}
                   onChange={(e) => setNewInitialStock(e.target.value)}
-                  className="w-full px-3 py-2 font-mono border border-slate-300 rounded-lg"
+                  className="w-full px-3 py-2 font-mono text-[14px] border border-slate-300 rounded-lg"
                 />
               </div>
 
@@ -1701,8 +1706,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <label className="block font-semibold text-slate-700 mb-1">
                   أصناف التوريد والكميات المطلوبة ({poItems.length} أصناف):
                 </label>
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-right text-xs">
+                <div className="border border-slate-200 rounded-xl overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-right text-xs">
                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="py-2 px-3">الصنف</th>
@@ -1749,10 +1754,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                                   prev.map((it, i) => (i === idx ? { ...it, unitCostSdg: val } : it))
                                 );
                               }}
-                              className="w-24 px-2 py-1 text-center font-mono font-bold border border-slate-300 rounded"
+                              className="w-24 max-w-full px-2 py-1 text-center font-mono font-bold border border-slate-300 rounded"
                             />
                           </td>
-                          <td className="py-2 px-3 font-mono font-bold text-slate-900">
+                          <td className="py-2 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
                             {(item.orderQuantity * item.unitCostSdg).toLocaleString()} ج.س
                           </td>
                         </tr>
@@ -1763,14 +1768,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </div>
 
               {/* Total Order Summary */}
-              <div className="bg-slate-900 text-white p-3.5 rounded-xl flex items-center justify-between">
+              <div className="bg-slate-900 text-white p-3.5 rounded-xl flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <span className="text-xs text-slate-300 block">إجمالي قيمة أمر الشراء:</span>
                   <span className="text-[11px] text-slate-400">
                     {poItems.reduce((acc, it) => acc + it.orderQuantity, 0)} قطعة / عبوة إجمالية
                   </span>
                 </div>
-                <div className="font-mono text-xl font-bold text-emerald-400">
+                <div className="font-mono text-lg sm:text-xl font-bold text-emerald-400 whitespace-nowrap">
                   {poItems.reduce((acc, it) => acc + it.orderQuantity * it.unitCostSdg, 0).toLocaleString()} ج.س
                 </div>
               </div>
