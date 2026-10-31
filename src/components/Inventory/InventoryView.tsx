@@ -79,13 +79,31 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   /* موردون حقيقيون من المنصة (نفس قواعد الطبقات) بدل أسماء ثابتة في الكود */
   const [platformSuppliers, setPlatformSuppliers] = useState<any[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
+  /* يقرأ متاجر المنصة الحيّة (مورد/جملة) — أي متجر جديد أو تغيير تصنيف يظهر تلقائياً */
+  const loadPlatformSuppliers = React.useCallback(() => {
     api.getLinkSources()
-      .then((res) => { if (!cancelled) setPlatformSuppliers(res.sources || []); })
+      .then((res) => setPlatformSuppliers(res.sources || []))
       .catch(() => {});
-    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    loadPlatformSuppliers();
+    /* تحديث كل دقيقة طول ما الشاشة مفتوحة، وعند عودة التطبيق للمقدمة */
+    const timer = setInterval(loadPlatformSuppliers, 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible') loadPlatformSuppliers(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [loadPlatformSuppliers]);
+
+  /* عند فتح أمر الشراء: نعيد القراءة فوراً حتى لا نعتمد على قائمة قديمة */
+  useEffect(() => {
+    if (isPoModalOpen) loadPlatformSuppliers();
+  }, [isPoModalOpen, loadPlatformSuppliers]);
   const [poInvoiceNo, setPoInvoiceNo] = useState('');
   const [poBranchId, setPoBranchId] = useState(currentBranch?.id || branches[0]?.id || '');
   const [poPaymentStatus, setPoPaymentStatus] = useState<'paid' | 'partial' | 'credit'>('paid');
@@ -390,12 +408,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         unitCostSdg: row.product.purchaseCost,
       },
     ]);
-    /* المورد الافتراضي: أول متجر مورد/جملة حقيقي في المنصة (لا أسماء ثابتة) */
-    setPoSupplier(
-      platformSuppliers.find((src) => src.accountSegment === 'supplier')?.name ||
+    /* المورد الافتراضي: أول متجر مورد حقيقي — ولا يلمس اختيار المستخدم إن كان متجراً قائماً */
+    setPoSupplier((prev) => {
+      const stillExists = platformSuppliers.some((src) => src.name === prev.trim());
+      if (prev.trim() && stillExists) return prev;
+      return (
+        platformSuppliers.find((src) => src.accountSegment === 'supplier')?.name ||
         platformSuppliers[0]?.name ||
-        '',
-    );
+        ''
+      );
+    });
     setPoInvoiceNo(`PO-${Date.now().toString().slice(-6)}`);
     setPoBranchId(selectedBranchId || branches[0]?.id || '');
     setIsPoModalOpen(true);
@@ -1595,6 +1617,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 />
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                   <span className="text-[10px] text-slate-400">متاجر المنصة (توريد):</span>
+                  <button
+                    type="button"
+                    onClick={loadPlatformSuppliers}
+                    className="text-[10px] text-sky-700 font-bold underline"
+                  >
+                    تحديث
+                  </button>
                   {platformSuppliers.length === 0 ? (
                     <span className="text-[10px] text-slate-500">
                       لا يوجد مورد/جملة متاح لحسابك الآن — يُضاف عندما تُصنَّف المتاجر من لوحة المنصة.
