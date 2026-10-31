@@ -7366,6 +7366,27 @@ apiRouter.get("/supply-orders", merchantAuthMiddleware, (req, res) => {
     }
   });
 });
+function parallelRateOf(code) {
+  if (!code || code === "SDG") return { rate: 1, source: "none" };
+  const snap = db.getRatesSnapshot();
+  const live = (snap?.rates || []).find((r) => String(r.code).toUpperCase() === code);
+  const parallel = Number(live?.parallel) || 0;
+  if (parallel > 1) return { rate: parallel, source: "parallel" };
+  const cfg = (db.getSchema().currencies || []).find((c) => c.code === code);
+  const table = Number(cfg?.parallelRate) || Number(cfg?.rateToSdg) || 0;
+  if (table > 1) return { rate: table, source: "table" };
+  return { rate: 1, source: "none" };
+}
+function pickExchangeRate(code, provided) {
+  if (!code || code === "SDG") return 1;
+  const given = Number(provided) || 0;
+  if (given > 1) return given;
+  return parallelRateOf(code).rate;
+}
+function rateSourceFor(code, provided) {
+  if (!code || code === "SDG") return "none";
+  return Number(provided) > 1 ? "manual" : parallelRateOf(code).source;
+}
 apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);
   if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
@@ -7412,7 +7433,13 @@ apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
     note: typeof note === "string" ? note.slice(0, 400) : void 0,
     paymentMethod: ["cash", "bankak", "bank_transfer", "credit"].includes(String(paymentMethod)) ? paymentMethod : "cash",
     paymentCurrency: String(paymentCurrency || "SDG").toUpperCase(),
-    paymentExchangeRate: Number(paymentExchangeRate) > 0 ? Number(paymentExchangeRate) : 1,
+    /**
+     * سعر الصرف: لو العميل أرسل سعراً صريحاً (>1) نستخدمه، وإلا نأخذ
+     * سعر السوق الموازي في لحظة إنشاء الطلب تلقائياً (ولو المصدر غير متاح
+     * نرجع لسعر جدول العملات ثم 1).
+     */
+    paymentExchangeRate: pickExchangeRate(String(paymentCurrency || "SDG").toUpperCase(), paymentExchangeRate),
+    paymentRateSource: rateSourceFor(String(paymentCurrency || "SDG").toUpperCase(), paymentExchangeRate),
     createdAt: now,
     updatedAt: now
   };

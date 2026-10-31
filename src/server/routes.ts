@@ -1302,6 +1302,37 @@ apiRouter.get('/supply-orders', merchantAuthMiddleware, (req, res) => {
 });
 
 /** إرسال طلب توريد إلى مورد/جملة أعلى مني فقط. */
+/**
+ * سعر الصرف المستخدم في أوامر التوريد والفواتير.
+ * إن لم يُدخل المستخدم سعراً (فارغ/0/1) نأخذ **سعر السوق الموازي** لحظة الإنشاء:
+ *   1) لقطة أسعار السوق الموازي المخزّنة (تُحدَّث من المصادر العامة).
+ *   2) جدول العملات (rateSource='parallel' أو rateToSdg).
+ *   3) 1 كحل أخير مع تعليم المصدر.
+ */
+function parallelRateOf(code: string): { rate: number; source: 'parallel' | 'table' | 'none' } {
+  if (!code || code === 'SDG') return { rate: 1, source: 'none' };
+  const snap = db.getRatesSnapshot();
+  const live = (snap?.rates || []).find((r: any) => String(r.code).toUpperCase() === code);
+  const parallel = Number(live?.parallel) || 0;
+  if (parallel > 1) return { rate: parallel, source: 'parallel' };
+  const cfg = (db.getSchema().currencies || []).find((c: any) => c.code === code);
+  const table = Number((cfg as any)?.parallelRate) || Number((cfg as any)?.rateToSdg) || 0;
+  if (table > 1) return { rate: table, source: 'table' };
+  return { rate: 1, source: 'none' };
+}
+
+function pickExchangeRate(code: string, provided: any): number {
+  if (!code || code === 'SDG') return 1;
+  const given = Number(provided) || 0;
+  if (given > 1) return given;
+  return parallelRateOf(code).rate;
+}
+
+function rateSourceFor(code: string, provided: any): 'manual' | 'parallel' | 'table' | 'none' {
+  if (!code || code === 'SDG') return 'none';
+  return Number(provided) > 1 ? 'manual' : parallelRateOf(code).source;
+}
+
 apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant((req as AuthenticatedRequest).tenantId);
   if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
@@ -1356,7 +1387,13 @@ apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
       ? (paymentMethod as any)
       : 'cash',
     paymentCurrency: String(paymentCurrency || 'SDG').toUpperCase(),
-    paymentExchangeRate: Number(paymentExchangeRate) > 0 ? Number(paymentExchangeRate) : 1,
+    /**
+     * سعر الصرف: لو العميل أرسل سعراً صريحاً (>1) نستخدمه، وإلا نأخذ
+     * سعر السوق الموازي في لحظة إنشاء الطلب تلقائياً (ولو المصدر غير متاح
+     * نرجع لسعر جدول العملات ثم 1).
+     */
+    paymentExchangeRate: pickExchangeRate(String(paymentCurrency || 'SDG').toUpperCase(), paymentExchangeRate),
+    paymentRateSource: rateSourceFor(String(paymentCurrency || 'SDG').toUpperCase(), paymentExchangeRate),
     createdAt: now,
     updatedAt: now,
   };

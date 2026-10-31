@@ -42,10 +42,51 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   const [payMethod, setPayMethod] = useState<'cash' | 'bankak' | 'bank_transfer' | 'credit'>('cash');
   const [payCurrency, setPayCurrency] = useState('SDG');
   const [payRate, setPayRate] = useState('1');
+  /* أسعار السوق الموازي الحيّة: تُستخدم لملء سعر الصرف تلقائياً */
+  const [parallelRates, setParallelRates] = useState<Record<string, number>>({});
+  const [ratesAt, setRatesAt] = useState<string | null>(null);
+  const [rateTouched, setRateTouched] = useState(false);
   const [orders, setOrders] = useState<{ incoming: any[]; outgoing: any[]; totals: { incomingPending: number; outgoingPending: number } }>({
     incoming: [], outgoing: [], totals: { incomingPending: 0, outgoingPending: 0 },
   });
   const isupplierSide = viewer.accountSegment === 'supplier' || viewer.accountSegment === 'wholesaler';
+
+  /* أسعار السوق الموازي: عند فتح الشاشة وكل دقيقة، ووقت إرسال الطلب */
+  const loadParallelRates = useCallback(async () => {
+    try {
+      const res = await api.getParallelRates();
+      const map: Record<string, number> = { SDG: 1 };
+      for (const r of res.snapshot?.rates || []) {
+        const v = Number(r?.parallel) || 0;
+        if (v > 1) map[String(r.code).toUpperCase()] = v;
+      }
+      for (const c of (res as any).currencies || []) {
+        const code = String(c?.code || '').toUpperCase();
+        if (!map[code]) {
+          const v = Number(c?.parallelRate) || Number(c?.rateToSdg) || 0;
+          if (v > 1) map[code] = v;
+        }
+      }
+      setParallelRates(map);
+      setRatesAt(res.snapshot?.fetchedAt || new Date().toISOString());
+    } catch {
+      /* نبقى على آخر أسعار معروفة */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadParallelRates();
+    const timer = setInterval(() => { void loadParallelRates(); }, 60 * 1000);
+    return () => clearInterval(timer);
+  }, [loadParallelRates]);
+
+  /* أي تغيير في العملة يعبّي سعر السوق الموازي تلقائياً (إلا لو عدّله المستخدم يدوياً) */
+  useEffect(() => {
+    if (payCurrency === 'SDG') { setPayRate('1'); setRateTouched(false); return; }
+    if (rateTouched) return;
+    const market = parallelRates[payCurrency];
+    if (market && market > 1) setPayRate(String(Math.round(market)));
+  }, [payCurrency, parallelRates, rateTouched]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -216,7 +257,12 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
         note: orderNote.trim() || undefined,
         paymentMethod: payMethod,
         paymentCurrency: payCurrency,
-        paymentExchangeRate: Number(payRate) || 1,
+        paymentExchangeRate:
+          payCurrency === 'SDG'
+            ? 1
+            : Number(payRate) > 1
+            ? Number(payRate)
+            : Math.round(parallelRates[payCurrency] || 1),
       } as any);
       setNote(res.message || 'تم إرسال الطلب.');
       clearCart();
@@ -443,7 +489,14 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                     <span className="text-[11.5px] font-black text-sky-900 flex items-center gap-1.5">
                       <ShoppingCart className="w-3.5 h-3.5" /> طلب توريد: {cartLines.length} صنف
                     </span>
-                    <span className="text-[12px] font-black text-sky-900">{cartTotal.toLocaleString('en-US')} ج.س</span>
+                    <span className="text-[12px] font-black text-sky-900">
+                      {cartTotal.toLocaleString('en-US')} ج.س
+                      {payCurrency !== 'SDG' && Number(payRate) > 1 && (
+                        <span className="block text-[10px] font-bold text-emerald-800 text-left">
+                          ≈ {(cartTotal / Number(payRate)).toLocaleString('en-US', { maximumFractionDigits: 2 })} {payCurrency}
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <div className="space-y-1">
                     {cartLines.map((l) => (
@@ -483,16 +536,40 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                       </select>
                     </label>
                     {payCurrency !== 'SDG' && (
-                      <label className="text-[10px] font-black text-sky-900 col-span-2">
-                        سعر الصرف للجنيه السوداني
+                      <div className="col-span-2 rounded-lg border border-sky-300 bg-white p-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-black text-sky-900">
+                            سعر الصرف للجنيه السوداني
+                            {!rateTouched && parallelRates[payCurrency] ? (
+                              <span className="mr-1 rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-black text-emerald-800">
+                                السوق الموازي تلقائي
+                              </span>
+                            ) : (
+                              <span className="mr-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-black text-amber-800">
+                                إدخال يدوي
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => { setRateTouched(false); void loadParallelRates(); }}
+                            className="text-[9.5px] font-black text-sky-700 underline"
+                          >
+                            تحديث السعر
+                          </button>
+                        </div>
                         <input
                           value={payRate}
-                          onChange={(e) => setPayRate(e.target.value.replace(/[^\d.]/g, ''))}
+                          onChange={(e) => { setRateTouched(true); setPayRate(e.target.value.replace(/[^\d.]/g, '')); }}
                           inputMode="decimal"
-                          placeholder="مثال: 2500"
-                          className="mt-0.5 w-full rounded-lg border border-sky-300 px-2 py-1 text-[11px] font-mono"
+                          placeholder={parallelRates[payCurrency] ? String(Math.round(parallelRates[payCurrency])) : 'مثال: 2500'}
+                          className="mt-1 w-full rounded-lg border border-sky-200 px-2 py-1 text-[12px] font-mono font-bold text-slate-900"
                         />
-                      </label>
+                        <div className="mt-0.5 text-[9.5px] text-slate-500">
+                          1 {payCurrency} = {Number(payRate) > 0 ? Number(payRate).toLocaleString('en-US') : '—'} ج.س
+                          {ratesAt ? ` • آخر تحديث ${new Date(ratesAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                        </div>
+                      </div>
                     )}
                   </div>
                   <textarea

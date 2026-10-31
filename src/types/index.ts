@@ -557,6 +557,8 @@ export interface SupplyOrder {
   paymentMethod?: 'cash' | 'bankak' | 'bank_transfer' | 'credit';
   paymentCurrency?: string;
   paymentExchangeRate?: number;
+  /** مصدر سعر الصرف: سوق موازي لحظة الإنشاء / جدول العملات / إدخال يدوي */
+  paymentRateSource?: 'manual' | 'parallel' | 'table' | 'none';
   /* فاتورة المشتريات التي تُنشأ تلقائياً عند التسليم + وثيقة المورد */
   purchaseId?: string;
   invoiceNumber?: string;
