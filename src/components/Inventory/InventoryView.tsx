@@ -390,14 +390,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         unitCostSdg: row.product.purchaseCost,
       },
     ]);
+    /* المورد الافتراضي: أول متجر مورد/جملة حقيقي في المنصة (لا أسماء ثابتة) */
     setPoSupplier(
-      row.product.category.includes('سكر') || row.product.name.includes('سكر')
-        ? 'شركة سكر كنانة المحدودة'
-        : row.product.name.includes('سيقا') || row.product.category.includes('تموينية')
-        ? 'مجموعة سيقا للسلع الغذائية'
-        : row.product.category.includes('شاي') || row.product.name.includes('شاي')
-        ? 'شركة الغزالتين للشاي'
-        : 'شركة التوريدات الوطنية المعتمدة'
+      platformSuppliers.find((src) => src.accountSegment === 'supplier')?.name ||
+        platformSuppliers[0]?.name ||
+        '',
     );
     setPoInvoiceNo(`PO-${Date.now().toString().slice(-6)}`);
     setPoBranchId(selectedBranchId || branches[0]?.id || '');
