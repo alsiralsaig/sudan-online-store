@@ -385,6 +385,22 @@ export const CentralAdminView: React.FC = () => {
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-900">{t.name}</div>
                       <div className="text-[11px] text-slate-500">{t.tradeName}</div>
+                      {/* نوع النشاط — يظهر لتجار الجملة في قائمة الموردين */}
+                      <input
+                        defaultValue={t.businessType || ''}
+                        placeholder="نوع النشاط (بقالات، ملابس...)"
+                        onBlur={async (e) => {
+                          const value = e.target.value.trim();
+                          if (value === (t.businessType || '')) return;
+                          try {
+                            await api.setTenantSegment(t.id, undefined, undefined, value);
+                            loadAll();
+                          } catch (err: any) {
+                            alert('تعذّر حفظ نوع النشاط: ' + (err.message || ''));
+                          }
+                        }}
+                        className="mt-1 w-36 rounded-lg border border-slate-300 px-1.5 py-0.5 text-[10.5px] text-slate-700"
+                      />
                     </td>
                     <td className="py-3 px-4 font-mono text-slate-700">
                       <div>{t.city}</div>

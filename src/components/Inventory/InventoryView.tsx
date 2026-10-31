@@ -25,9 +25,11 @@ import {
   Video,
   Loader2,
   Camera,
+  ChevronDown,
 } from 'lucide-react';
 import type { Product, Branch, BranchInventory, StockMovement } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
+import { PRODUCT_UNITS, mergeUnit } from '../../lib/units.ts';
 import { InventoryAuditModal } from './InventoryAuditModal.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
 import { LiveCameraSheet } from '../Common/LiveCameraSheet.tsx';
@@ -126,6 +128,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newBarcode, setNewBarcode] = useState('');
   const [newCategory, setNewCategory] = useState('المواد التموينية والأساسية');
   const [newUnit, setNewUnit] = useState('حبة');
+  /* الوحدات: قائمة جاهزة + أي وحدة يضيفها المستخدم */
+  const [unitList, setUnitList] = useState<string[]>(PRODUCT_UNITS);
+  const [customUnit, setCustomUnit] = useState('');
+  const [showUnitPicker, setShowUnitPicker] = useState(false);
   const [newPurchaseCost, setNewPurchaseCost] = useState('10000');
   const [newCostCurrency, setNewCostCurrency] = useState('SDG');
   const [newSellingPrice, setNewSellingPrice] = useState('12500');
@@ -1092,15 +1098,57 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg"
                   />
                 </div>
-                <div>
+                <div className="relative">
                   <label className="block font-semibold text-slate-700 mb-1">الوحدة:</label>
-                  <input
-                    type="text"
-                    value={newUnit}
-                    onChange={(e) => setNewUnit(e.target.value)}
-                    placeholder="مثال: حبة / باكت / كرتونة"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowUnitPicker((v) => !v)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-right flex items-center justify-between"
+                  >
+                    <span className={newUnit ? 'text-slate-800' : 'text-slate-400'}>{newUnit || 'اختر الوحدة'}</span>
+                    <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${showUnitPicker ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {showUnitPicker && (
+                    <div className="absolute z-30 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-xl">
+                      <div className="max-h-48 overflow-y-auto p-1">
+                        {unitList.map((u) => (
+                          <button
+                            key={u}
+                            type="button"
+                            onClick={() => { setNewUnit(u); setShowUnitPicker(false); }}
+                            className={`w-full text-right px-3 py-1.5 rounded-lg text-[12.5px] ${
+                              newUnit === u ? 'bg-emerald-600 text-white font-bold' : 'hover:bg-slate-100 text-slate-700'
+                            }`}
+                          >
+                            {u}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="border-t border-slate-200 p-1.5 flex gap-1.5">
+                        <input
+                          value={customUnit}
+                          onChange={(e) => setCustomUnit(e.target.value)}
+                          placeholder="وحدة أخرى..."
+                          className="flex-1 px-2 py-1.5 text-[12px] border border-slate-300 rounded-lg"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const v = customUnit.trim();
+                            if (!v) return;
+                            setUnitList((prev) => mergeUnit(prev, v));
+                            setNewUnit(v);
+                            setCustomUnit('');
+                            setShowUnitPicker(false);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-sky-600 text-white text-[12px] font-bold"
+                        >
+                          إضافة
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

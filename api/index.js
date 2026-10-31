@@ -7268,6 +7268,10 @@ apiRouter.get("/links/sources", merchantAuthMiddleware, (req, res) => {
     name: t.tradeName || t.name,
     city: t.city,
     accountSegment: t.accountSegment || "retailer",
+    /* نوع النشاط: من المتجر نفسه، وإلا من طلب التسجيل المعتمد بنفس الاسم */
+    businessType: t.businessType || db.getSchema().tenantApplications?.find(
+      (a) => a.tenantId && a.tenantId === t.id || a.storeName && (a.storeName === (t.tradeName || t.name) || a.storeName === t.name)
+    )?.businessType || "",
     productCount: db.getSchema().products.filter((p) => p.tenantId === t.id && p.isActive !== false).length
   }));
   const allTenants = db.getSchema().tenants.filter((t) => t.status === "active");
@@ -9456,6 +9460,10 @@ apiRouter.get("/admin/tenants", adminAuthMiddleware, (req, res) => {
     const { merchantCodeHash: merchantCodeHash2, ...safe } = t;
     return {
       ...safe,
+      /* نوع النشاط: من المتجر، وإلا من طلب التسجيل المعتمد بنفس الاسم */
+      businessType: t.businessType || schema.tenantApplications?.find(
+        (a) => a.tenantId && a.tenantId === t.id || a.storeName && (a.storeName === (t.tradeName || t.name) || a.storeName === t.name)
+      )?.businessType || "",
       hasMerchantCode: !!merchantCodeHash2,
       /*
        * الكود نفسه يُعاد للمنصة دائماً (لو مُخزَّن) حتى لا يضيع: التاجر يطلبه
@@ -9496,6 +9504,7 @@ apiRouter.post("/admin/tenants/:id/segment", adminAuthMiddleware, (req, res) => 
   if (!tenant) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   const segment = String(req.body?.accountSegment || "").trim();
   const vip = req.body?.isVip;
+  const businessType = String(req.body?.businessType || "").trim();
   if (segment) {
     if (!["supplier", "wholesaler", "retailer"].includes(segment)) {
       return res.status(400).json({ error: "BAD_SEGMENT", message: "\u0627\u0644\u0646\u0648\u0639 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 \u0645\u0648\u0631\u062F \u0623\u0648 \u062C\u0645\u0644\u0629 \u0623\u0648 \u0642\u0637\u0627\u0639\u064A." });
@@ -9503,6 +9512,7 @@ apiRouter.post("/admin/tenants/:id/segment", adminAuthMiddleware, (req, res) => 
     tenant.accountSegment = segment;
   }
   if (typeof vip === "boolean") tenant.isVip = vip;
+  if (businessType) tenant.businessType = businessType;
   db.commit();
   db.logAudit({
     tenantId: tenant.id,
@@ -9519,7 +9529,8 @@ apiRouter.post("/admin/tenants/:id/segment", adminAuthMiddleware, (req, res) => 
       id: tenant.id,
       name: tenant.name,
       accountSegment: tenant.accountSegment || "retailer",
-      isVip: Boolean(tenant.isVip)
+      isVip: Boolean(tenant.isVip),
+      businessType: tenant.businessType || ""
     }
   });
 });

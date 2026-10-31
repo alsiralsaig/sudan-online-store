@@ -1165,6 +1165,17 @@ apiRouter.get('/links/sources', merchantAuthMiddleware, (req, res) => {
       name: t.tradeName || t.name,
       city: t.city,
       accountSegment: (t as any).accountSegment || 'retailer',
+      /* نوع النشاط: من المتجر نفسه، وإلا من طلب التسجيل المعتمد بنفس الاسم */
+      businessType:
+        (t as any).businessType ||
+        db
+          .getSchema()
+          .tenantApplications?.find(
+            (a: any) =>
+              (a.tenantId && a.tenantId === t.id) ||
+              (a.storeName && (a.storeName === (t.tradeName || t.name) || a.storeName === t.name)),
+          )?.businessType ||
+        '',
       productCount: db.getSchema().products.filter((p) => p.tenantId === t.id && p.isActive !== false).length,
     }));
   /* تشخيص مفيد للتاجر: كم متجر جملة/مورد في المنصة أصلاً وبكم صنف */
@@ -3899,6 +3910,15 @@ apiRouter.get('/admin/tenants', adminAuthMiddleware, (req, res) => {
     const { merchantCodeHash, ...safe } = t as any;
     return {
       ...safe,
+      /* نوع النشاط: من المتجر، وإلا من طلب التسجيل المعتمد بنفس الاسم */
+      businessType:
+        (t as any).businessType ||
+        schema.tenantApplications?.find(
+          (a: any) =>
+            (a.tenantId && a.tenantId === t.id) ||
+            (a.storeName && (a.storeName === (t.tradeName || t.name) || a.storeName === t.name)),
+        )?.businessType ||
+        '',
       hasMerchantCode: !!merchantCodeHash,
       /*
        * الكود نفسه يُعاد للمنصة دائماً (لو مُخزَّن) حتى لا يضيع: التاجر يطلبه
@@ -3947,6 +3967,7 @@ apiRouter.post('/admin/tenants/:id/segment', adminAuthMiddleware, (req, res) => 
 
   const segment = String(req.body?.accountSegment || '').trim();
   const vip = req.body?.isVip;
+  const businessType = String(req.body?.businessType || '').trim();
 
   if (segment) {
     if (!['supplier', 'wholesaler', 'retailer'].includes(segment)) {
@@ -3955,6 +3976,7 @@ apiRouter.post('/admin/tenants/:id/segment', adminAuthMiddleware, (req, res) => 
     (tenant as any).accountSegment = segment;
   }
   if (typeof vip === 'boolean') (tenant as any).isVip = vip;
+  if (businessType) (tenant as any).businessType = businessType;
 
   db.commit();
   db.logAudit({
@@ -3973,6 +3995,7 @@ apiRouter.post('/admin/tenants/:id/segment', adminAuthMiddleware, (req, res) => 
       name: tenant.name,
       accountSegment: (tenant as any).accountSegment || 'retailer',
       isVip: Boolean((tenant as any).isVip),
+      businessType: (tenant as any).businessType || '',
     },
   });
 });

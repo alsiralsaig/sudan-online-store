@@ -445,11 +445,12 @@ class ApiClient {
   public async setTenantSegment(
     tenantId: string,
     accountSegment?: 'retailer' | 'wholesaler' | 'supplier',
-    isVip?: boolean
+    isVip?: boolean,
+    businessType?: string
   ): Promise<{ success: boolean; tenant: any }> {
     return this.request(`/admin/tenants/${encodeURIComponent(tenantId)}/segment`, {
       method: 'POST',
-      body: JSON.stringify({ accountSegment, isVip }),
+      body: JSON.stringify({ accountSegment, isVip, businessType }),
     });
   }
 

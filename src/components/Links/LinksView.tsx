@@ -332,6 +332,10 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                     {segmentLabel(s.accountSegment)}
                   </span>
                 </div>
+                <div className="text-[10.5px] text-slate-500 mt-0.5">
+                  {/* بخط صغير تحت اسم المتجر: نوع النشاط */}
+                  <span className="font-bold text-slate-600">{s.businessType || 'نشاط غير محدد'}</span>
+                </div>
                 <div className="text-[10.5px] text-slate-500 mt-1 flex items-center gap-2">
                   <span>{s.city || '—'}</span>
                   <span>•</span>

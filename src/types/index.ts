@@ -39,6 +39,8 @@ export interface Tenant {
   accountSegment?: AccountSegment;
   /** باقة VIP: تفتح للقطاعي التعامل مع المورد مباشرة */
   isVip?: boolean;
+  /** نوع النشاط التجاري (بقالات، ملابس، مستلزمات...) — يُعرض بخط صغير تحت اسم المتجر */
+  businessType?: string;
   status: TenantStatus;
   subscriptionPlanId: string;
   subscriptionExpiresAt: string;
