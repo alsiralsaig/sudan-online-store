@@ -8615,7 +8615,10 @@ apiRouter.get("/storefront/:slug", (req, res) => {
     return res.status(404).json({ error: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u062A\u0627\u062D \u0623\u0648 \u0642\u064A\u062F \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0629" });
   }
   if ((tenant.accountSegment || "retailer") !== "retailer") {
-    return res.status(404).json({ error: "\u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631 \u0645\u062E\u0635\u0635 \u0644\u0628\u064A\u0639 \u0627\u0644\u062C\u0645\u0644\u0629/\u0627\u0644\u062A\u0648\u0631\u064A\u062F \u0648\u0644\u064A\u0633 \u0644\u0644\u062C\u0645\u0647\u0648\u0631" });
+    return res.status(403).json({
+      error: "VIP_REQUIRED",
+      message: "\u0627\u0644\u0645\u0639\u0631\u0648\u0636\u0627\u062A \u0645\u062A\u0627\u062D\u0629 \u0644\u0639\u0645\u0644\u0627\u0621 VIP \u2014 \u0631\u0642\u0650\u0651 \u062D\u0633\u0627\u0628\u0643 \u0625\u0644\u0649 VIP \u0644\u062A\u062A\u0645\u0643\u0646 \u0645\u0646 \u0645\u0634\u0627\u0647\u062F\u0629 \u0627\u0644\u0645\u0639\u0631\u0648\u0636\u0627\u062A"
+    });
   }
   const products = db.getSchema().products.filter((p) => p.tenantId === tenant.id && p.isActive !== false).map((p) => ({
     id: p.id,

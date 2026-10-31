@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, Loader2, MessageCircle, Package, MapPin, Phone, Store } from 'lucide-react';
+import { ArrowRight, Loader2, MessageCircle, Package, MapPin, Phone, Store, Sparkles } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 import { telHref, waHref } from '../../lib/contact.ts';
 
@@ -104,7 +104,24 @@ export const ClientMerchantStoreView: React.FC<Props> = ({ slug, fallbackName, o
             <Loader2 className="w-4 h-4 animate-spin" /> جاري تحميل بضاعة المتجر…
           </div>
         ) : error ? (
-          <div className="rounded-2xl bg-white border border-red-200 p-6 text-center text-xs text-red-700">{error}</div>
+          <div className="rounded-2xl bg-gradient-to-b from-sky-50 to-white border border-sky-200 p-5 text-center space-y-2">
+            <div className="w-12 h-12 rounded-full bg-sky-100 mx-auto flex items-center justify-center">
+              <Sparkles className="w-6 h-6 text-sky-700" />
+            </div>
+            <p className="text-[14px] font-black text-sky-900">
+              {/VIP|جملة|التوريد/.test(error) ? 'هذا المتجر للمتاجر فقط' : 'المعروضات متاحة لعملاء VIP'}
+            </p>
+            <p className="text-[11.5px] text-slate-700 leading-6">
+              عروض هذا المتجر تُفتح لحسابات <b>VIP</b>. رقِّ حسابك إلى VIP لتتمكن من مشاهدة المعروضات وإرسال الطلبات مباشرة.
+            </p>
+            <button
+              type="button"
+              onClick={onBack}
+              className="mt-1 rounded-xl bg-sky-700 text-white px-4 py-2 text-[12px] font-black"
+            >
+              رجوع للرئيسية
+            </button>
+          </div>
         ) : products.length === 0 ? (
           <div className="rounded-2xl bg-white border border-slate-200 p-6 text-center space-y-2">
             <Package className="w-8 h-8 text-slate-300 mx-auto" />

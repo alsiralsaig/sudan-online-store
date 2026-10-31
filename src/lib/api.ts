@@ -904,7 +904,12 @@ class ApiClient {
   /* Storefront */
   public async getStorefront(slug: string): Promise<{ store: any; branches: any[]; products: any[] }> {
     const res = await fetch(`/api/storefront/${slug}`);
-    if (!res.ok) throw new Error('المتجر غير متاح');
+    if (!res.ok) {
+      /* نُبقي رسالة الخادم (VIP/جملة/قيد المراجعة) حتى تظهر للمستخدم كما هي */
+      const body = await res.json().catch(() => null);
+      const msg = (body && (body.error || body.message)) || 'المتجر غير متاح';
+      throw new Error(msg === 'المتجر غير متاح أو قيد المراجعة' ? 'المعروضات متاحة لعملاء VIP — رقِّ حسابك إلى VIP لتتمكن من مشاهدة المعروضات' : msg);
+    }
     return res.json();
   }
 

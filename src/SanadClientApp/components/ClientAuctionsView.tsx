@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Gavel, Plus, X, ImagePlus, Video, Trash2, Clock, Trophy, RefreshCw, Sparkles,
+  Gavel, Plus, X, ImagePlus, Video, Camera, Trash2, Clock, Trophy, RefreshCw, Sparkles,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 
@@ -60,6 +60,16 @@ const fileToDataUrl = (file: File, maxSide = 900): Promise<string> =>
       img.onerror = () => reject(new Error('image'));
       img.src = String(reader.result);
     };
+    reader.onerror = () => reject(new Error('read'));
+    reader.readAsDataURL(file);
+  });
+
+/** فيديو → data URL (بحد أقصى ~8 ميجا) */
+const fileToVideoDataUrl = (file: File, maxBytes = 8 * 1024 * 1024): Promise<string> =>
+  new Promise((resolve, reject) => {
+    if (file.size > maxBytes) return reject(new Error('الفيديو كبير — اختار أقل من 8 ميجا'));
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(new Error('read'));
     reader.readAsDataURL(file);
   });
@@ -284,8 +294,24 @@ const CreateAuctionModal: React.FC<{
   const [hours, setHours] = useState('24');
   const [images, setImages] = useState<string[]>([]);
   const [videoUrl, setVideoUrl] = useState('');
+  /* زر واحد يفتح اختيار: تصوير بالكاميرا أو اختيار من الاستوديو (صور أو فيديو) */
+  const [mediaMenu, setMediaMenu] = useState(false);
+  const cameraInput = useRef<HTMLInputElement | null>(null);
+  const galleryInput = useRef<HTMLInputElement | null>(null);
+  const videoInput = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  const addVideo = async (file: File | null | undefined) => {
+    if (!file) return;
+    try {
+      const encoded = await fileToVideoDataUrl(file);
+      setVideoUrl(encoded);
+      setError('');
+    } catch (err: any) {
+      setError(err.message || 'تعذّر إضافة الفيديو');
+    }
+  };
 
   const addImages = async (files: FileList | null) => {
     if (!files) return;
@@ -414,9 +440,21 @@ const CreateAuctionModal: React.FC<{
             />
           </Field>
 
-          {/* صور متعددة */}
+          {/* الصور والفيديو: زر واحد يفتح الخيارات */}
           <div>
-            <p className="text-[11px] font-bold text-slate-700 mb-1">صور المزاد (حتى 6)</p>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[11px] font-bold text-slate-700">
+                صور المزاد ({images.length}/6) {videoUrl ? '• فيديو مرفق ✓' : ''}
+              </p>
+              <button
+                type="button"
+                onClick={() => setMediaMenu(true)}
+                className="rounded-lg bg-sky-600 text-white px-2.5 py-1 text-[11px] font-black flex items-center gap-1"
+              >
+                <ImagePlus className="w-3.5 h-3.5" /> إضافة صورة/فيديو
+              </button>
+            </div>
+
             <div className="flex flex-wrap gap-2">
               {images.map((src, i) => (
                 <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200">
@@ -430,35 +468,90 @@ const CreateAuctionModal: React.FC<{
                   </button>
                 </div>
               ))}
-              {images.length < 6 && (
-                <label className="w-16 h-16 rounded-lg border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-500 cursor-pointer">
-                  <ImagePlus className="w-4 h-4" />
-                  <span className="text-[9px] font-bold mt-0.5">إضافة</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => addImages(e.target.files)}
-                  />
-                </label>
+              {videoUrl && (
+                <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-emerald-300 bg-slate-900 flex items-center justify-center">
+                  <Video className="w-5 h-5 text-emerald-300" />
+                  <button
+                    onClick={() => setVideoUrl('')}
+                    className="absolute top-0 left-0 bg-black/60 text-white p-0.5"
+                    aria-label="حذف الفيديو"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
               )}
             </div>
-          </div>
 
-          {/* فيديو */}
-          <Field label="رابط فيديو (اختياري)">
-            <div className="relative">
-              <Video className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2" />
-              <input
-                value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
-                placeholder="https://…"
-                dir="ltr"
-                className="w-full pr-8 pl-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-900"
-              />
-            </div>
-          </Field>
+            {/* مدخلات مخفية: كاميرا / استوديو صور / استوديو فيديو */}
+            <input
+              ref={cameraInput}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => { void addImages(e.target.files); setMediaMenu(false); }}
+            />
+            <input
+              ref={galleryInput}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => { void addImages(e.target.files); setMediaMenu(false); }}
+            />
+            <input
+              ref={videoInput}
+              type="file"
+              accept="video/*"
+              className="hidden"
+              onChange={(e) => { void addVideo(e.target.files?.[0]); setMediaMenu(false); }}
+            />
+
+            {mediaMenu && (
+              <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-3" onClick={() => setMediaMenu(false)}>
+                <div className="w-full max-w-sm rounded-2xl bg-white p-3 space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                  <p className="text-[12.5px] font-black text-slate-900 px-1 pb-1">أضف صورة أو فيديو للمزاد</p>
+                  <button
+                    type="button"
+                    onClick={() => cameraInput.current?.click()}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-bold text-slate-800 flex items-center gap-2"
+                  >
+                    <Camera className="w-4 h-4 text-sky-700" /> تصوير بالكاميرا
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => galleryInput.current?.click()}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-bold text-slate-800 flex items-center gap-2"
+                  >
+                    <ImagePlus className="w-4 h-4 text-sky-700" /> اختيار صور من الاستوديو
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => videoInput.current?.click()}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-bold text-slate-800 flex items-center gap-2"
+                  >
+                    <Video className="w-4 h-4 text-sky-700" /> اختيار فيديو من الاستوديو
+                  </button>
+                  {videoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => { setVideoUrl(''); setMediaMenu(false); }}
+                      className="w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11.5px] font-bold text-rose-700"
+                    >
+                      حذف الفيديو المرفق
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setMediaMenu(false)}
+                    className="w-full rounded-xl bg-slate-100 px-3 py-2 text-[11.5px] font-bold text-slate-700"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {error && (
             <p className="text-[12px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5">

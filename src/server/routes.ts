@@ -2835,7 +2835,10 @@ apiRouter.get('/storefront/:slug', (req, res) => {
   }
   /* طبقات: صفحة المتجر العامة للجمهور للقطاعي فقط — لا مورد ولا جملة */
   if (((tenant as any).accountSegment || 'retailer') !== 'retailer') {
-    return res.status(404).json({ error: 'هذا المتجر مخصص لبيع الجملة/التوريد وليس للجمهور' });
+    return res.status(403).json({
+      error: 'VIP_REQUIRED',
+      message: 'المعروضات متاحة لعملاء VIP — رقِّ حسابك إلى VIP لتتمكن من مشاهدة المعروضات',
+    });
   }
 
   const products = db

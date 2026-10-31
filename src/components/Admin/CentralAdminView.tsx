@@ -306,61 +306,7 @@ export const CentralAdminView: React.FC = () => {
         </div>
       )}
 
-      {/* كل أكواد المتاجر في مكان واحد — إصدار جماعي ونسخ وإرسال بدون متجر متجر */}
-      <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3 space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[12px] font-black text-sky-900">
-            🔑 أكواد دخول المتاجر — {tenants.filter((t) => (t as any).merchantCode).length} متجر جاهز للدخول
-            {tenants.some((t) => !(t as any).merchantCode) ? ` · ${tenants.filter((t) => !(t as any).merchantCode).length} بدون كود ظاهر (يُصلَح تلقائياً)` : ' · الكل جاهز ✅'}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={async () => {
-                const lines = tenants
-                  .filter((t) => (t as any).merchantCode)
-                  .map((t) => `${t.name}${t.city ? ` (${t.city})` : ''}: ${(t as any).merchantCode}`)
-                  .join('\n');
-                if (!lines) { alert('لا توجد أكواد بعد — اضغط «إصدار الأكواد الناقصة».'); return; }
-                await navigator.clipboard?.writeText(lines).catch(() => {});
-                alert('تم نسخ كل الأكواد — الصقها في واتساب أو جدول.');
-              }}
-              className="rounded-xl bg-sky-700 px-3 py-2 text-[11px] font-black text-white"
-            >
-              نسخ كل الأكواد
-            </button>
-            <button
-              onClick={() => {
-                const rows = tenants
-                  .filter((t) => (t as any).merchantCode)
-                  .map((t) => `${t.name} | ${t.city || ''} | ${t.phone || ''} | ${(t as any).merchantCode}`)
-                  .join('\n');
-                const csv = '\ufeff' + 'المتجر | المدينة | الهاتف | كود الدخول\n' + rows;
-                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'sanad-merchant-codes.csv';
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              className="rounded-xl bg-slate-900 px-3 py-2 text-[11px] font-black text-white"
-            >
-              تصدير CSV
-            </button>
-            <button
-              onClick={handleRepairCodes}
-              className="rounded-xl bg-amber-600 px-3 py-2 text-[11px] font-black text-white"
-            >
-              إصدار الأكواد الناقصة
-            </button>
-          </div>
-        </div>
-        {/* لا عرض مفتوح للأكواد داخل المنصة — النسخ والإرسال من «عرض الرمز» */}
-        <p className="text-[11px] text-slate-700 leading-6">
-          الأكواد لا تُعرض هنا. لكل متجر زر «عرض الرمز» في الجدول بالأسفل: تنسخ الرسالتين أو ترسلهما واتساب مباشرة.
-          لإرسال دفعة واحدة استخدم «نسخ كل الأكواد» أو «تصدير CSV».
-        </p>
-      </div>
+
 
       {repairResult && repairResult.length > 0 && (
         <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-3 space-y-2">
