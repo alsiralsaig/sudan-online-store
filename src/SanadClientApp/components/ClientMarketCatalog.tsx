@@ -18,6 +18,7 @@ interface CatalogItem {
   id: string;
   title: string;
   category: string;
+  categoryRaw?: string;
   priceSdg: number;
   unit?: string;
   imageUrl?: string;
@@ -50,6 +51,18 @@ const CATEGORIES = [
   { id: 'services', label: 'خدمات' },
 ];
 
+const CATEGORY_KEYWORDS: Record<string, string[]> = {
+  fashion: ['ملابس', 'أزياء', 'ملبوسات', 'أحذية', 'شنط', 'عبايات', 'ثوب'],
+  electronics: ['إلكترون', 'الكترون', 'هواتف', 'جوال', 'موبايل'],
+  groceries: ['غذائي', 'تمويني', 'بقالة', 'سكر', 'دقيق', 'أرز', 'زيت', 'مشروب', 'شاي'],
+  real_estate: ['عقار', 'عقارات', 'أراضي', 'شقق'],
+  cars: ['سيارات', 'مركبات', 'سيارة'],
+  furniture_home: ['أثاث', 'منزلي', 'أجهزة منزلية'],
+  services: ['خدمات', 'صيانة', 'نقل', 'شحن'],
+};
+
+const categoryOf = (it: CatalogItem): string => String(it.categoryRaw || it.category || '').trim();
+
 export const ClientMarketCatalog: React.FC<Props> = ({ onOpenStore, onOpenAd, initialSearch = '' }) => {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [counts, setCounts] = useState({ products: 0, ads: 0, stores: 0 });
@@ -57,15 +70,20 @@ export const ClientMarketCatalog: React.FC<Props> = ({ onOpenStore, onOpenAd, in
   const [error, setError] = useState('');
   const [query, setQuery] = useState(initialSearch);
   const [category, setCategory] = useState('');
+  const [categories, setCategories] = useState<Array<{ name: string; count: number }>>([]);
   const [filter, setFilter] = useState<'all' | 'product' | 'ad'>('all');
 
   const load = React.useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await api.getMarketCatalog({ limit: 300 });
+      const [res, cats] = await Promise.all([
+        api.getMarketCatalog({ limit: 300 }),
+        (api as any).getMarketCategories?.().catch(() => null) ?? Promise.resolve(null),
+      ]);
       setItems((res.items || []) as CatalogItem[]);
       setCounts(res.counts || { products: 0, ads: 0, stores: 0 });
+      if (cats?.categories) setCategories(cats.categories);
     } catch (e) {
       setError((e as Error).message || 'تعذّر تحميل المنتجات — تحقّق من الاتصال.');
     } finally {
@@ -81,8 +99,15 @@ export const ClientMarketCatalog: React.FC<Props> = ({ onOpenStore, onOpenAd, in
     const q = query.trim().toLowerCase();
     return items.filter((it) => {
       if (filter !== 'all' && it.kind !== filter) return false;
-      if (category && it.category !== category) return false;
-      if (q && !`${it.title} ${it.storeName || ''}`.toLowerCase().includes(q)) return false;
+      if (category) {
+        const raw = categoryOf(it);
+        if (!raw) return false;
+        if (raw !== category) {
+          const words = CATEGORY_KEYWORDS[category] || [];
+          if (!words.some((w) => raw.toLowerCase().includes(w.toLowerCase()))) return false;
+        }
+      }
+      if (q && !`${it.title} ${it.storeName || ''} ${categoryOf(it)}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }, [items, query, category, filter]);
@@ -143,17 +168,23 @@ export const ClientMarketCatalog: React.FC<Props> = ({ onOpenStore, onOpenAd, in
       </div>
 
       <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-        {CATEGORIES.map((c) => (
+        <button
+          onClick={() => setCategory('')}
+          className={`shrink-0 px-3 py-1 rounded-lg text-[11px] font-bold border ${
+            category === '' ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 text-slate-700 border-slate-200'
+          }`}
+        >
+          الكل ({counts.products + counts.ads})
+        </button>
+        {categories.map((c) => (
           <button
-            key={c.id || 'all-cat'}
-            onClick={() => setCategory(c.id)}
+            key={c.name}
+            onClick={() => setCategory(c.name)}
             className={`shrink-0 px-3 py-1 rounded-lg text-[11px] font-bold border ${
-              category === c.id
-                ? 'bg-slate-900 text-white border-slate-900'
-                : 'bg-slate-50 text-slate-700 border-slate-200'
+              category === c.name ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 text-slate-700 border-slate-200'
             }`}
           >
-            {c.label}
+            {c.name} ({c.count})
           </button>
         ))}
       </div>

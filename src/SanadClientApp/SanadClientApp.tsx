@@ -667,7 +667,12 @@ export const SanadClientApp: React.FC<SanadClientAppProps> = ({
               <ClientMarketCatalog
                 initialSearch={searchQuery}
                 onOpenStore={(idOrSlug) => openStoreBySlug(idOrSlug)}
-                onOpenAd={() => setActiveTab('market_home')}
+                onOpenAd={(adId) => {
+                  /* كان الزر يرجّع لشاشة السوق الرئيسية فقط — الآن يفتح تفاصيل الإعلان نفسه */
+                  const found = marketAds.find((a) => a.id === adId);
+                  if (found) setSelectedAdForDetail(found);
+                  else setActiveTab('market_home');
+                }}
               />
             ) : (
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">

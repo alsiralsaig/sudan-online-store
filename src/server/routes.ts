@@ -580,6 +580,51 @@ apiRouter.get('/market/stores', (req, res) => {
  *   • إعلانات السوق المعتمدة (فردية)
  * حتى يرى المتسوّق كل المعروض في المنصة من شاشة واحدة.
  */
+/**
+ * تصنيفات المتاجر تُكتب بالعربي الحر («المواد التموينية والأساسية»، «ملابس»…) —
+ * فالمطابقة الحرفية مع معرّفات إنجليزية كانت ترجع صفراً دائماً.
+ * هنا مطابقة كلمات مفتاحية على اسم التصنيف.
+ */
+const CATEGORY_KEYWORDS: Record<string, string[]> = {
+  fashion: ['ملابس', 'أزياء', 'ملبوسات', 'أحذية', 'شنط', 'عبايات', 'ثوب', 'fashion', 'clothes'],
+  electronics: ['إلكترون', 'الكترون', 'هواتف', 'جوال', 'موبايل', 'electronics', 'phone'],
+  groceries: ['غذائي', 'تمويني', 'مواد غذائية', 'بقالة', 'سكر', 'دقيق', 'أرز', 'زيت', 'مشروب', 'شاي', 'grocer'],
+  real_estate: ['عقار', 'عقارات', 'أراضي', 'شقق', 'real estate'],
+  cars: ['سيارات', 'مركبات', 'سيارة', 'cars', 'vehicle'],
+  furniture_home: ['أثاث', 'منزلي', 'أجهزة منزلية', 'أدوات منزلية', 'home', 'furniture'],
+  services: ['خدمات', 'صيانة', 'نقل', 'شحن', 'services'],
+};
+
+const matchesCategory = (rawCategory: string | undefined, wanted: string): boolean => {
+  if (!wanted) return true;
+  const raw = String(rawCategory || '').trim();
+  if (!raw) return false;
+  if (raw === wanted) return true;
+  const words = CATEGORY_KEYWORDS[wanted] || [];
+  const lower = raw.toLowerCase();
+  return words.some((w) => lower.includes(w.toLowerCase()));
+};
+
+/** التصنيفات الموجودة فعلاً في السوق (من البيانات) — بدل قائمة ثابتة لا تطابق شيئاً. */
+apiRouter.get('/market/categories', (_req, res) => {
+  const counts = new Map<string, number>();
+  for (const p of db.getSchema().products) {
+    if (p.isActive === false) continue;
+    const c = String(p.category || '').trim();
+    if (c) counts.set(c, (counts.get(c) || 0) + 1);
+  }
+  for (const a of db.getMarketAds()) {
+    if (!isLiveAd(a)) continue;
+    const c = String(a.category || '').trim();
+    if (c) counts.set(c, (counts.get(c) || 0) + 1);
+  }
+  const categories = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 24)
+    .map(([name, count]) => ({ name, count }));
+  res.json({ categories, total: [...counts.values()].reduce((s, n) => s + n, 0) });
+});
+
 apiRouter.get('/market/catalog', (req, res) => {
   const schema = db.getSchema();
   /**
@@ -598,8 +643,8 @@ apiRouter.get('/market/catalog', (req, res) => {
 
   const productItems = schema.products
     .filter((p) => p.isActive !== false && tenantById.has(p.tenantId))
-    .filter((p) => !category || p.category === category)
-    .filter((p) => !search || `${p.name} ${p.category}`.toLowerCase().includes(search))
+    .filter((p) => !category || matchesCategory(p.category, category))
+    .filter((p) => !search || `${p.name} ${p.category || ''} ${p.description || ''}`.toLowerCase().includes(search))
     .map((p) => {
       const t = tenantById.get(p.tenantId)!;
       return {
@@ -607,6 +652,7 @@ apiRouter.get('/market/catalog', (req, res) => {
         id: p.id,
         title: p.name,
         category: p.category,
+        categoryRaw: p.category || '',
         priceSdg: p.sellingPriceSdg,
         unit: p.unit,
         imageUrl: p.imageUrl,
@@ -626,13 +672,14 @@ apiRouter.get('/market/catalog', (req, res) => {
   const adItems = db
     .getMarketAds()
     .filter(isLiveAd)
-    .filter((a) => !category || a.category === category)
+    .filter((a) => !category || matchesCategory(a.category, category))
     .filter((a) => !search || `${a.title} ${a.category} ${a.description || ''}`.toLowerCase().includes(search))
     .map((a) => ({
       kind: 'ad' as const,
       id: a.id,
       title: a.title,
       category: a.category,
+      categoryRaw: a.category || '',
       priceSdg: a.priceSdg,
       imageUrl: a.imageUrl,
       videoUrl: a.videoUrl,

@@ -959,6 +959,11 @@ class ApiClient {
   /* ---------------- Market catalog & auctions (public) ---------------- */
 
   /** كتالوج السوق العام: منتجات كل المتاجر + الإعلانات الفردية. */
+  /** التصنيفات الموجودة فعلاً في السوق (من البيانات لا قائمة ثابتة). */
+  public async getMarketCategories(): Promise<{ categories: Array<{ name: string; count: number }>; total: number }> {
+    return this.request('/market/categories');
+  }
+
   public async getMarketCatalog(params: { category?: string; search?: string; limit?: number } = {}): Promise<{
     items: any[];
     counts: { products: number; ads: number; stores: number };
