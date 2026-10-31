@@ -74,6 +74,18 @@ const fileToVideoDataUrl = (file: File, maxBytes = 8 * 1024 * 1024): Promise<str
     reader.readAsDataURL(file);
   });
 
+/** صورة من عنصر فيديو (معاينة الكاميرا) → data URL مضغوطة */
+const videoFrameToDataUrl = (video: HTMLVideoElement, maxSide = 900): string => {
+  const scale = Math.min(1, maxSide / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round((video.videoWidth || 1) * scale));
+  canvas.height = Math.max(1, Math.round((video.videoHeight || 1) * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.8);
+};
+
 const timeLeft = (iso: string): string => {
   const diff = Date.parse(iso) - Date.now();
   if (Number.isNaN(diff)) return '';
@@ -299,8 +311,60 @@ const CreateAuctionModal: React.FC<{
   const cameraInput = useRef<HTMLInputElement | null>(null);
   const galleryInput = useRef<HTMLInputElement | null>(null);
   const videoInput = useRef<HTMLInputElement | null>(null);
+  /* كاميرا حقيقية داخل الصفحة (In-app) — على أندرويد input capture يفتح الاستوديو */
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [facing, setFacing] = useState<'environment' | 'user'>('environment');
+  const liveVideo = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setCameraOn(false);
+  };
+
+  const startCamera = async (mode: 'environment' | 'user' = facing) => {
+    setCameraError('');
+    setMediaMenu(false);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('unsupported');
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: mode } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setFacing(mode);
+      setCameraOn(true);
+      /* ربط الستريم بعد تركيب عنصر الفيديو */
+      setTimeout(() => {
+        if (liveVideo.current) {
+          liveVideo.current.srcObject = stream;
+          void liveVideo.current.play().catch(() => {});
+        }
+      }, 60);
+    } catch {
+      /* لا كاميرا/مرفوض: نرجع لمنتقي الصور في الجهاز */
+      setCameraOn(false);
+      setMediaMenu(false);
+      cameraInput.current?.click();
+    }
+  };
+
+  const shootPhoto = async () => {
+    if (!liveVideo.current || images.length >= 6) return;
+    try {
+      const shot = videoFrameToDataUrl(liveVideo.current);
+      setImages((prev) => [...prev, shot].slice(0, 6));
+    } catch {
+      setCameraError('تعذّر التقاط الصورة — جرّب مرة أخرى.');
+    }
+  };
+
+  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); }, []);
 
   const addVideo = async (file: File | null | undefined) => {
     if (!file) return;
@@ -507,28 +571,67 @@ const CreateAuctionModal: React.FC<{
               onChange={(e) => { void addVideo(e.target.files?.[0]); setMediaMenu(false); }}
             />
 
-            {mediaMenu && (
+            {cameraOn && (
+        <div className="fixed inset-0 z-[60] bg-black flex flex-col" dir="rtl">
+          <div className="flex items-center justify-between p-3 text-white">
+            <span className="text-[13px] font-black">تصوير صورة للمزاد ({images.length}/6)</span>
+            <button onClick={stopCamera} className="rounded-lg bg-white/15 p-1.5" aria-label="إغلاق الكاميرا">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="relative flex-1 overflow-hidden bg-black">
+            <video ref={liveVideo} playsInline muted className="w-full h-full object-contain" />
+            {cameraError && (
+              <p className="absolute bottom-3 right-3 left-3 text-center text-[11.5px] font-bold text-rose-300">{cameraError}</p>
+            )}
+          </div>
+
+          <div className="p-3 pb-6 flex items-center justify-around bg-black">
+            <button
+              onClick={() => { void startCamera(facing === 'environment' ? 'user' : 'environment'); }}
+              className="rounded-full bg-white/15 text-white px-3 py-2 text-[11px] font-bold flex items-center gap-1"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> تبديل الكاميرا
+            </button>
+            <button
+              onClick={shootPhoto}
+              disabled={images.length >= 6}
+              className="w-16 h-16 rounded-full bg-white border-4 border-sky-400 active:scale-95 disabled:opacity-50"
+              aria-label="التقاط صورة"
+            />
+            <button
+              onClick={() => { stopCamera(); setMediaMenu(true); }}
+              className="rounded-full bg-white/15 text-white px-3 py-2 text-[11px] font-bold"
+            >
+              تم
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mediaMenu && (
               <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-3" onClick={() => setMediaMenu(false)}>
                 <div className="w-full max-w-sm rounded-2xl bg-white p-3 space-y-1.5" onClick={(e) => e.stopPropagation()}>
                   <p className="text-[12.5px] font-black text-slate-900 px-1 pb-1">أضف صورة أو فيديو للمزاد</p>
                   <button
                     type="button"
-                    onClick={() => cameraInput.current?.click()}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-bold text-slate-800 flex items-center gap-2"
+                    onClick={() => { void startCamera('environment'); }}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[11.5px] font-bold text-slate-800 flex items-center gap-2"
                   >
                     <Camera className="w-4 h-4 text-sky-700" /> تصوير بالكاميرا
                   </button>
                   <button
                     type="button"
                     onClick={() => galleryInput.current?.click()}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-bold text-slate-800 flex items-center gap-2"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[11.5px] font-bold text-slate-800 flex items-center gap-2"
                   >
                     <ImagePlus className="w-4 h-4 text-sky-700" /> اختيار صور من الاستوديو
                   </button>
                   <button
                     type="button"
                     onClick={() => videoInput.current?.click()}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-bold text-slate-800 flex items-center gap-2"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[11.5px] font-bold text-slate-800 flex items-center gap-2"
                   >
                     <Video className="w-4 h-4 text-sky-700" /> اختيار فيديو من الاستوديو
                   </button>
