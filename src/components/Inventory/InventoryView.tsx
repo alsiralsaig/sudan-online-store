@@ -76,6 +76,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [isPoModalOpen, setIsPoModalOpen] = useState(false);
   const [poItems, setPoItems] = useState<PoItemState[]>([]);
   const [poSupplier, setPoSupplier] = useState('');
+  /* موردون حقيقيون من المنصة (نفس قواعد الطبقات) بدل أسماء ثابتة في الكود */
+  const [platformSuppliers, setPlatformSuppliers] = useState<any[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getLinkSources()
+      .then((res) => { if (!cancelled) setPlatformSuppliers(res.sources || []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   const [poInvoiceNo, setPoInvoiceNo] = useState('');
   const [poBranchId, setPoBranchId] = useState(currentBranch?.id || branches[0]?.id || '');
   const [poPaymentStatus, setPoPaymentStatus] = useState<'paid' | 'partial' | 'credit'>('paid');
@@ -1587,23 +1597,28 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg"
                 />
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                  <span className="text-[10px] text-slate-400">موردين معتمدين:</span>
-                  {[
-                    'شركة سكر كنانة المحدودة',
-                    'مجموعة سيقا للسلع الغذائية',
-                    'شركة الغزالتين للشاي',
-                    'شركة أروما للبن والبهارات',
-                    'المورد المحلي المعتمد',
-                  ].map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setPoSupplier(s)}
-                      className="text-[10px] bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded text-slate-700 transition-colors"
-                    >
-                      {s}
-                    </button>
-                  ))}
+                  <span className="text-[10px] text-slate-400">متاجر المنصة (توريد):</span>
+                  {platformSuppliers.length === 0 ? (
+                    <span className="text-[10px] text-slate-500">
+                      لا يوجد مورد/جملة متاح لحسابك الآن — يُضاف عندما تُصنَّف المتاجر من لوحة المنصة.
+                    </span>
+                  ) : (
+                    platformSuppliers.map((src) => (
+                      <button
+                        key={src.id}
+                        type="button"
+                        onClick={() => setPoSupplier(src.name)}
+                        className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
+                          poSupplier === src.name
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {src.name}
+                        <span className="opacity-70"> · {src.accountSegment === 'supplier' ? 'مورد' : 'جملة'}</span>
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
 
