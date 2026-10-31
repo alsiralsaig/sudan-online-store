@@ -51,17 +51,29 @@ const CATEGORIES = [
   { id: 'services', label: 'خدمات' },
 ];
 
-const CATEGORY_KEYWORDS: Record<string, string[]> = {
-  fashion: ['ملابس', 'أزياء', 'ملبوسات', 'أحذية', 'شنط', 'عبايات', 'ثوب'],
-  electronics: ['إلكترون', 'الكترون', 'هواتف', 'جوال', 'موبايل'],
-  groceries: ['غذائي', 'تمويني', 'بقالة', 'سكر', 'دقيق', 'أرز', 'زيت', 'مشروب', 'شاي'],
-  real_estate: ['عقار', 'عقارات', 'أراضي', 'شقق'],
-  cars: ['سيارات', 'مركبات', 'سيارة'],
-  furniture_home: ['أثاث', 'منزلي', 'أجهزة منزلية'],
-  services: ['خدمات', 'صيانة', 'نقل', 'شحن'],
-};
+const CATEGORY_GROUPS: Array<{ name: string; words: string[] }> = [
+  { name: 'ملابس وأحذية', words: ['ملابس', 'ملبوسات', 'أزياء', 'ازياء', 'احذي', 'أحذي', 'حذاء', 'شنط', 'حقيب', 'عباي', 'ثوب'] },
+  { name: 'مواد غذائية', words: ['غذائ', 'تموين', 'بقال', 'سكر', 'دقيق', 'أرز', 'ارز', 'زيت', 'سمن', 'ألبان', 'البان', 'حليب', 'مشروب', 'شاي', 'قهوة', 'توابل', 'لحوم', 'خضار', 'فاكه', 'مخبوز'] },
+  { name: 'إلكترونيات وهواتف', words: ['إلكترون', 'الكترون', 'هواتف', 'جوال', 'موبايل', 'لابتوب', 'كمبيوتر', 'شاش', 'سماع'] },
+  { name: 'سيارات ومركبات', words: ['سيار', 'مركب', 'دراج', 'اطار'] },
+  { name: 'أثاث وأجهزة منزلية', words: ['أثاث', 'اثاث', 'منزلي', 'أجهزة منزلية', 'ادوات منزلية', 'مطبخ', 'فرش', 'سجاد'] },
+  { name: 'عقارات', words: ['عقار', 'عقارات', 'أراض', 'اراض', 'شقق'] },
+  { name: 'خدمات', words: ['خدمات', 'صيانة', 'نقل', 'شحن', 'توصيل'] },
+  { name: 'صحة وجمال', words: ['صحة', 'جمال', 'عطر', 'تجميل', 'مستحضر', 'دواء', 'صيدل'] },
+];
+
+const OTHER_GROUP = 'أخرى';
 
 const categoryOf = (it: CatalogItem): string => String(it.categoryRaw || it.category || '').trim();
+
+const groupOf = (it: CatalogItem): string => {
+  const raw = String(it.categoryRaw || it.category || '').trim().toLowerCase();
+  if (!raw) return OTHER_GROUP;
+  for (const g of CATEGORY_GROUPS) {
+    if (g.words.some((w) => raw.includes(w.toLowerCase()))) return g.name;
+  }
+  return OTHER_GROUP;
+};
 
 export const ClientMarketCatalog: React.FC<Props> = ({ onOpenStore, onOpenAd, initialSearch = '' }) => {
   const [items, setItems] = useState<CatalogItem[]>([]);
@@ -100,12 +112,8 @@ export const ClientMarketCatalog: React.FC<Props> = ({ onOpenStore, onOpenAd, in
     return items.filter((it) => {
       if (filter !== 'all' && it.kind !== filter) return false;
       if (category) {
-        const raw = categoryOf(it);
-        if (!raw) return false;
-        if (raw !== category) {
-          const words = CATEGORY_KEYWORDS[category] || [];
-          if (!words.some((w) => raw.toLowerCase().includes(w.toLowerCase()))) return false;
-        }
+        const g = groupOf(it);
+        if (g !== category && categoryOf(it) !== category) return false;
       }
       if (q && !`${it.title} ${it.storeName || ''} ${categoryOf(it)}`.toLowerCase().includes(q)) return false;
       return true;
@@ -284,6 +292,7 @@ export const ClientMarketCatalog: React.FC<Props> = ({ onOpenStore, onOpenAd, in
                   <Store className="w-2.5 h-2.5 shrink-0" />
                   {it.storeName}
                 </p>
+                <p className="text-[9.5px] text-slate-500 truncate">{groupOf(it)}</p>
                 {it.city && (
                   <p className="text-[10px] text-slate-600 flex items-center gap-0.5 truncate">
                     <MapPin className="w-2.5 h-2.5 shrink-0" /> {it.city}

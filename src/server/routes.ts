@@ -581,48 +581,96 @@ apiRouter.get('/market/stores', (req, res) => {
  * حتى يرى المتسوّق كل المعروض في المنصة من شاشة واحدة.
  */
 /**
- * تصنيفات المتاجر تُكتب بالعربي الحر («المواد التموينية والأساسية»، «ملابس»…) —
- * فالمطابقة الحرفية مع معرّفات إنجليزية كانت ترجع صفراً دائماً.
- * هنا مطابقة كلمات مفتاحية على اسم التصنيف.
+ * تصنيفات المتاجر تُكتب بالعربي الحر («احذيه»، «شنط»، «سلع ومواد تموينية»…) —
+ * لذلك نجمعها في مجموعات موحّدة بدل عشرات الأزرار المتشابهة.
+ * الترتيب مهم: أول مجموعة تُطابق تفوز.
  */
-const CATEGORY_KEYWORDS: Record<string, string[]> = {
-  fashion: ['ملابس', 'أزياء', 'ملبوسات', 'أحذية', 'شنط', 'عبايات', 'ثوب', 'fashion', 'clothes'],
-  electronics: ['إلكترون', 'الكترون', 'هواتف', 'جوال', 'موبايل', 'electronics', 'phone'],
-  groceries: ['غذائي', 'تمويني', 'مواد غذائية', 'بقالة', 'سكر', 'دقيق', 'أرز', 'زيت', 'مشروب', 'شاي', 'grocer'],
-  real_estate: ['عقار', 'عقارات', 'أراضي', 'شقق', 'real estate'],
-  cars: ['سيارات', 'مركبات', 'سيارة', 'cars', 'vehicle'],
-  furniture_home: ['أثاث', 'منزلي', 'أجهزة منزلية', 'أدوات منزلية', 'home', 'furniture'],
-  services: ['خدمات', 'صيانة', 'نقل', 'شحن', 'services'],
+const CATEGORY_GROUPS: Array<{ name: string; words: string[] }> = [
+  {
+    name: 'ملابس وأحذية',
+    words: ['ملابس', 'ملبوسات', 'أزياء', 'ازياء', 'احذي', 'أحذي', 'حذاء', 'شنط', 'حقيب', 'عباي', 'ثوب', 'فاشون', 'fashion', 'shoe', 'bag'],
+  },
+  {
+    name: 'مواد غذائية',
+    words: ['غذائ', 'تموين', 'بقال', 'سكر', 'دقيق', 'أرز', 'ارز', 'زيت', 'سمن', 'ألبان', 'البان', 'حليب', 'مشروب', 'شاي', 'قهوة', 'معلب', 'توابل', 'لحوم', 'خضار', 'فاكه', 'مخبوز', 'grocer', 'food'],
+  },
+  {
+    name: 'إلكترونيات وهواتف',
+    words: ['إلكترون', 'الكترون', 'هواتف', 'جوال', 'موبايل', 'لابتوب', 'كمبيوتر', 'شاش', 'سماع', 'electronics', 'phone', 'computer'],
+  },
+  {
+    name: 'سيارات ومركبات',
+    words: ['سيار', 'مركب', 'دراج', 'اطار', 'قطع غيار', 'cars', 'vehicle'],
+  },
+  {
+    name: 'أثاث وأجهزة منزلية',
+    words: ['أثاث', 'اثاث', 'منزلي', 'أجهزة منزلية', 'ادوات منزلية', 'مطبخ', 'فرش', 'سجاد', 'home', 'furniture'],
+  },
+  {
+    name: 'عقارات',
+    words: ['عقار', 'عقارات', 'أراض', 'اراض', 'شقق', 'أراضي', 'real estate'],
+  },
+  {
+    name: 'خدمات',
+    words: ['خدمات', 'صيانة', 'نقل', 'شحن', 'توصيل', 'services'],
+  },
+  {
+    name: 'صحة وجمال',
+    words: ['صحة', 'جمال', 'عطر', 'تجميل', 'مستحضر', 'دواء', 'صيدل', 'beauty', 'health'],
+  },
+];
+
+const OTHER_GROUP = 'أخرى';
+
+/** التصنيف الخام → المجموعة الموحّدة. */
+const groupOf = (rawCategory: string | undefined): string => {
+  const raw = String(rawCategory || '').trim().toLowerCase();
+  if (!raw) return OTHER_GROUP;
+  for (const g of CATEGORY_GROUPS) {
+    if (g.words.some((w) => raw.includes(w.toLowerCase()))) return g.name;
+  }
+  return OTHER_GROUP;
 };
 
+/** فلترة بمجموعة موحّدة أو بتصنيف خام مطابق. */
 const matchesCategory = (rawCategory: string | undefined, wanted: string): boolean => {
   if (!wanted) return true;
   const raw = String(rawCategory || '').trim();
   if (!raw) return false;
   if (raw === wanted) return true;
-  const words = CATEGORY_KEYWORDS[wanted] || [];
-  const lower = raw.toLowerCase();
-  return words.some((w) => lower.includes(w.toLowerCase()));
+  return groupOf(raw) === wanted;
 };
 
-/** التصنيفات الموجودة فعلاً في السوق (من البيانات) — بدل قائمة ثابتة لا تطابق شيئاً. */
 apiRouter.get('/market/categories', (_req, res) => {
   const counts = new Map<string, number>();
+  const bump = (raw: string | undefined) => {
+    const g = groupOf(raw);
+    counts.set(g, (counts.get(g) || 0) + 1);
+  };
+
+  const activeTenants = new Set(
+    db.getSchema().tenants
+      .filter((t) => t.status !== 'suspended' && ((t as any).accountSegment || 'retailer') === 'retailer')
+      .map((t) => t.id),
+  );
   for (const p of db.getSchema().products) {
-    if (p.isActive === false) continue;
-    const c = String(p.category || '').trim();
-    if (c) counts.set(c, (counts.get(c) || 0) + 1);
+    if (p.isActive === false || !activeTenants.has(p.tenantId)) continue;
+    bump(p.category);
   }
   for (const a of db.getMarketAds()) {
     if (!isLiveAd(a)) continue;
-    const c = String(a.category || '').trim();
-    if (c) counts.set(c, (counts.get(c) || 0) + 1);
+    bump(a.category);
   }
+
   const categories = [...counts.entries()]
+    .filter(([name]) => name !== OTHER_GROUP)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 24)
     .map(([name, count]) => ({ name, count }));
-  res.json({ categories, total: [...counts.values()].reduce((s, n) => s + n, 0) });
+
+  const other = counts.get(OTHER_GROUP) || 0;
+  if (other > 0) categories.push({ name: OTHER_GROUP, count: other });
+
+  res.json({ categories, total: [...counts.values()].reduce((sum, n) => sum + n, 0) });
 });
 
 apiRouter.get('/market/catalog', (req, res) => {
@@ -653,6 +701,7 @@ apiRouter.get('/market/catalog', (req, res) => {
         title: p.name,
         category: p.category,
         categoryRaw: p.category || '',
+        group: groupOf(p.category),
         priceSdg: p.sellingPriceSdg,
         unit: p.unit,
         imageUrl: p.imageUrl,
@@ -680,6 +729,7 @@ apiRouter.get('/market/catalog', (req, res) => {
       title: a.title,
       category: a.category,
       categoryRaw: a.category || '',
+      group: groupOf(a.category),
       priceSdg: a.priceSdg,
       imageUrl: a.imageUrl,
       videoUrl: a.videoUrl,

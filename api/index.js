@@ -6816,38 +6816,77 @@ apiRouter.get("/market/stores", (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=60");
   res.json({ tenants });
 });
-var CATEGORY_KEYWORDS = {
-  fashion: ["\u0645\u0644\u0627\u0628\u0633", "\u0623\u0632\u064A\u0627\u0621", "\u0645\u0644\u0628\u0648\u0633\u0627\u062A", "\u0623\u062D\u0630\u064A\u0629", "\u0634\u0646\u0637", "\u0639\u0628\u0627\u064A\u0627\u062A", "\u062B\u0648\u0628", "fashion", "clothes"],
-  electronics: ["\u0625\u0644\u0643\u062A\u0631\u0648\u0646", "\u0627\u0644\u0643\u062A\u0631\u0648\u0646", "\u0647\u0648\u0627\u062A\u0641", "\u062C\u0648\u0627\u0644", "\u0645\u0648\u0628\u0627\u064A\u0644", "electronics", "phone"],
-  groceries: ["\u063A\u0630\u0627\u0626\u064A", "\u062A\u0645\u0648\u064A\u0646\u064A", "\u0645\u0648\u0627\u062F \u063A\u0630\u0627\u0626\u064A\u0629", "\u0628\u0642\u0627\u0644\u0629", "\u0633\u0643\u0631", "\u062F\u0642\u064A\u0642", "\u0623\u0631\u0632", "\u0632\u064A\u062A", "\u0645\u0634\u0631\u0648\u0628", "\u0634\u0627\u064A", "grocer"],
-  real_estate: ["\u0639\u0642\u0627\u0631", "\u0639\u0642\u0627\u0631\u0627\u062A", "\u0623\u0631\u0627\u0636\u064A", "\u0634\u0642\u0642", "real estate"],
-  cars: ["\u0633\u064A\u0627\u0631\u0627\u062A", "\u0645\u0631\u0643\u0628\u0627\u062A", "\u0633\u064A\u0627\u0631\u0629", "cars", "vehicle"],
-  furniture_home: ["\u0623\u062B\u0627\u062B", "\u0645\u0646\u0632\u0644\u064A", "\u0623\u062C\u0647\u0632\u0629 \u0645\u0646\u0632\u0644\u064A\u0629", "\u0623\u062F\u0648\u0627\u062A \u0645\u0646\u0632\u0644\u064A\u0629", "home", "furniture"],
-  services: ["\u062E\u062F\u0645\u0627\u062A", "\u0635\u064A\u0627\u0646\u0629", "\u0646\u0642\u0644", "\u0634\u062D\u0646", "services"]
+var CATEGORY_GROUPS = [
+  {
+    name: "\u0645\u0644\u0627\u0628\u0633 \u0648\u0623\u062D\u0630\u064A\u0629",
+    words: ["\u0645\u0644\u0627\u0628\u0633", "\u0645\u0644\u0628\u0648\u0633\u0627\u062A", "\u0623\u0632\u064A\u0627\u0621", "\u0627\u0632\u064A\u0627\u0621", "\u0627\u062D\u0630\u064A", "\u0623\u062D\u0630\u064A", "\u062D\u0630\u0627\u0621", "\u0634\u0646\u0637", "\u062D\u0642\u064A\u0628", "\u0639\u0628\u0627\u064A", "\u062B\u0648\u0628", "\u0641\u0627\u0634\u0648\u0646", "fashion", "shoe", "bag"]
+  },
+  {
+    name: "\u0645\u0648\u0627\u062F \u063A\u0630\u0627\u0626\u064A\u0629",
+    words: ["\u063A\u0630\u0627\u0626", "\u062A\u0645\u0648\u064A\u0646", "\u0628\u0642\u0627\u0644", "\u0633\u0643\u0631", "\u062F\u0642\u064A\u0642", "\u0623\u0631\u0632", "\u0627\u0631\u0632", "\u0632\u064A\u062A", "\u0633\u0645\u0646", "\u0623\u0644\u0628\u0627\u0646", "\u0627\u0644\u0628\u0627\u0646", "\u062D\u0644\u064A\u0628", "\u0645\u0634\u0631\u0648\u0628", "\u0634\u0627\u064A", "\u0642\u0647\u0648\u0629", "\u0645\u0639\u0644\u0628", "\u062A\u0648\u0627\u0628\u0644", "\u0644\u062D\u0648\u0645", "\u062E\u0636\u0627\u0631", "\u0641\u0627\u0643\u0647", "\u0645\u062E\u0628\u0648\u0632", "grocer", "food"]
+  },
+  {
+    name: "\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A\u0627\u062A \u0648\u0647\u0648\u0627\u062A\u0641",
+    words: ["\u0625\u0644\u0643\u062A\u0631\u0648\u0646", "\u0627\u0644\u0643\u062A\u0631\u0648\u0646", "\u0647\u0648\u0627\u062A\u0641", "\u062C\u0648\u0627\u0644", "\u0645\u0648\u0628\u0627\u064A\u0644", "\u0644\u0627\u0628\u062A\u0648\u0628", "\u0643\u0645\u0628\u064A\u0648\u062A\u0631", "\u0634\u0627\u0634", "\u0633\u0645\u0627\u0639", "electronics", "phone", "computer"]
+  },
+  {
+    name: "\u0633\u064A\u0627\u0631\u0627\u062A \u0648\u0645\u0631\u0643\u0628\u0627\u062A",
+    words: ["\u0633\u064A\u0627\u0631", "\u0645\u0631\u0643\u0628", "\u062F\u0631\u0627\u062C", "\u0627\u0637\u0627\u0631", "\u0642\u0637\u0639 \u063A\u064A\u0627\u0631", "cars", "vehicle"]
+  },
+  {
+    name: "\u0623\u062B\u0627\u062B \u0648\u0623\u062C\u0647\u0632\u0629 \u0645\u0646\u0632\u0644\u064A\u0629",
+    words: ["\u0623\u062B\u0627\u062B", "\u0627\u062B\u0627\u062B", "\u0645\u0646\u0632\u0644\u064A", "\u0623\u062C\u0647\u0632\u0629 \u0645\u0646\u0632\u0644\u064A\u0629", "\u0627\u062F\u0648\u0627\u062A \u0645\u0646\u0632\u0644\u064A\u0629", "\u0645\u0637\u0628\u062E", "\u0641\u0631\u0634", "\u0633\u062C\u0627\u062F", "home", "furniture"]
+  },
+  {
+    name: "\u0639\u0642\u0627\u0631\u0627\u062A",
+    words: ["\u0639\u0642\u0627\u0631", "\u0639\u0642\u0627\u0631\u0627\u062A", "\u0623\u0631\u0627\u0636", "\u0627\u0631\u0627\u0636", "\u0634\u0642\u0642", "\u0623\u0631\u0627\u0636\u064A", "real estate"]
+  },
+  {
+    name: "\u062E\u062F\u0645\u0627\u062A",
+    words: ["\u062E\u062F\u0645\u0627\u062A", "\u0635\u064A\u0627\u0646\u0629", "\u0646\u0642\u0644", "\u0634\u062D\u0646", "\u062A\u0648\u0635\u064A\u0644", "services"]
+  },
+  {
+    name: "\u0635\u062D\u0629 \u0648\u062C\u0645\u0627\u0644",
+    words: ["\u0635\u062D\u0629", "\u062C\u0645\u0627\u0644", "\u0639\u0637\u0631", "\u062A\u062C\u0645\u064A\u0644", "\u0645\u0633\u062A\u062D\u0636\u0631", "\u062F\u0648\u0627\u0621", "\u0635\u064A\u062F\u0644", "beauty", "health"]
+  }
+];
+var OTHER_GROUP = "\u0623\u062E\u0631\u0649";
+var groupOf = (rawCategory) => {
+  const raw = String(rawCategory || "").trim().toLowerCase();
+  if (!raw) return OTHER_GROUP;
+  for (const g of CATEGORY_GROUPS) {
+    if (g.words.some((w) => raw.includes(w.toLowerCase()))) return g.name;
+  }
+  return OTHER_GROUP;
 };
 var matchesCategory = (rawCategory, wanted) => {
   if (!wanted) return true;
   const raw = String(rawCategory || "").trim();
   if (!raw) return false;
   if (raw === wanted) return true;
-  const words = CATEGORY_KEYWORDS[wanted] || [];
-  const lower = raw.toLowerCase();
-  return words.some((w) => lower.includes(w.toLowerCase()));
+  return groupOf(raw) === wanted;
 };
 apiRouter.get("/market/categories", (_req, res) => {
   const counts = /* @__PURE__ */ new Map();
+  const bump = (raw) => {
+    const g = groupOf(raw);
+    counts.set(g, (counts.get(g) || 0) + 1);
+  };
+  const activeTenants = new Set(
+    db.getSchema().tenants.filter((t) => t.status !== "suspended" && (t.accountSegment || "retailer") === "retailer").map((t) => t.id)
+  );
   for (const p of db.getSchema().products) {
-    if (p.isActive === false) continue;
-    const c = String(p.category || "").trim();
-    if (c) counts.set(c, (counts.get(c) || 0) + 1);
+    if (p.isActive === false || !activeTenants.has(p.tenantId)) continue;
+    bump(p.category);
   }
   for (const a of db.getMarketAds()) {
     if (!isLiveAd(a)) continue;
-    const c = String(a.category || "").trim();
-    if (c) counts.set(c, (counts.get(c) || 0) + 1);
+    bump(a.category);
   }
-  const categories = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24).map(([name, count]) => ({ name, count }));
-  res.json({ categories, total: [...counts.values()].reduce((s, n) => s + n, 0) });
+  const categories = [...counts.entries()].filter(([name]) => name !== OTHER_GROUP).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+  const other = counts.get(OTHER_GROUP) || 0;
+  if (other > 0) categories.push({ name: OTHER_GROUP, count: other });
+  res.json({ categories, total: [...counts.values()].reduce((sum, n) => sum + n, 0) });
 });
 apiRouter.get("/market/catalog", (req, res) => {
   const schema = db.getSchema();
@@ -6866,6 +6905,7 @@ apiRouter.get("/market/catalog", (req, res) => {
       title: p.name,
       category: p.category,
       categoryRaw: p.category || "",
+      group: groupOf(p.category),
       priceSdg: p.sellingPriceSdg,
       unit: p.unit,
       imageUrl: p.imageUrl,
@@ -6885,6 +6925,7 @@ apiRouter.get("/market/catalog", (req, res) => {
     title: a.title,
     category: a.category,
     categoryRaw: a.category || "",
+    group: groupOf(a.category),
     priceSdg: a.priceSdg,
     imageUrl: a.imageUrl,
     videoUrl: a.videoUrl,
