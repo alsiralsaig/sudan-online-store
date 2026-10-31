@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Gavel, Plus, X, ImagePlus, Video, Camera, Trash2, Clock, Trophy, RefreshCw, Sparkles,
+  Gavel, Plus, X, ImagePlus, Video, Camera, Check, Trash2, Clock, Trophy, RefreshCw, Sparkles,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
 
@@ -317,6 +317,12 @@ const CreateAuctionModal: React.FC<{
   const [facing, setFacing] = useState<'environment' | 'user'>('environment');
   const liveVideo = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  /* وضع اختيار النوع: 'photo' أو 'video' — زر واحد في الكاميرا يبدّل بينهما */
+  const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
+  const [preview, setPreview] = useState<{ src: string; kind: 'photo' | 'video' } | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunks = useRef<Blob[]>([]);
+  const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -333,8 +339,8 @@ const CreateAuctionModal: React.FC<{
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('unsupported');
       streamRef.current?.getTracks().forEach((t) => t.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: mode } },
-        audio: false,
+        video: { facingMode: { ideal: mode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: captureMode === 'video',
       });
       streamRef.current = stream;
       setFacing(mode);
@@ -354,17 +360,58 @@ const CreateAuctionModal: React.FC<{
     }
   };
 
+  const toggleRecording = () => {
+    const stream = streamRef.current;
+    if (!stream) return;
+    if (recording) {
+      recorderRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+    try {
+      recordedChunks.current = [];
+      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
+        ? 'video/webm;codecs=vp8'
+        : MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : '';
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      rec.ondataavailable = (ev) => { if (ev.data.size > 0) recordedChunks.current.push(ev.data); };
+      rec.onstop = () => {
+        const blob = new Blob(recordedChunks.current, { type: recordedChunks.current[0]?.type || 'video/webm' });
+        if (blob.size > 0 && blob.size < 8 * 1024 * 1024) {
+          const reader = new FileReader();
+          reader.onload = () => setPreview({ src: String(reader.result), kind: 'video' });
+          reader.readAsDataURL(blob);
+        } else if (blob.size >= 8 * 1024 * 1024) {
+          setCameraError('الفيديو أكبر من 8 ميجا — صوّر مقطعاً أقصر.');
+        }
+        recordedChunks.current = [];
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setRecording(true);
+    } catch {
+      setCameraError('التسجيل غير مدعوم على هذا الجهاز — استخدم «اختيار فيديو من الاستوديو».');
+    }
+  };
+
   const shootPhoto = async () => {
     if (!liveVideo.current || images.length >= 6) return;
     try {
       const shot = videoFrameToDataUrl(liveVideo.current);
-      setImages((prev) => [...prev, shot].slice(0, 6));
+      setPreview({ src: shot, kind: 'photo' });
     } catch {
       setCameraError('تعذّر التقاط الصورة — جرّب مرة أخرى.');
     }
   };
 
   useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); }, []);
+
+  const confirmPreview = () => {
+    if (!preview) return;
+    if (preview.kind === 'photo') setImages((prev) => [...prev, preview.src].slice(0, 6));
+    else setVideoUrl(preview.src);
+    setPreview(null);
+  };
 
   const addVideo = async (file: File | null | undefined) => {
     if (!file) return;
@@ -587,25 +634,88 @@ const CreateAuctionModal: React.FC<{
             )}
           </div>
 
+          {/* مبدّل النوع: صورة / فيديو */}
+          <div className="flex items-center justify-center gap-2 bg-black pt-2">
+            {(['photo', 'video'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setCaptureMode(mode)}
+                className={`rounded-full px-3 py-1.5 text-[11px] font-black ${
+                  captureMode === mode ? 'bg-white text-slate-900' : 'bg-white/15 text-white'
+                }`}
+              >
+                {mode === 'photo' ? 'صورة' : 'فيديو'}
+              </button>
+            ))}
+          </div>
+
           <div className="p-3 pb-6 flex items-center justify-around bg-black">
             <button
               onClick={() => { void startCamera(facing === 'environment' ? 'user' : 'environment'); }}
-              className="rounded-full bg-white/15 text-white px-3 py-2 text-[11px] font-bold flex items-center gap-1"
+              className="w-12 h-12 rounded-full bg-white/15 text-white flex items-center justify-center"
+              aria-label="تبديل الكاميرا"
             >
-              <RefreshCw className="w-3.5 h-3.5" /> تبديل الكاميرا
+              <RefreshCw className="w-5 h-5" />
             </button>
+
             <button
-              onClick={shootPhoto}
-              disabled={images.length >= 6}
-              className="w-16 h-16 rounded-full bg-white border-4 border-sky-400 active:scale-95 disabled:opacity-50"
-              aria-label="التقاط صورة"
+              onClick={() => { captureMode === 'photo' ? void shootPhoto() : toggleRecording(); }}
+              className={`w-16 h-16 rounded-full border-4 active:scale-95 ${
+                recording ? 'bg-rose-600 border-rose-300' : 'bg-white border-sky-400'
+              }`}
+              aria-label={captureMode === 'photo' ? 'التقاط صورة' : 'تسجيل فيديو'}
             />
+
             <button
-              onClick={() => { stopCamera(); setMediaMenu(true); }}
-              className="rounded-full bg-white/15 text-white px-3 py-2 text-[11px] font-bold"
+              onClick={() => { stopCamera(); }}
+              className="w-12 h-12 rounded-full bg-white/15 text-white flex items-center justify-center"
+              aria-label="تم"
             >
-              تم
+              <Check className="w-5 h-5" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* معاينة مكبّرة قبل إضافة الصورة/الفيديو للمزاد */}
+      {preview && (
+        <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" dir="rtl">
+          <div className="flex items-center justify-between p-3 text-white">
+            <span className="text-[13px] font-black">
+              {preview.kind === 'photo' ? 'معاينة الصورة' : 'معاينة الفيديو'}
+            </span>
+            <button onClick={() => setPreview(null)} className="rounded-lg bg-white/15 p-1.5" aria-label="إغلاق">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex-1 flex items-center justify-center overflow-hidden px-2">
+            {preview.kind === 'photo' ? (
+              <img src={preview.src} alt="معاينة" className="max-w-full max-h-full object-contain" />
+            ) : (
+              <video src={preview.src} controls autoPlay playsInline className="max-w-full max-h-full" />
+            )}
+          </div>
+          <div className="p-3 pb-6 space-y-2">
+            <button
+              onClick={confirmPreview}
+              className="w-full rounded-xl bg-emerald-600 text-white py-3 text-[13px] font-black flex items-center justify-center gap-2"
+            >
+              <Check className="w-4 h-4" /> إضافة للمزاد
+            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setPreview(null); void startCamera(captureMode === 'photo' ? facing : facing); }}
+                className="flex-1 rounded-xl bg-white/15 text-white py-2.5 text-[12px] font-bold"
+              >
+                إعادة التصوير
+              </button>
+              <button
+                onClick={() => setPreview(null)}
+                className="flex-1 rounded-xl bg-slate-100 text-slate-800 py-2.5 text-[12px] font-bold"
+              >
+                إلغاء
+              </button>
+            </div>
           </div>
         </div>
       )}
