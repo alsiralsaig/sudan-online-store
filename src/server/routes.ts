@@ -14,6 +14,7 @@ import {
   fetchAlsougSnapshot,
   ageHours,
   isStale,
+  isSudanAkhbarSnapshot,
   RATES_SOURCE,
 } from './rates.ts';
 import {
@@ -3219,6 +3220,20 @@ apiRouter.get('/currency/parallel-rates', async (_req, res) => {
       /* keep whatever we have */
     }
   }
+  /*
+   * حماية المصدر المعتمد: لو كانت اللقطة الحالية من «أخبار السودان» ثم جاء
+   * محاولة تحديث تعيد سوق السودان، نُبقي أخبار السودان. وأيضاً نُحدّث من
+   * أخبار السودان مباشرة لو اللقطة ليست منه (ترقية تلقائية للمصدر).
+   */
+  const guarded = db.getRatesSnapshot();
+  if (!isSudanAkhbarSnapshot(guarded)) {
+    const akhbar = await fetchSudanAkhbarSnapshot().catch(() => null);
+    if (akhbar?.rates.length) {
+      const { updated } = db.applyLiveRates(akhbar, 'المصدر المعتمد — أخبار السودان');
+      if (updated > 0) await db.flush({ lock: false }).catch(() => {});
+    }
+  }
+
   const snap = db.getRatesSnapshot();
   const { currencies } = withLiveRates();
   // A GET is not flushed by the middleware — persist explicitly if we just wrote.
@@ -3240,7 +3255,18 @@ apiRouter.get('/currency/parallel-rates', async (_req, res) => {
  * العام، فلا حاجة لصلاحية إدارية؛ النسخة الإدارية باقية كما هي.
  */
 apiRouter.post('/currency/refresh', async (_req, res) => {
+  /* التحديث اليدوي يجرّب المصدر المعتمد أولاً، ويحافظ على مصدر اللقطة الحالية */
+  const previousSource = String(db.getRatesSnapshot()?.source || '');
   const result = await refreshLiveRates('تحديث يدوي من التطبيق');
+  const nowSource = String(result.snapshot?.source || '');
+  if (previousSource.includes('اخبار السودان') && !nowSource.includes('اخبار السودان')) {
+    const akhbar = await fetchSudanAkhbarSnapshot().catch(() => null);
+    if (akhbar?.rates.length) {
+      db.applyLiveRates(akhbar, 'المصدر المعتمد — أخبار السودان');
+      await db.flush({ lock: false }).catch(() => {});
+      return res.json({ success: true, ...result, snapshot: db.getRatesSnapshot(), keptAuthoritativeSource: true });
+    }
+  }
   if (!result.refreshed) {
     return res.status(502).json({
       error: 'SOURCE_UNAVAILABLE',

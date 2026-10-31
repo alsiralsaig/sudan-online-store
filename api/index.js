@@ -4777,11 +4777,9 @@ var fetchSudanAkhbarArticle = async (diag = []) => {
     return store(null);
   }
 };
-var fetchSudanAkhbarRates = async () => {
-  const article = await fetchSudanAkhbarArticle();
-  return article ? article.rates.filter((r) => r.parallel !== null && r.parallel >= 100) : [];
-};
 var fetchLiveRates = async () => {
+  const akhbar = await fetchSudanAkhbarSnapshot();
+  if (akhbar?.rates.length) return akhbar;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 9e3);
@@ -4801,16 +4799,6 @@ var fetchLiveRates = async () => {
       }
     }
   } catch {
-  }
-  const backup = await fetchSudanAkhbarRates();
-  if (backup.length) {
-    return {
-      rates: backup,
-      source: BACKUP_SOURCE_NAME,
-      sourceUrl: SUDANAKHBAR_HOME,
-      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      stale: false
-    };
   }
   return null;
 };
@@ -4906,14 +4894,15 @@ var ageHours = (iso) => {
   if (Number.isNaN(t)) return null;
   return (Date.now() - t) / 36e5;
 };
+var isSudanAkhbarSnapshot = (snap) => String(snap?.source || "").includes("sudanakhbar") || String(snap?.source || "").includes("\u0627\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646");
 var isStale = (iso) => {
   const h = ageHours(iso);
   return h === null ? true : h > MAX_AGE_HOURS;
 };
 var BACKUP_SOURCE_NAME = "\u0627\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646 (sudanakhbar.com)";
 var RATES_SOURCE = {
-  primary: { url: SOURCE_URL, name: SOURCE_NAME },
-  backup: { url: SUDANAKHBAR_HOME, name: BACKUP_SOURCE_NAME }
+  primary: { url: SUDANAKHBAR_HOME, name: BACKUP_SOURCE_NAME },
+  backup: { url: SOURCE_URL, name: SOURCE_NAME }
 };
 
 // src/server/rateAnswer.ts
@@ -8912,6 +8901,15 @@ apiRouter.get("/currency/parallel-rates", async (_req, res) => {
     } catch {
     }
   }
+  const guarded = db.getRatesSnapshot();
+  if (!isSudanAkhbarSnapshot(guarded)) {
+    const akhbar = await fetchSudanAkhbarSnapshot().catch(() => null);
+    if (akhbar?.rates.length) {
+      const { updated } = db.applyLiveRates(akhbar, "\u0627\u0644\u0645\u0635\u062F\u0631 \u0627\u0644\u0645\u0639\u062A\u0645\u062F \u2014 \u0623\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646");
+      if (updated > 0) await db.flush({ lock: false }).catch(() => {
+      });
+    }
+  }
   const snap = db.getRatesSnapshot();
   const { currencies } = withLiveRates();
   await db.flush({ lock: false }).catch(() => {
@@ -8925,7 +8923,18 @@ apiRouter.get("/currency/parallel-rates", async (_req, res) => {
   });
 });
 apiRouter.post("/currency/refresh", async (_req, res) => {
+  const previousSource = String(db.getRatesSnapshot()?.source || "");
   const result = await refreshLiveRates("\u062A\u062D\u062F\u064A\u062B \u064A\u062F\u0648\u064A \u0645\u0646 \u0627\u0644\u062A\u0637\u0628\u064A\u0642");
+  const nowSource = String(result.snapshot?.source || "");
+  if (previousSource.includes("\u0627\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646") && !nowSource.includes("\u0627\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646")) {
+    const akhbar = await fetchSudanAkhbarSnapshot().catch(() => null);
+    if (akhbar?.rates.length) {
+      db.applyLiveRates(akhbar, "\u0627\u0644\u0645\u0635\u062F\u0631 \u0627\u0644\u0645\u0639\u062A\u0645\u062F \u2014 \u0623\u062E\u0628\u0627\u0631 \u0627\u0644\u0633\u0648\u062F\u0627\u0646");
+      await db.flush({ lock: false }).catch(() => {
+      });
+      return res.json({ success: true, ...result, snapshot: db.getRatesSnapshot(), keptAuthoritativeSource: true });
+    }
+  }
   if (!result.refreshed) {
     return res.status(502).json({
       error: "SOURCE_UNAVAILABLE",

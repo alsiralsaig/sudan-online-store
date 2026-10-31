@@ -35,7 +35,7 @@ export interface LiveRatesSnapshot {
 }
 
 const SOURCE_URL = 'https://www.alsoug.com/currency';
-const SOURCE_NAME = 'سوق السودان (alsoug.com)';
+export const SOURCE_NAME = 'سوق السودان (alsoug.com)';
 
 /** Arabic/English names as they appear in the table → ISO code. */
 const CODE_BY_LABEL: Array<{ match: RegExp; code: string }> = [
@@ -676,7 +676,17 @@ export const fetchSudanAkhbarRates = async (): Promise<LiveRate[]> => {
 };
 
 /** Fetch the live page and parse it. Never throws. */
+/**
+ * المصدر المعتمد: **أخبار السودان (sudanakhbar.com)**.
+ * ------------------------------------------------------------------
+ * كان الترتيب معكوساً: سوق السودان أولاً وأخبار السودان احتياطياً، فكانت
+ * المنصة تعرض 10,300 (سوق السودان) بينما المصدر المعتمد يقول 10,500 للبيع.
+ * الآن: أخبار السودان أولاً (سعر البيع = سعر التداول) ثم سوق السودان احتياطاً.
+ */
 export const fetchLiveRates = async (): Promise<LiveRatesSnapshot | null> => {
+  const akhbar = await fetchSudanAkhbarSnapshot();
+  if (akhbar?.rates.length) return akhbar;
+
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 9000);
@@ -697,19 +707,7 @@ export const fetchLiveRates = async (): Promise<LiveRatesSnapshot | null> => {
       }
     }
   } catch {
-    /* fall through to the backup source */
-  }
-
-  // Backup source
-  const backup = await fetchSudanAkhbarRates();
-  if (backup.length) {
-    return {
-      rates: backup,
-      source: BACKUP_SOURCE_NAME,
-      sourceUrl: SUDANAKHBAR_HOME,
-      fetchedAt: new Date().toISOString(),
-      stale: false,
-    };
+    /* no backup left — caller keeps the previous snapshot */
   }
 
   return null;
@@ -858,6 +856,10 @@ export const ageHours = (iso?: string): number | null => {
   return (Date.now() - t) / 36e5;
 };
 
+/** هل اللقطة صادرة من «أخبار السودان» (المصدر المعتمد)؟ */
+export const isSudanAkhbarSnapshot = (snap?: { source?: string } | null): boolean =>
+  String(snap?.source || '').includes('sudanakhbar') || String(snap?.source || '').includes('اخبار السودان');
+
 export const isStale = (iso?: string): boolean => {
   const h = ageHours(iso);
   return h === null ? true : h > MAX_AGE_HOURS;
@@ -866,6 +868,6 @@ export const isStale = (iso?: string): boolean => {
 export const BACKUP_SOURCE_NAME = 'اخبار السودان (sudanakhbar.com)';
 
 export const RATES_SOURCE = {
-  primary: { url: SOURCE_URL, name: SOURCE_NAME },
-  backup: { url: SUDANAKHBAR_HOME, name: BACKUP_SOURCE_NAME },
+  primary: { url: SUDANAKHBAR_HOME, name: BACKUP_SOURCE_NAME },
+  backup: { url: SOURCE_URL, name: SOURCE_NAME },
 };
