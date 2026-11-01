@@ -600,6 +600,15 @@ class ApiClient {
     });
   }
 
+  /** المنصة: بضاعة متجر بالكامل (فتح المتجر من اسمه بضغطة). */
+  public async getTenantProducts(tenantId: string): Promise<{
+    tenant: { id: string; name: string; businessType: string; accountSegment: string; city: string; phone: string };
+    products: any[];
+    totals: { products: number; active: number };
+  }> {
+    return this.request(`/admin/tenants/${encodeURIComponent(tenantId)}/products`);
+  }
+
   public async updateProduct(id: string, payload: Record<string, unknown>): Promise<{ success: boolean; product: Product }> {
     return this.request(`/products/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
   }

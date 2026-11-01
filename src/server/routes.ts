@@ -1767,7 +1767,7 @@ apiRouter.post('/products', merchantAuthMiddleware, (req, res) => {
   const {
     name, sku, barcode, category, unit, purchaseCost, costCurrency, sellingPriceSdg,
     minStockAlert, initialStock, branchId, imageUrl, videoUrl, isTaxExempt, customTaxRate,
-    description, expiryDate,
+    description, expiryDate, productionDate,
   } = req.body;
 
   if (!name || !sellingPriceSdg) {
@@ -1792,6 +1792,9 @@ apiRouter.post('/products', merchantAuthMiddleware, (req, res) => {
     /* الوصف وتاريخ الصلاحية: يُنسخان تلقائياً لكل من يربط هذا الصنف */
     description: description ? String(description).slice(0, 1200) : undefined,
     expiryDate: expiryDate && !Number.isNaN(Date.parse(String(expiryDate))) ? String(expiryDate) : undefined,
+    /* تاريخ الإنتاج — يُستخدم لحساب الصلاحية وعرض «أنتج في / ينتهي في» */
+    productionDate:
+      productionDate && !Number.isNaN(Date.parse(String(productionDate))) ? String(productionDate) : undefined,
     isTaxExempt: Boolean(isTaxExempt),
     customTaxRate: customTaxRate !== undefined && customTaxRate !== '' ? Number(customTaxRate) : undefined,
     isActive: true,
@@ -1832,7 +1835,7 @@ apiRouter.put('/products/:id', merchantAuthMiddleware, requireProductEditor, (re
   const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
   if (!product) return res.status(404).json({ error: 'الصنف غير موجود في متجرك.' });
   const body = req.body || {};
-  const textFields = ['name', 'sku', 'barcode', 'category', 'unit', 'costCurrency', 'imageUrl', 'videoUrl', 'description', 'expiryDate'] as const;
+  const textFields = ['name', 'sku', 'barcode', 'category', 'unit', 'costCurrency', 'imageUrl', 'videoUrl', 'description', 'expiryDate', 'productionDate'] as const;
   for (const field of textFields) {
     if (field in body && (typeof body[field] !== 'string' || body[field].length > (field === 'imageUrl' || field === 'videoUrl' ? 2048 : 250)))
       return res.status(400).json({ error: 'بيانات الصنف غير صالحة.' });
@@ -4009,6 +4012,52 @@ apiRouter.get('/admin/tenants', adminAuthMiddleware, (req, res) => {
     };
   });
   res.json({ tenants: summary });
+});
+
+/**
+ * المنصة: بضاعة متجر (كل الأصناف) — لفتح المتجر من اسمه بضغطة.
+ * قراءة فقط، محمية بصلاحية الإدارة.
+ */
+apiRouter.get('/admin/tenants/:id/products', adminAuthMiddleware, (req, res) => {
+  const tenant = db.getTenant(req.params.id);
+  if (!tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const schema = db.getSchema();
+  const products = schema.products
+    .filter((p) => p.tenantId === tenant.id)
+    .map((p) => {
+      const stock = (schema.branchInventories || [])
+        .filter((i) => i.productId === p.id)
+        .reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+      return {
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        barcode: p.barcode,
+        category: p.category,
+        unit: p.unit,
+        sellingPriceSdg: p.sellingPriceSdg,
+        purchaseCost: p.purchaseCost,
+        stock,
+        imageUrl: p.imageUrl,
+        videoUrl: p.videoUrl,
+        expiryDate: p.expiryDate,
+        productionDate: (p as any).productionDate,
+        isActive: p.isActive !== false,
+        linkedToItemId: p.linkedToItemId,
+      };
+    });
+  res.json({
+    tenant: {
+      id: tenant.id,
+      name: tenant.tradeName || tenant.name,
+      businessType: (tenant as any).businessType || '',
+      accountSegment: (tenant as any).accountSegment || 'retailer',
+      city: tenant.city,
+      phone: tenant.phone,
+    },
+    products,
+    totals: { products: products.length, active: products.filter((p) => p.isActive).length },
+  });
 });
 
 /** المنصة: تحديد نوع الحساب (قطاعي/جملة/مورد) وتشغيل/إيقاف VIP. */

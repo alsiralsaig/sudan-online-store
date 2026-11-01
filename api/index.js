@@ -7821,7 +7821,8 @@ apiRouter.post("/products", merchantAuthMiddleware, (req, res) => {
     isTaxExempt,
     customTaxRate,
     description,
-    expiryDate
+    expiryDate,
+    productionDate
   } = req.body;
   if (!name || !sellingPriceSdg) {
     return res.status(400).json({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u062A\u062C \u0648\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u0628\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
@@ -7844,6 +7845,8 @@ apiRouter.post("/products", merchantAuthMiddleware, (req, res) => {
     /* الوصف وتاريخ الصلاحية: يُنسخان تلقائياً لكل من يربط هذا الصنف */
     description: description ? String(description).slice(0, 1200) : void 0,
     expiryDate: expiryDate && !Number.isNaN(Date.parse(String(expiryDate))) ? String(expiryDate) : void 0,
+    /* تاريخ الإنتاج — يُستخدم لحساب الصلاحية وعرض «أنتج في / ينتهي في» */
+    productionDate: productionDate && !Number.isNaN(Date.parse(String(productionDate))) ? String(productionDate) : void 0,
     isTaxExempt: Boolean(isTaxExempt),
     customTaxRate: customTaxRate !== void 0 && customTaxRate !== "" ? Number(customTaxRate) : void 0,
     isActive: true,
@@ -7876,7 +7879,7 @@ apiRouter.put("/products/:id", merchantAuthMiddleware, requireProductEditor, (re
   const product = db.getSchema().products.find((p) => p.id === req.params.id && p.tenantId === actor.tenantId && p.isActive !== false);
   if (!product) return res.status(404).json({ error: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u062A\u062C\u0631\u0643." });
   const body = req.body || {};
-  const textFields = ["name", "sku", "barcode", "category", "unit", "costCurrency", "imageUrl", "videoUrl", "description", "expiryDate"];
+  const textFields = ["name", "sku", "barcode", "category", "unit", "costCurrency", "imageUrl", "videoUrl", "description", "expiryDate", "productionDate"];
   for (const field of textFields) {
     if (field in body && (typeof body[field] !== "string" || body[field].length > (field === "imageUrl" || field === "videoUrl" ? 2048 : 250)))
       return res.status(400).json({ error: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
@@ -9591,6 +9594,43 @@ apiRouter.get("/admin/tenants", adminAuthMiddleware, (req, res) => {
     };
   });
   res.json({ tenants: summary });
+});
+apiRouter.get("/admin/tenants/:id/products", adminAuthMiddleware, (req, res) => {
+  const tenant = db.getTenant(req.params.id);
+  if (!tenant) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const schema = db.getSchema();
+  const products = schema.products.filter((p) => p.tenantId === tenant.id).map((p) => {
+    const stock = (schema.branchInventories || []).filter((i) => i.productId === p.id).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+    return {
+      id: p.id,
+      name: p.name,
+      sku: p.sku,
+      barcode: p.barcode,
+      category: p.category,
+      unit: p.unit,
+      sellingPriceSdg: p.sellingPriceSdg,
+      purchaseCost: p.purchaseCost,
+      stock,
+      imageUrl: p.imageUrl,
+      videoUrl: p.videoUrl,
+      expiryDate: p.expiryDate,
+      productionDate: p.productionDate,
+      isActive: p.isActive !== false,
+      linkedToItemId: p.linkedToItemId
+    };
+  });
+  res.json({
+    tenant: {
+      id: tenant.id,
+      name: tenant.tradeName || tenant.name,
+      businessType: tenant.businessType || "",
+      accountSegment: tenant.accountSegment || "retailer",
+      city: tenant.city,
+      phone: tenant.phone
+    },
+    products,
+    totals: { products: products.length, active: products.filter((p) => p.isActive).length }
+  });
 });
 apiRouter.get("/diagnostics/segments", async (_req, res) => {
   try {

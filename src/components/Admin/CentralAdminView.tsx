@@ -22,6 +22,7 @@ import {
   Tag,
   Menu,
   ChevronDown,
+  Package,
 } from 'lucide-react';
 import type { AuditLog, Product } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
@@ -55,6 +56,23 @@ export const CentralAdminView: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  /* المتجر المفتوح لبضاعته (يُفتح بالضغط على اسم المتجر) */
+  const [openStore, setOpenStore] = useState<any | null>(null);
+  const [storeProducts, setStoreProducts] = useState<any[]>([]);
+  const [storeLoading, setStoreLoading] = useState(false);
+  const [storeQuery, setStoreQuery] = useState('');
+
+  useEffect(() => {
+    if (!openStore?.id) { setStoreProducts([]); return; }
+    let cancelled = false;
+    setStoreLoading(true);
+    setStoreQuery('');
+    api.getTenantProducts(openStore.id)
+      .then((res) => { if (!cancelled) setStoreProducts(res.products || []); })
+      .catch(() => { if (!cancelled) setStoreProducts([]); })
+      .finally(() => { if (!cancelled) setStoreLoading(false); });
+    return () => { cancelled = true; };
+  }, [openStore?.id]);
 
   // Review Payment Modal
   const [reviewingPayment, setReviewingPayment] = useState<any | null>(null);
@@ -383,7 +401,14 @@ export const CentralAdminView: React.FC = () => {
                 {tenants.map((t) => (
                   <tr key={t.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3 px-4">
-                      <div className="font-bold text-slate-900">{t.name}</div>
+                      {/* اسم المتجر: بضغطة واحدة تُفتح كل بضاعته */}
+                      <button
+                        onClick={() => { setOpenStore(t); }}
+                        className="font-bold text-sky-800 hover:text-sky-600 underline decoration-dotted underline-offset-2 text-right"
+                        title="اضغط لعرض كل بضاعة المتجر"
+                      >
+                        {t.name}
+                      </button>
                       <div className="text-[11px] text-slate-500">{t.tradeName}</div>
                       {/* نوع النشاط — يظهر لتجار الجملة في قائمة الموردين */}
                       <input
@@ -814,6 +839,80 @@ export const CentralAdminView: React.FC = () => {
           </div>
         );
       })()}
+      {/* نافذة: كل بضاعة المتجر */}
+      {openStore && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" dir="rtl">
+          <div className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="bg-slate-900 text-white px-4 py-3 flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="text-[13.5px] font-black truncate">{openStore.name}</h3>
+                <p className="text-[10.5px] text-slate-300 mt-0.5">
+                  {openStore.businessType || 'نشاط غير محدد'} · {openStore.city || '—'} · {String(openStore.accountSegment || 'retailer')}
+                </p>
+              </div>
+              <button onClick={() => setOpenStore(null)} className="rounded-lg bg-white/15 p-1.5 shrink-0" aria-label="إغلاق">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 border-b border-slate-200">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                <input
+                  value={storeQuery}
+                  onChange={(e) => setStoreQuery(e.target.value)}
+                  placeholder="ابحث في بضاعة المتجر (اسم / باركود / تصنيف)..."
+                  className="w-full rounded-xl border border-slate-300 pr-9 pl-3 py-2 text-[12px]"
+                />
+              </div>
+              <p className="mt-1.5 text-[10.5px] text-slate-500">
+                {storeProducts.length} صنف · {storeProducts.filter((p) => p.isActive).length} نشط
+              </p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+              {storeLoading ? (
+                <p className="text-center text-[12px] text-slate-500 py-8">جاري تحميل البضاعة…</p>
+              ) : storeProducts.length === 0 ? (
+                <p className="text-center text-[12px] text-slate-500 py-8">لا أصناف لهذا المتجر بعد.</p>
+              ) : (
+                storeProducts
+                  .filter((p) => {
+                    const q = storeQuery.trim();
+                    if (!q) return true;
+                    return [p.name, p.barcode, p.sku, p.category].filter(Boolean).some((v: string) => String(v).includes(q));
+                  })
+                  .map((p) => (
+                    <div key={p.id} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2">
+                      {p.imageUrl ? (
+                        <img src={p.imageUrl} alt="" className="w-11 h-11 rounded-lg object-cover border border-slate-200" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-11 h-11 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400">
+                          <Package className="w-5 h-5" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12px] font-bold text-slate-900 truncate">{p.name}</div>
+                        <div className="text-[10px] text-slate-500">
+                          {p.category || '—'} · {p.unit || '—'} · رصيد {p.stock ?? 0}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {p.productionDate ? `إنتاج: ${String(p.productionDate).slice(0, 10)}` : 'إنتاج: —'}
+                          {' · '}
+                          {p.expiryDate ? `انتهاء: ${String(p.expiryDate).slice(0, 10)}` : 'انتهاء: —'}
+                        </div>
+                      </div>
+                      <div className="font-mono text-[12px] font-black text-emerald-700 shrink-0">
+                        {Number(p.sellingPriceSdg || 0).toLocaleString('en-US')} ج.س
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

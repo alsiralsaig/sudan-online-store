@@ -140,6 +140,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newIsTaxExempt, setNewIsTaxExempt] = useState(false);
   const [newCustomTaxRate, setNewCustomTaxRate] = useState('');
   const [newImageUrl, setNewImageUrl] = useState('');
+  /* تواريخ التتبع: الإنتاج والانتهاء (اختيارية لكن ظاهرة في كل صنف) */
+  const [newProductionDate, setNewProductionDate] = useState('');
+  const [newExpiryDate, setNewExpiryDate] = useState('');
   const [newVideoUrl, setNewVideoUrl] = useState('');
   const [mediaBusy, setMediaBusy] = useState<null | 'image' | 'video'>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -319,6 +322,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         customTaxRate: newCustomTaxRate ? Number(newCustomTaxRate) : undefined,
         imageUrl: newImageUrl || undefined,
         videoUrl: newVideoUrl || undefined,
+        productionDate: newProductionDate || undefined,
+        expiryDate: newExpiryDate || undefined,
       });
 
       if (res.success) {
@@ -330,6 +335,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         setNewIsTaxExempt(false);
         setNewCustomTaxRate('');
         setNewImageUrl('');
+        setNewProductionDate('');
+        setNewExpiryDate('');
         setNewVideoUrl('');
         setMediaError(null);
         onRefresh();
@@ -1211,6 +1218,34 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   className="w-full px-3 py-2 font-mono text-[14px] border border-slate-300 rounded-lg"
                 />
               </div>
+
+              {/* تواريخ الإنتاج والانتهاء */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="min-w-0">
+                  <label className="block font-semibold text-slate-700 mb-1">تاريخ الإنتاج:</label>
+                  <input
+                    type="date"
+                    value={newProductionDate}
+                    onChange={(e) => setNewProductionDate(e.target.value)}
+                    className="w-full min-w-0 px-2.5 py-2 font-mono text-[12.5px] border border-slate-300 rounded-lg bg-white"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <label className="block font-semibold text-slate-700 mb-1">تاريخ الانتهاء:</label>
+                  <input
+                    type="date"
+                    value={newExpiryDate}
+                    min={newProductionDate || undefined}
+                    onChange={(e) => setNewExpiryDate(e.target.value)}
+                    className="w-full min-w-0 px-2.5 py-2 font-mono text-[12.5px] border border-slate-300 rounded-lg bg-white"
+                  />
+                </div>
+              </div>
+              {newProductionDate && newExpiryDate && (
+                <p className="-mt-1 text-[10.5px] text-slate-500">
+                  الصلاحية: {Math.max(0, Math.round((Date.parse(newExpiryDate) - Date.parse(newProductionDate)) / 86400000))} يوم
+                </p>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
