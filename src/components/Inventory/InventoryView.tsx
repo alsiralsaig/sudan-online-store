@@ -131,6 +131,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   /* الوحدات: قائمة جاهزة + أي وحدة يضيفها المستخدم */
   const [unitList, setUnitList] = useState<string[]>(PRODUCT_UNITS);
   const [customUnit, setCustomUnit] = useState('');
+  /* تقرير الصلاحية: المنتهية والقريبة من الانتهاء */
+  const [expiryOpen, setExpiryOpen] = useState(false);
+  const [expiryDays, setExpiryDays] = useState(30);
+  const [expiryData, setExpiryData] = useState<any | null>(null);
+  const [expiryLoading, setExpiryLoading] = useState(false);
   const [showUnitPicker, setShowUnitPicker] = useState(false);
   const [newPurchaseCost, setNewPurchaseCost] = useState('10000');
   const [newCostCurrency, setNewCostCurrency] = useState('SDG');
@@ -300,6 +305,22 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   });
 
   // Handle Add Product
+  const loadExpiryReport = React.useCallback(async (days: number) => {
+    setExpiryLoading(true);
+    try {
+      const res = await api.getExpiryReport(days);
+      setExpiryData(res);
+    } catch {
+      setExpiryData(null);
+    } finally {
+      setExpiryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (expiryOpen) void loadExpiryReport(expiryDays);
+  }, [expiryOpen, expiryDays, loadExpiryReport]);
+
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -618,6 +639,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             >
               <ShoppingCart className="w-3.5 h-3.5" />
               <span>لوحة النواقص والشراء المباشر ({deficitProducts.length})</span>
+            </button>
+            <button
+              onClick={() => setExpiryOpen(true)}
+              className="px-3.5 py-1.5 text-xs font-bold rounded-lg transition-colors bg-rose-600 hover:bg-rose-700 text-white shadow-xs flex items-center gap-1.5"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>تقرير الصلاحية وقرب الانتهاء</span>
             </button>
             <button
               onClick={() => setShowLowStockOnly(!showLowStockOnly)}
@@ -1862,6 +1890,105 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* تقرير الصلاحية */}
+      {expiryOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" dir="rtl">
+          <div className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="bg-rose-700 text-white px-4 py-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-[13.5px] font-black">تقرير الصلاحية</h3>
+                <p className="text-[10.5px] text-rose-100 mt-0.5">الأصناف المنتهية والقريبة من الانتهاء</p>
+              </div>
+              <button onClick={() => setExpiryOpen(false)} className="rounded-lg bg-white/15 p-1.5" aria-label="إغلاق">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 border-b border-slate-200 flex items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-700">خلال</span>
+              {[7, 30, 60, 90].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setExpiryDays(d)}
+                  className={`rounded-lg px-2.5 py-1 text-[11px] font-black ${
+                    expiryDays === d ? 'bg-rose-700 text-white' : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  {d} يوم
+                </button>
+              ))}
+              <button onClick={() => void loadExpiryReport(expiryDays)} className="mr-auto text-[11px] font-bold text-sky-700 underline">
+                تحديث
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {expiryLoading ? (
+                <p className="text-center text-[12px] text-slate-500 py-8">جاري التحضير…</p>
+              ) : !expiryData ? (
+                <p className="text-center text-[12px] text-slate-500 py-8">تعذّر تحميل التقرير.</p>
+              ) : expiryData.expired.length + expiryData.soon.length === 0 ? (
+                <div className="text-center py-8">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
+                  <p className="text-[12.5px] font-bold text-emerald-800">لا أصناف منتهية أو قريبة من الانتهاء خلال {expiryDays} يوم.</p>
+                  {expiryData.totals?.noDate > 0 && (
+                    <p className="text-[10.5px] text-slate-500 mt-1">{expiryData.totals.noDate} صنف بلا تاريخ انتهاء — أضف التواريخ ليظهر في التقرير.</p>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-2 text-center">
+                      <div className="text-[10px] font-bold text-rose-800">منتهية</div>
+                      <div className="font-mono text-[15px] font-black text-rose-700">{expiryData.totals.expired}</div>
+                    </div>
+                    <div className="rounded-xl bg-amber-50 border border-amber-200 p-2 text-center">
+                      <div className="text-[10px] font-bold text-amber-800">قريبة</div>
+                      <div className="font-mono text-[15px] font-black text-amber-700">{expiryData.totals.soon}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 border border-slate-200 p-2 text-center">
+                      <div className="text-[10px] font-bold text-slate-700">قيمة معرّضة</div>
+                      <div className="font-mono text-[12px] font-black text-slate-800">
+                        {Number(expiryData.totals.expiringValueSdg || 0).toLocaleString('en-US')} ج.س
+                      </div>
+                    </div>
+                  </div>
+
+                  {[...expiryData.expired, ...expiryData.soon].map((r: any) => (
+                    <div
+                      key={r.id}
+                      className={`rounded-xl border p-2 ${r.state === 'expired' ? 'border-rose-300 bg-rose-50/60' : 'border-amber-300 bg-amber-50/60'}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-black text-slate-900 truncate">{r.name}</div>
+                          <div className="text-[10px] text-slate-600">
+                            {r.category || '—'} · {r.unit || '—'} · رصيد {r.stock}
+                          </div>
+                          <div className="text-[10px] text-slate-600">
+                            إنتاج: {r.productionDate || '—'} · انتهاء: {r.expiryDate}
+                          </div>
+                        </div>
+                        <span className={`shrink-0 rounded-lg px-1.5 py-0.5 text-[10px] font-black ${
+                          r.state === 'expired' ? 'bg-rose-700 text-white' : 'bg-amber-600 text-white'
+                        }`}>
+                          {r.state === 'expired' ? `منتهي منذ ${Math.abs(r.daysLeft)} يوم` : `باقي ${r.daysLeft} يوم`}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {expiryData.totals?.noDate > 0 && (
+                    <p className="text-[10px] text-slate-500 text-center pt-1">
+                      {expiryData.totals.noDate} صنف بلا تاريخ انتهاء غير مشمول.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

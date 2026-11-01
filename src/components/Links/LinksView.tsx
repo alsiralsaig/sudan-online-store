@@ -47,11 +47,17 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   const [ratesAt, setRatesAt] = useState<string | null>(null);
   const [rateSource, setRateSource] = useState<{ name: string; url?: string; marketAt?: string } | null>(null);
   const [rateDetail, setRateDetail] = useState<Record<string, { buy?: number; sell?: number }>>({});
+  /* الحد الأدنى للطلب (للمورد/الجملة) */
+  const [minOrderValue, setMinOrderValue] = useState('');
+  const [minOrderQty, setMinOrderQty] = useState('');
+  const [minOrderSaving, setMinOrderSaving] = useState(false);
   const [rateTouched, setRateTouched] = useState(false);
   const [orders, setOrders] = useState<{ incoming: any[]; outgoing: any[]; totals: { incomingPending: number; outgoingPending: number } }>({
     incoming: [], outgoing: [], totals: { incomingPending: 0, outgoingPending: 0 },
   });
   const isupplierSide = viewer.accountSegment === 'supplier' || viewer.accountSegment === 'wholesaler';
+  /* متجري (لو أنا مورد/جملة) — لعرض حدي الأدنى الحالي */
+  const myMinOrder = (sources || []).find((x: any) => x.minOrderValueSdg !== undefined && (x as any).isMe) || null;
 
   /* أسعار السوق الموازي: عند فتح الشاشة وكل دقيقة، ووقت إرسال الطلب */
   const loadParallelRates = useCallback(async () => {
@@ -336,6 +342,59 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
         </div>
       </div>
 
+      {/* ضبط الحد الأدنى للطلب — للمورد وتاجر الجملة */}
+      {isupplierSide && (
+        <div className="rounded-2xl bg-white border border-slate-200 p-3">
+          <h3 className="text-[12px] font-black text-slate-800 mb-1">الحد الأدنى للطلب (تفرضه أنت على المشترين)</h3>
+          <p className="text-[10.5px] text-slate-500 mb-2">
+            أي طلب أقل من هذا الحد يُرفض تلقائياً برسالة توضّح المتبقي. اتركه صفراً لإلغاء الحد.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[10.5px] font-bold text-slate-700">
+              أقل قيمة (ج.س)
+              <input
+                value={minOrderValue}
+                onChange={(e) => setMinOrderValue(e.target.value.replace(/[^\d]/g, ''))}
+                inputMode="numeric"
+                placeholder="مثال: 100000"
+                className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+            <label className="text-[10.5px] font-bold text-slate-700">
+              أقل كمية (وحدة)
+              <input
+                value={minOrderQty}
+                onChange={(e) => setMinOrderQty(e.target.value.replace(/[^\d]/g, ''))}
+                inputMode="numeric"
+                placeholder="مثال: 10"
+                className="mt-0.5 w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+          </div>
+          <button
+            onClick={async () => {
+              setMinOrderSaving(true);
+              try {
+                const res = await api.setMinOrder({
+                  minOrderValueSdg: Number(minOrderValue) || 0,
+                  minOrderQty: Number(minOrderQty) || 0,
+                });
+                setNote(`تم حفظ الحد الأدنى للطلب: ${res.minOrderValueSdg.toLocaleString('en-US')} ج.س · ${res.minOrderQty} وحدة.`);
+                void loadAll();
+              } catch (e: any) {
+                setError(e?.message || 'تعذّر حفظ الحد الأدنى.');
+              } finally {
+                setMinOrderSaving(false);
+              }
+            }}
+            disabled={minOrderSaving}
+            className="mt-2 w-full rounded-xl bg-sky-700 text-white py-2 text-[12px] font-black disabled:opacity-60"
+          >
+            {minOrderSaving ? 'جاري الحفظ…' : 'حفظ الحد الأدنى'}
+          </button>
+        </div>
+      )}
+
       {note && (
         <div className="rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-[11.5px] font-bold px-3 py-2 flex items-center justify-between gap-2">
           <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> {note}</span>
@@ -394,6 +453,13 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                   {/* بخط صغير تحت اسم المتجر: نوع النشاط */}
                   <span className="font-bold text-slate-600">{s.businessType || 'نشاط غير محدد'}</span>
                 </div>
+                {(Number(s.minOrderValueSdg) > 0 || Number(s.minOrderQty) > 0) && (
+                  <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-900">
+                    أقل طلب:
+                    {Number(s.minOrderValueSdg) > 0 ? ` ${Number(s.minOrderValueSdg).toLocaleString('en-US')} ج.س` : ''}
+                    {Number(s.minOrderQty) > 0 ? ` · ${s.minOrderQty} وحدة` : ''}
+                  </div>
+                )}
                 <div className="text-[10.5px] text-slate-500 mt-1 flex items-center gap-2">
                   <span>{s.city || '—'}</span>
                   <span>•</span>
@@ -604,6 +670,22 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                     placeholder="ملاحظة للمورد (اختياري): مكان التسليم، موعد التسليم…"
                     className="w-full rounded-lg border border-sky-300 px-2 py-1.5 text-[11px] focus:outline-none focus:border-sky-600"
                   />
+                  {/* الحد الأدنى للطلب الذي يفرضه المورد */}
+                  {(() => {
+                    const minV = Number((openSource as any)?.minOrderValueSdg) || 0;
+                    const minQ = Number((openSource as any)?.minOrderQty) || 0;
+                    const qtySum = cartLines.reduce((sum, l) => sum + l.quantity, 0);
+                    const belowV = minV > 0 && cartTotal < minV;
+                    const belowQ = minQ > 0 && qtySum < minQ;
+                    if (!belowV && !belowQ) return null;
+                    return (
+                      <div className="rounded-lg bg-amber-50 border border-amber-300 px-2 py-1.5 text-[10.5px] font-bold text-amber-900">
+                        أقل طلب من هذا المورد:
+                        {belowV ? ` أضف ${(minV - cartTotal).toLocaleString('en-US')} ج.س لتصل ${minV.toLocaleString('en-US')} ج.س.` : ''}
+                        {belowQ ? ` الكمية ${qtySum}/${minQ} وحدة.` : ''}
+                      </div>
+                    );
+                  })()}
                   <div className="flex gap-2">
                     <button
                       onClick={sendOrder}

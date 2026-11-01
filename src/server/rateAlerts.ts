@@ -18,7 +18,14 @@ import { sendTelegram, telegramConfigured } from './telegram.ts';
  * when the key is missing, so nothing silently fails.
  */
 
-export const THRESHOLD_PERCENT = 3;
+/*
+ * عتبة التنبيه: 0.5% — أي تغيّر ملموس في سعر الصرف (10,500 ← 10,552) يستحق
+ * إشعاراً فورياً؛ العتبة القديمة 3% كانت تُسكت تحركات السوق اليومية.
+ */
+export const THRESHOLD_PERCENT = 0.5;
+
+/** عملات المنصة التي نراقبها فعلياً (الدولار أولاً — هو سعر التداول). */
+const WATCHED = ['USD', 'SAR', 'AED', 'EUR', 'EGP'];
 
 const PHONE = (process.env.WHATSAPP_ALERT_PHONE || '').replace(/[^\d]/g, '');
 const CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || '';
@@ -168,6 +175,44 @@ export function detectMoves(): MoveAlert[] {
   }
   return moves;
 }
+
+/**
+ * فحص فوري: يقارن لقطة قديمة بلقطة جديدة ويُطلق التنبيهات مباشرة.
+ * ------------------------------------------------------------------
+ * كان الفحص يعتمد على `lastMovePercent` المحفوظ في جدول العملات، وهو يُحسب
+ * مقابل السعر القديم المخزّن فقط — فأي مقارنة بين لقطتين لا تُطلق شيئاً.
+ * بهذه الدالة يعمل «تحديث السعر» في التطبيق وكرون كل ساعة بتنbيه حقيقي.
+ */
+export const checkRateMovesBetween = async (
+  previous: { rates?: Array<{ code: string; parallel?: number | null; official?: number | null }> } | null,
+  current: { rates?: Array<{ code: string; parallel?: number | null; official?: number | null }> } | null
+): Promise<AlertResult> => {
+  const moves: MoveAlert[] = [];
+  const pickRate = (snap: any, code: string) => {
+    const r = (snap?.rates || []).find((x: any) => x.code === code);
+    const v = r?.parallel ?? r?.official ?? null;
+    return typeof v === 'number' && v > 0 ? v : null;
+  };
+  for (const code of WATCHED) {
+    const before = pickRate(previous, code);
+    const after = pickRate(current, code);
+    if (before === null || after === null || before === after) continue;
+    const pct = Number((((after - before) / before) * 100).toFixed(2));
+    if (Math.abs(pct) < THRESHOLD_PERCENT) continue;
+    const meta = db.getSchema().currencies.find((c) => c.code === code);
+    moves.push({
+      code,
+      name: meta?.name || code,
+      previous: before,
+      current: after,
+      percent: pct,
+    });
+  }
+  if (!moves.length) {
+    return { triggered: [], inApp: 0, whatsapp: { sent: 0, skipped: '' }, telegram: { sent: 0, skipped: '' } };
+  }
+  return checkRateMoves(moves);
+};
 
 export const whatsappConfigured = (): boolean => !!PHONE && !!CALLMEBOT_KEY;
 

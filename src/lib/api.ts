@@ -600,6 +600,22 @@ class ApiClient {
     });
   }
 
+  /** الحد الأدنى للطلب الذي يفرضه المورد (يضبطه المورد/الجملة). */
+  public async setMinOrder(payload: { minOrderValueSdg: number; minOrderQty: number }): Promise<{ success: boolean; minOrderValueSdg: number; minOrderQty: number }> {
+    return this.request('/links/min-order', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  /** تقرير الصلاحية: المنتهية والقريبة من الانتهاء. */
+  public async getExpiryReport(days = 30): Promise<{
+    days: number;
+    expired: any[];
+    soon: any[];
+    ok: any[];
+    totals: { expired: number; soon: number; expiringValueSdg: number; noDate: number };
+  }> {
+    return this.request(`/inventory/expiry-report?days=${days}`);
+  }
+
   /** المنصة: بضاعة متجر بالكامل (فتح المتجر من اسمه بضغطة). */
   public async getTenantProducts(tenantId: string): Promise<{
     tenant: { id: string; name: string; businessType: string; accountSegment: string; city: string; phone: string };

@@ -294,6 +294,16 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
                         موازي
                       </span>
                     )}
+                    {!curr.isBase && Math.abs(Number((curr as any).lastMovePercent) || 0) >= 0.5 && (
+                      <span
+                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                          Number((curr as any).lastMovePercent) > 0 ? 'bg-rose-100 text-rose-800' : 'bg-sky-100 text-sky-800'
+                        }`}
+                        title="تغيّر السعر منذ آخر قراءة"
+                      >
+                        {Number((curr as any).lastMovePercent) > 0 ? '▲' : '▼'} {Math.abs(Number((curr as any).lastMovePercent))}%
+                      </span>
+                    )}
                   </div>
 
                   {!curr.isBase && curr.officialRate ? (

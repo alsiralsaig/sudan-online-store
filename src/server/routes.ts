@@ -31,7 +31,7 @@ import {
   asksForSources,
   sourcesWanted,
 } from './rateAnswer.ts';
-import { checkRateMoves, detectMoves, whatsappConfigured, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
+import { checkRateMoves, checkRateMovesBetween, detectMoves, whatsappConfigured, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
 import { ntfyStatus } from './ntfy.ts';
 import { newId, newCode } from './ids.ts';
@@ -1154,6 +1154,34 @@ apiRouter.delete('/employees/:id', merchantAuthMiddleware, (req, res) => {
    ========================================================================= */
 
 /** المتاجر التي يمكن لمتجري الربط بها (الطبقة الأعلى فقط، والمورد للـVIP). */
+/**
+ * الحد الأدنى للطلب — يضبطه المورد/الجملة لمتجره.
+ * settings.minOrderValueSdg : أقل قيمة للطلب بالجنيه (0 = بلا حد)
+ * settings.minOrderQty      : أقل عدد وحدات في الطلب (0 = بلا حد)
+ */
+apiRouter.post('/links/min-order', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const segment = (me as any).accountSegment || 'retailer';
+  if (segment === 'retailer') {
+    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'الحد الأدنى للطلب يخص الموردين وتجار الجملة فقط.' });
+  }
+  const value = Math.max(0, Number(req.body?.minOrderValueSdg) || 0);
+  const qty = Math.max(0, Math.round(Number(req.body?.minOrderQty) || 0));
+  (me as any).settings = { ...((me as any).settings || {}), minOrderValueSdg: value, minOrderQty: qty };
+  db.commit();
+  db.logAudit({
+    tenantId: me.id,
+    actorId: 'merchant',
+    actorName: me.tradeName || me.name,
+    action: 'SET_MIN_ORDER',
+    entity: 'Tenant',
+    entityId: me.id,
+    details: `الحد الأدنى للطلب: ${value} ج.س · ${qty} وحدة`,
+  });
+  res.json({ success: true, minOrderValueSdg: value, minOrderQty: qty });
+});
+
 apiRouter.get('/links/sources', merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant((req as AuthenticatedRequest).tenantId);
   if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
@@ -1166,6 +1194,9 @@ apiRouter.get('/links/sources', merchantAuthMiddleware, (req, res) => {
       name: t.tradeName || t.name,
       city: t.city,
       accountSegment: (t as any).accountSegment || 'retailer',
+      /* الحد الأدنى للطلب الذي يفرضه هذا المورد على المشترين */
+      minOrderValueSdg: Number((t as any).settings?.minOrderValueSdg) || 0,
+      minOrderQty: Number((t as any).settings?.minOrderQty) || 0,
       /* نوع النشاط: من المتجر نفسه، وإلا من طلب التسجيل المعتمد بنفس الاسم */
       businessType:
         (t as any).businessType ||
@@ -1367,6 +1398,28 @@ apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
       quantity,
       unitPriceSdg,
       totalSdg: unitPriceSdg * quantity,
+    });
+  }
+
+  /* الحد الأدنى للطلب: يفرضه المورد ويمنع الإرسال أقل منه */
+  const minValue = Number((seller as any).settings?.minOrderValueSdg) || 0;
+  const minQty = Number((seller as any).settings?.minOrderQty) || 0;
+  const checkTotal = clean.reduce((sum, it) => sum + it.totalSdg, 0);
+  const checkQty = clean.reduce((sum, it) => sum + it.quantity, 0);
+  if (minValue > 0 && checkTotal < minValue) {
+    return res.status(400).json({
+      error: 'BELOW_MIN_ORDER',
+      message: `الحد الأدنى للطلب من ${seller.tradeName || seller.name} هو ${minValue.toLocaleString('en-US')} ج.س — أضف أصنافاً بقيمة ${(minValue - checkTotal).toLocaleString('en-US')} ج.س.`,
+      minOrderValueSdg: minValue,
+      currentTotalSdg: checkTotal,
+    });
+  }
+  if (minQty > 0 && checkQty < minQty) {
+    return res.status(400).json({
+      error: 'BELOW_MIN_QTY',
+      message: `الحد الأدنى للكمية من ${seller.tradeName || seller.name} هو ${minQty} وحدة — أضفت ${checkQty}.`,
+      minOrderQty: minQty,
+      currentQty: checkQty,
     });
   }
 
@@ -3165,7 +3218,7 @@ apiRouter.put('/storefront-orders/:id/status', merchantAuthMiddleware, (req, res
 /*  Parallel-market rates (real trading prices in Sudan)               */
 /* ------------------------------------------------------------------ */
 
-const RATES_REFRESH_HOURS = 6;
+const RATES_REFRESH_HOURS = 1;
 
 /** يقيّد أي وعد بمهلة زمنية (حماية من تعليق الطلب حتى 504 على Vercel). */
 const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
@@ -3192,12 +3245,15 @@ const refreshLiveRates = async (actorName?: string) => {
       stale: last ? isStale(last.fetchedAt) : true,
     };
   }
+  /* اللقطة السابقة قبل الاستبدال — أساس مقارنة التنبيه الفوري */
+  const previousSnapshot = db.getRatesSnapshot();
   const { updated, skipped } = db.applyLiveRates(snapshot, actorName);
 
-  // Big moves → in-app notification + push (+ WhatsApp when configured)
+  // أي تغيّر ملموس → إشعار في التطبيق + Push (+ واتساب/تليجرام عند الضبط)
   let alerts = null;
   try {
-    alerts = await checkRateMoves(detectMoves());
+    alerts = await checkRateMovesBetween(previousSnapshot, snapshot);
+    if (!alerts.triggered.length) alerts = await checkRateMoves(detectMoves());
   } catch (err) {
     console.warn('[rates] alert failed:', (err as Error).message);
   }
@@ -3400,6 +3456,31 @@ apiRouter.get('/currency/rates/all', async (req, res) => {
     answer: formatMultiSourceAnswer(sources, { storedAt: stored?.fetchedAt }),
     // ?debug=1 shows why a source was skipped (region blocks, HTTP codes)
     ...(req.query.debug ? { diagnostics: diag } : {}),
+  });
+});
+
+/**
+ * تنبيهات تغيّر السعر: آخر التحركات المسجّلة + عتبة التنبيه.
+ * تُستخدم في شاشة «العملات والصرف» لعرض شارة «تحرّك السعر».
+ */
+apiRouter.get('/currency/rate-moves', async (_req, res) => {
+  const log = db.getRateAlertLog().slice(-20).reverse();
+  const snapshot = db.getRatesSnapshot();
+  const currencies = db.getSchema().currencies
+    .filter((c) => !c.isBase)
+    .map((c) => ({
+      code: c.code,
+      name: c.name,
+      parallel: c.parallelRate ?? c.rateToSdg,
+      lastMovePercent: (c as any).lastMovePercent ?? 0,
+    }))
+    .filter((c) => Math.abs(c.lastMovePercent) >= THRESHOLD_PERCENT);
+  res.json({
+    thresholdPercent: THRESHOLD_PERCENT,
+    moves: currencies,
+    log,
+    source: snapshot?.source || null,
+    fetchedAt: snapshot?.fetchedAt || null,
   });
 });
 
@@ -4020,6 +4101,63 @@ apiRouter.get('/admin/tenants', adminAuthMiddleware, (req, res) => {
     };
   });
   res.json({ tenants: summary });
+});
+
+/**
+ * تقرير الصلاحية: الأصناف المنتهية والقريبة من الانتهاء (افتراضياً 30 يوماً).
+ * يعتمد على productionDate / expiryDate المضافة لكل صنف.
+ */
+apiRouter.get('/inventory/expiry-report', merchantAuthMiddleware, (req, res) => {
+  const tenantId = (req as AuthenticatedRequest).tenantId;
+  const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+  const schema = db.getSchema();
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const limitKey = new Date(Date.parse(`${todayKey}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+
+  const rows = schema.products
+    .filter((p) => p.tenantId === tenantId && p.isActive !== false)
+    .map((p) => {
+      const expiry = p.expiryDate ? String(p.expiryDate).slice(0, 10) : '';
+      if (!expiry || Number.isNaN(Date.parse(`${expiry}T00:00:00Z`))) return null;
+      const daysLeft = Math.round((Date.parse(`${expiry}T00:00:00Z`) - Date.parse(`${todayKey}T00:00:00Z`)) / 86400000);
+      const stock = (schema.branchInventories || [])
+        .filter((i) => i.productId === p.id)
+        .reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+      const state = daysLeft < 0 ? 'expired' : daysLeft <= days ? 'soon' : 'ok';
+      return {
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        unit: p.unit,
+        barcode: p.barcode,
+        stock,
+        productionDate: (p as any).productionDate ? String((p as any).productionDate).slice(0, 10) : '',
+        expiryDate: expiry,
+        daysLeft,
+        state,
+        sellingPriceSdg: p.sellingPriceSdg,
+        valueSdg: Math.max(0, stock) * (Number(p.sellingPriceSdg) || 0),
+      };
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => a.daysLeft - b.daysLeft);
+
+  const expired = rows.filter((r: any) => r.state === 'expired');
+  const soon = rows.filter((r: any) => r.state === 'soon');
+  res.json({
+    days,
+    today: todayKey,
+    horizon: limitKey,
+    expired,
+    soon,
+    ok: rows.filter((r: any) => r.state === 'ok'),
+    totals: {
+      expired: expired.length,
+      soon: soon.length,
+      expiringValueSdg: [...expired, ...soon].reduce((sum: number, r: any) => sum + (r.valueSdg || 0), 0),
+      noDate: schema.products.filter((p) => p.tenantId === tenantId && p.isActive !== false && !p.expiryDate).length,
+    },
+  });
 });
 
 /**

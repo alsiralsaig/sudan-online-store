@@ -5369,7 +5369,8 @@ async function runNotificationScan(opts = {}) {
 
 // src/server/rateAlerts.ts
 init_telegram();
-var THRESHOLD_PERCENT = 3;
+var THRESHOLD_PERCENT = 0.5;
+var WATCHED = ["USD", "SAR", "AED", "EUR", "EGP"];
 var PHONE = (process.env.WHATSAPP_ALERT_PHONE || "").replace(/[^\d]/g, "");
 var CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || "";
 var API_URL2 = process.env.WHATSAPP_API_URL || "https://api.callmebot.com/whatsapp.php";
@@ -5471,6 +5472,33 @@ function detectMoves() {
   }
   return moves;
 }
+var checkRateMovesBetween = async (previous, current) => {
+  const moves = [];
+  const pickRate = (snap, code) => {
+    const r = (snap?.rates || []).find((x) => x.code === code);
+    const v = r?.parallel ?? r?.official ?? null;
+    return typeof v === "number" && v > 0 ? v : null;
+  };
+  for (const code of WATCHED) {
+    const before = pickRate(previous, code);
+    const after = pickRate(current, code);
+    if (before === null || after === null || before === after) continue;
+    const pct = Number(((after - before) / before * 100).toFixed(2));
+    if (Math.abs(pct) < THRESHOLD_PERCENT) continue;
+    const meta = db.getSchema().currencies.find((c) => c.code === code);
+    moves.push({
+      code,
+      name: meta?.name || code,
+      previous: before,
+      current: after,
+      percent: pct
+    });
+  }
+  if (!moves.length) {
+    return { triggered: [], inApp: 0, whatsapp: { sent: 0, skipped: "" }, telegram: { sent: 0, skipped: "" } };
+  }
+  return checkRateMoves(moves);
+};
 var whatsappConfigured = () => !!PHONE && !!CALLMEBOT_KEY;
 var whatsappProviderHost = () => {
   try {
@@ -7320,6 +7348,28 @@ apiRouter.delete("/employees/:id", merchantAuthMiddleware, (req, res) => {
   });
   res.json({ success: true });
 });
+apiRouter.post("/links/min-order", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const segment = me.accountSegment || "retailer";
+  if (segment === "retailer") {
+    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u062F\u0646\u0649 \u0644\u0644\u0637\u0644\u0628 \u064A\u062E\u0635 \u0627\u0644\u0645\u0648\u0631\u062F\u064A\u0646 \u0648\u062A\u062C\u0627\u0631 \u0627\u0644\u062C\u0645\u0644\u0629 \u0641\u0642\u0637." });
+  }
+  const value = Math.max(0, Number(req.body?.minOrderValueSdg) || 0);
+  const qty = Math.max(0, Math.round(Number(req.body?.minOrderQty) || 0));
+  me.settings = { ...me.settings || {}, minOrderValueSdg: value, minOrderQty: qty };
+  db.commit();
+  db.logAudit({
+    tenantId: me.id,
+    actorId: "merchant",
+    actorName: me.tradeName || me.name,
+    action: "SET_MIN_ORDER",
+    entity: "Tenant",
+    entityId: me.id,
+    details: `\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u062F\u0646\u0649 \u0644\u0644\u0637\u0644\u0628: ${value} \u062C.\u0633 \xB7 ${qty} \u0648\u062D\u062F\u0629`
+  });
+  res.json({ success: true, minOrderValueSdg: value, minOrderQty: qty });
+});
 apiRouter.get("/links/sources", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);
   if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
@@ -7329,6 +7379,9 @@ apiRouter.get("/links/sources", merchantAuthMiddleware, (req, res) => {
     name: t.tradeName || t.name,
     city: t.city,
     accountSegment: t.accountSegment || "retailer",
+    /* الحد الأدنى للطلب الذي يفرضه هذا المورد على المشترين */
+    minOrderValueSdg: Number(t.settings?.minOrderValueSdg) || 0,
+    minOrderQty: Number(t.settings?.minOrderQty) || 0,
     /* نوع النشاط: من المتجر نفسه، وإلا من طلب التسجيل المعتمد بنفس الاسم */
     businessType: t.businessType || db.getSchema().tenantApplications?.find(
       (a) => a.tenantId && a.tenantId === t.id || a.storeName && (a.storeName === (t.tradeName || t.name) || a.storeName === t.name)
@@ -7476,6 +7529,26 @@ apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
       quantity,
       unitPriceSdg,
       totalSdg: unitPriceSdg * quantity
+    });
+  }
+  const minValue = Number(seller.settings?.minOrderValueSdg) || 0;
+  const minQty = Number(seller.settings?.minOrderQty) || 0;
+  const checkTotal = clean.reduce((sum, it) => sum + it.totalSdg, 0);
+  const checkQty = clean.reduce((sum, it) => sum + it.quantity, 0);
+  if (minValue > 0 && checkTotal < minValue) {
+    return res.status(400).json({
+      error: "BELOW_MIN_ORDER",
+      message: `\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u062F\u0646\u0649 \u0644\u0644\u0637\u0644\u0628 \u0645\u0646 ${seller.tradeName || seller.name} \u0647\u0648 ${minValue.toLocaleString("en-US")} \u062C.\u0633 \u2014 \u0623\u0636\u0641 \u0623\u0635\u0646\u0627\u0641\u0627\u064B \u0628\u0642\u064A\u0645\u0629 ${(minValue - checkTotal).toLocaleString("en-US")} \u062C.\u0633.`,
+      minOrderValueSdg: minValue,
+      currentTotalSdg: checkTotal
+    });
+  }
+  if (minQty > 0 && checkQty < minQty) {
+    return res.status(400).json({
+      error: "BELOW_MIN_QTY",
+      message: `\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u062F\u0646\u0649 \u0644\u0644\u0643\u0645\u064A\u0629 \u0645\u0646 ${seller.tradeName || seller.name} \u0647\u0648 ${minQty} \u0648\u062D\u062F\u0629 \u2014 \u0623\u0636\u0641\u062A ${checkQty}.`,
+      minOrderQty: minQty,
+      currentQty: checkQty
     });
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -8928,7 +9001,7 @@ apiRouter.put("/storefront-orders/:id/status", merchantAuthMiddleware, (req, res
   }
   res.json({ success: true, order });
 });
-var RATES_REFRESH_HOURS = 6;
+var RATES_REFRESH_HOURS = 1;
 var withTimeout2 = (p, ms) => Promise.race([p, new Promise((resolve) => setTimeout(() => resolve(null), ms))]);
 var refreshLiveRates = async (actorName) => {
   const authoritative = await withTimeout2(
@@ -8945,10 +9018,12 @@ var refreshLiveRates = async (actorName) => {
       stale: last ? isStale(last.fetchedAt) : true
     };
   }
+  const previousSnapshot = db.getRatesSnapshot();
   const { updated, skipped } = db.applyLiveRates(snapshot, actorName);
   let alerts = null;
   try {
-    alerts = await checkRateMoves(detectMoves());
+    alerts = await checkRateMovesBetween(previousSnapshot, snapshot);
+    if (!alerts.triggered.length) alerts = await checkRateMoves(detectMoves());
   } catch (err) {
     console.warn("[rates] alert failed:", err.message);
   }
@@ -9111,6 +9186,23 @@ apiRouter.get("/currency/rates/all", async (req, res) => {
     answer: formatMultiSourceAnswer(sources, { storedAt: stored?.fetchedAt }),
     // ?debug=1 shows why a source was skipped (region blocks, HTTP codes)
     ...req.query.debug ? { diagnostics: diag } : {}
+  });
+});
+apiRouter.get("/currency/rate-moves", async (_req, res) => {
+  const log = db.getRateAlertLog().slice(-20).reverse();
+  const snapshot = db.getRatesSnapshot();
+  const currencies = db.getSchema().currencies.filter((c) => !c.isBase).map((c) => ({
+    code: c.code,
+    name: c.name,
+    parallel: c.parallelRate ?? c.rateToSdg,
+    lastMovePercent: c.lastMovePercent ?? 0
+  })).filter((c) => Math.abs(c.lastMovePercent) >= THRESHOLD_PERCENT);
+  res.json({
+    thresholdPercent: THRESHOLD_PERCENT,
+    moves: currencies,
+    log,
+    source: snapshot?.source || null,
+    fetchedAt: snapshot?.fetchedAt || null
   });
 });
 apiRouter.get("/currency/alerts/status", (_req, res) => {
@@ -9598,6 +9690,50 @@ apiRouter.get("/admin/tenants", adminAuthMiddleware, (req, res) => {
     };
   });
   res.json({ tenants: summary });
+});
+apiRouter.get("/inventory/expiry-report", merchantAuthMiddleware, (req, res) => {
+  const tenantId = req.tenantId;
+  const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+  const schema = db.getSchema();
+  const todayKey = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const limitKey = new Date(Date.parse(`${todayKey}T00:00:00Z`) + days * 864e5).toISOString().slice(0, 10);
+  const rows = schema.products.filter((p) => p.tenantId === tenantId && p.isActive !== false).map((p) => {
+    const expiry = p.expiryDate ? String(p.expiryDate).slice(0, 10) : "";
+    if (!expiry || Number.isNaN(Date.parse(`${expiry}T00:00:00Z`))) return null;
+    const daysLeft = Math.round((Date.parse(`${expiry}T00:00:00Z`) - Date.parse(`${todayKey}T00:00:00Z`)) / 864e5);
+    const stock = (schema.branchInventories || []).filter((i) => i.productId === p.id).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+    const state = daysLeft < 0 ? "expired" : daysLeft <= days ? "soon" : "ok";
+    return {
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      unit: p.unit,
+      barcode: p.barcode,
+      stock,
+      productionDate: p.productionDate ? String(p.productionDate).slice(0, 10) : "",
+      expiryDate: expiry,
+      daysLeft,
+      state,
+      sellingPriceSdg: p.sellingPriceSdg,
+      valueSdg: Math.max(0, stock) * (Number(p.sellingPriceSdg) || 0)
+    };
+  }).filter(Boolean).sort((a, b) => a.daysLeft - b.daysLeft);
+  const expired = rows.filter((r) => r.state === "expired");
+  const soon = rows.filter((r) => r.state === "soon");
+  res.json({
+    days,
+    today: todayKey,
+    horizon: limitKey,
+    expired,
+    soon,
+    ok: rows.filter((r) => r.state === "ok"),
+    totals: {
+      expired: expired.length,
+      soon: soon.length,
+      expiringValueSdg: [...expired, ...soon].reduce((sum, r) => sum + (r.valueSdg || 0), 0),
+      noDate: schema.products.filter((p) => p.tenantId === tenantId && p.isActive !== false && !p.expiryDate).length
+    }
+  });
 });
 apiRouter.get("/admin/tenants/:id/products", adminAuthMiddleware, (req, res) => {
   const tenant = db.getTenant(req.params.id);

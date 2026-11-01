@@ -23,12 +23,12 @@ const snap = (usdParallel: number) => ({
 });
 
 console.log('\n=== threshold ===');
-ok('threshold is 3%', THRESHOLD_PERCENT === 3, String(THRESHOLD_PERCENT));
+ok('threshold is 0.5%', THRESHOLD_PERCENT === 0.5, String(THRESHOLD_PERCENT));
 
 db.applyLiveRates(snap(10000), 'seed');
 ok('first snapshot records no move', detectMoves().length === 0, JSON.stringify(detectMoves()));
 
-db.applyLiveRates(snap(10150), 'test');            // +1.5% → below threshold
+db.applyLiveRates(snap(10020), 'test');            // +0.2% → below threshold
 ok('small move ignored', detectMoves().length === 0, JSON.stringify(detectMoves().map(m => m.percent)));
 
 db.applyLiveRates(snap(10600), 'test');            // +6% → alert
