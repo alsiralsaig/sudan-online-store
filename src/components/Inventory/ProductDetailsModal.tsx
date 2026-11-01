@@ -39,6 +39,7 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
     product.expiryDate ? String(product.expiryDate).slice(0, 10) : ''
   );
   const [videoUrl, setVideoUrl] = useState(product.videoUrl || '');
+  const [minOrderQty, setMinOrderQty] = useState(String((product as any).minOrderQty ?? ''));
   const [scannerOpen, setScannerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -77,6 +78,7 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
       sellingPriceSdg: Number(price), minStockAlert: Number(minimum), isTaxExempt: taxExempt,
       customTaxRate: taxRate === '' ? null : Number(taxRate), imageUrl, videoUrl,
       productionDate, expiryDate,
+      minOrderQty: Number(minOrderQty) > 0 ? Number(minOrderQty) : null,
     };
     if (canViewCogs) { payload.purchaseCost = Number(cost); payload.costCurrency = currency.trim() || 'SDG'; }
     if (branch && stockReady && stockAtEdit !== null && Number(quantity) !== stockAtEdit) {
@@ -132,6 +134,7 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
               {canViewCogs && <div><label className={labelClass} htmlFor="edit-product-currency">عملة التكلفة</label><input id="edit-product-currency" value={currency} onChange={(e) => setCurrency(e.target.value)} dir="ltr" className={inputClass} /></div>}
               <div><label className={labelClass} htmlFor="edit-product-minimum">حد تنبيه النواقص</label><input id="edit-product-minimum" type="number" min="0" step="any" required value={minimum} onChange={(e) => setMinimum(e.target.value)} className={inputClass} /></div>
             </div>
+            <div><label className={labelClass} htmlFor="edit-product-minorder">أقل كمية للطلب من هذا الصنف</label><input id="edit-product-minorder" type="number" min="0" step="1" value={minOrderQty} onChange={(e) => setMinOrderQty(e.target.value)} placeholder="بلا حد" className={`${inputClass} font-mono`} /><p className="text-xs text-slate-500 mt-1">يمنع إرسال طلب توريد بكمية أقل من هذا الرقم.</p></div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className={labelClass} htmlFor="edit-product-production">تاريخ الإنتاج</label><input id="edit-product-production" type="date" value={productionDate} onChange={(e) => setProductionDate(e.target.value)} className={`${inputClass} font-mono`} /></div>
               <div><label className={labelClass} htmlFor="edit-product-expiry">تاريخ الانتهاء</label><input id="edit-product-expiry" type="date" min={productionDate || undefined} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className={`${inputClass} font-mono`} /></div>

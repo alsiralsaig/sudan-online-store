@@ -580,7 +580,14 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                     {cartLines.map((l) => (
                       <div key={l.product.id} className="flex items-center justify-between gap-2 text-[10.5px] text-sky-900">
                         <span className="truncate">{l.product.name} × {l.quantity}</span>
-                        <span className="font-mono shrink-0">{l.totalSdg.toLocaleString('en-US')}</span>
+                        <span className="font-mono shrink-0">
+                          {l.totalSdg.toLocaleString('en-US')}
+                          {Number(l.product?.minOrderQty) > 0 && (
+                            <span className="block text-[9px] font-bold text-amber-800">
+                              أقل كمية: {l.product.minOrderQty}
+                            </span>
+                          )}
+                        </span>
                       </div>
                     ))}
                   </div>

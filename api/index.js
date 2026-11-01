@@ -5371,14 +5371,22 @@ async function runNotificationScan(opts = {}) {
 init_telegram();
 var THRESHOLD_PERCENT = 0.5;
 var WATCHED = ["USD", "SAR", "AED", "EUR", "EGP"];
-var PHONE = (process.env.WHATSAPP_ALERT_PHONE || "").replace(/[^\d]/g, "");
+var RECIPIENTS = String(
+  process.env.WHATSAPP_ALERT_PHONE || process.env.WHATSAPP_ALERT_RECIPIENTS || ""
+).split(",").map((item) => item.trim()).filter(Boolean).map((item) => {
+  const [rawPhone, rawKey] = item.split(":");
+  return {
+    phone: (rawPhone || "").replace(/[^\d]/g, ""),
+    key: (rawKey || process.env.WHATSAPP_CALLMEBOT_KEY || "").trim()
+  };
+}).filter((r) => r.phone.length >= 9);
 var CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || "";
 var API_URL2 = process.env.WHATSAPP_API_URL || "https://api.callmebot.com/whatsapp.php";
 var QUOTA_MARKERS = ["full", "limit", "quota", "not allowed", "blocked", "invalid apikey"];
-var sendWhatsApp = async (text2) => {
-  if (!PHONE || !CALLMEBOT_KEY) return { ok: false, reason: "NOT_CONFIGURED" };
+var sendWhatsAppTo = async (text2, recipient) => {
+  if (!recipient.phone || !recipient.key) return { ok: false, reason: "NOT_CONFIGURED" };
   try {
-    const url = `${API_URL2}?phone=${encodeURIComponent(PHONE)}&text=${encodeURIComponent(text2)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
+    const url = `${API_URL2}?phone=${encodeURIComponent(recipient.phone)}&text=${encodeURIComponent(text2)}&apikey=${encodeURIComponent(recipient.key)}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8e3);
     const res = await fetch(url, { signal: controller.signal });
@@ -5391,12 +5399,32 @@ var sendWhatsApp = async (text2) => {
     return { ok: false, reason: err.name === "AbortError" ? "TIMEOUT" : "NETWORK" };
   }
 };
+var sendWhatsApp = async (text2) => {
+  if (!RECIPIENTS.length) return { ok: false, reason: "NOT_CONFIGURED", sent: 0 };
+  let sent = 0;
+  let reason = "";
+  for (const recipient of RECIPIENTS) {
+    const verdict = await sendWhatsAppTo(text2, recipient);
+    if (verdict.ok) sent += 1;
+    else if (!reason) reason = verdict.reason;
+  }
+  return { ok: sent > 0, reason, sent };
+};
+var sendWhatsAppTest = async (text2) => {
+  const verdict = await sendWhatsApp(text2);
+  return {
+    configured: RECIPIENTS.length > 0,
+    recipients: RECIPIENTS.length,
+    sent: verdict.sent,
+    reason: verdict.reason
+  };
+};
 var fmt = (n) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 var checkRateMoves = async (moves = detectMoves()) => {
   const result = {
     triggered: [],
     inApp: 0,
-    whatsapp: { sent: 0, skipped: !PHONE || !CALLMEBOT_KEY ? "NOT_CONFIGURED" : "" },
+    whatsapp: { sent: 0, skipped: RECIPIENTS.length ? "" : "NOT_CONFIGURED" },
     telegram: { sent: 0, skipped: telegramConfigured() ? "" : "NOT_CONFIGURED" }
   };
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -5430,11 +5458,11 @@ var checkRateMoves = async (moves = detectMoves()) => {
     } catch (err) {
       console.warn("[rate-alert] in-app failed:", err.message);
     }
-    if (PHONE && CALLMEBOT_KEY) {
+    if (RECIPIENTS.length) {
       const verdict = await sendWhatsApp(`\u{1F4C9} *\u0645\u0646\u0635\u0629 \u0633\u0646\u062F* \u2014 \u062A\u0646\u0628\u064A\u0647 \u0633\u0639\u0631
 
 ${body}`);
-      if (verdict.ok) result.whatsapp.sent += 1;
+      if (verdict.sent) result.whatsapp.sent += verdict.sent;
       else if (!result.whatsapp.skipped) result.whatsapp.skipped = verdict.reason;
     }
     if (telegramConfigured()) {
@@ -5499,7 +5527,7 @@ var checkRateMovesBetween = async (previous, current) => {
   }
   return checkRateMoves(moves);
 };
-var whatsappConfigured = () => !!PHONE && !!CALLMEBOT_KEY;
+var whatsappConfigured = () => RECIPIENTS.length > 0;
 var whatsappProviderHost = () => {
   try {
     return new URL(API_URL2).host;
@@ -7423,6 +7451,7 @@ apiRouter.get("/links/catalog/:tenantId", merchantAuthMiddleware, (req, res) => 
       imageUrl: p.imageUrl,
       expiryDate: p.expiryDate,
       sellingPriceSdg: p.sellingPriceSdg,
+      minOrderQty: Number(p.minOrderQty) || 0,
       linked: Boolean(link),
       linkedPriceSdg: link ? priceWithMargin(p.sellingPriceSdg, link.marginPercent) : null
     };
@@ -7521,6 +7550,15 @@ apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
       return res.status(400).json({ error: "BAD_ITEM", message: "\u0623\u062D\u062F \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0644\u0627 \u064A\u062E\u0635 \u0647\u0630\u0627 \u0627\u0644\u0645\u0648\u0631\u062F." });
     }
     const quantity = Math.max(1, Math.round(Number(row?.quantity) || 0));
+    const productMin = Number(product.minOrderQty) || 0;
+    if (productMin > 0 && quantity < productMin) {
+      return res.status(400).json({
+        error: "BELOW_MIN_ITEM_QTY",
+        message: `\u0623\u0642\u0644 \u0643\u0645\u064A\u0629 \u0644\u0635\u0646\u0641 \xAB${product.name}\xBB \u0647\u064A ${productMin} ${product.unit || "\u0648\u062D\u062F\u0629"} \u2014 \u0637\u0644\u0628\u062A ${quantity}.`,
+        productId: product.id,
+        minOrderQty: productMin
+      });
+    }
     const unitPriceSdg = Number(product.sellingPriceSdg) || 0;
     clean.push({
       productId: product.id,
@@ -7920,6 +7958,8 @@ apiRouter.post("/products", merchantAuthMiddleware, (req, res) => {
     expiryDate: expiryDate && !Number.isNaN(Date.parse(String(expiryDate))) ? String(expiryDate) : void 0,
     /* تاريخ الإنتاج — يُستخدم لحساب الصلاحية وعرض «أنتج في / ينتهي في» */
     productionDate: productionDate && !Number.isNaN(Date.parse(String(productionDate))) ? String(productionDate) : void 0,
+    /* أقل كمية للطلب على مستوى الصنف */
+    minOrderQty: Number(req.body?.minOrderQty) > 0 ? Math.round(Number(req.body.minOrderQty)) : void 0,
     isTaxExempt: Boolean(isTaxExempt),
     customTaxRate: customTaxRate !== void 0 && customTaxRate !== "" ? Number(customTaxRate) : void 0,
     isActive: true,
@@ -7989,6 +8029,10 @@ apiRouter.put("/products/:id", merchantAuthMiddleware, requireProductEditor, (re
     product[field] = raw === "" ? void 0 : raw;
   }
   for (const field of ["purchaseCost", "sellingPriceSdg", "minStockAlert"]) if (field in body) product[field] = body[field];
+  if ("minOrderQty" in body) {
+    const q2 = Number(body.minOrderQty);
+    product.minOrderQty = Number.isFinite(q2) && q2 > 0 ? Math.round(q2) : void 0;
+  }
   if ("minStockAlert" in body) product.minimumStock = body.minStockAlert;
   if ("isTaxExempt" in body) product.isTaxExempt = body.isTaxExempt;
   if ("customTaxRate" in body) product.customTaxRate = body.customTaxRate === null ? void 0 : body.customTaxRate;
@@ -9204,6 +9248,12 @@ apiRouter.get("/currency/rate-moves", async (_req, res) => {
     source: snapshot?.source || null,
     fetchedAt: snapshot?.fetchedAt || null
   });
+});
+apiRouter.post("/admin/alerts/whatsapp-test", adminAuthMiddleware, async (_req, res) => {
+  const result = await sendWhatsAppTest(
+    "\u2705 *\u0645\u0646\u0635\u0629 \u0633\u0646\u062F* \u2014 \u0631\u0633\u0627\u0644\u0629 \u0627\u062E\u062A\u0628\u0627\u0631\n\n\u062A\u0646\u0628\u064A\u0647\u0627\u062A \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0635\u0631\u0641 \u0648\u0635\u0644\u062A \u0628\u0646\u062C\u0627\u062D. \u0647\u0630\u0627 \u0627\u0644\u0631\u0642\u0645 \u0633\u064A\u0633\u062A\u0644\u0645 \u0623\u064A \u062A\u063A\u064A\u0651\u0631 \u0641\u064A \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A."
+  );
+  res.json({ success: result.sent > 0, ...result });
 });
 apiRouter.get("/currency/alerts/status", (_req, res) => {
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);

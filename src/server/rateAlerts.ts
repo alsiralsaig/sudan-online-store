@@ -27,7 +27,28 @@ export const THRESHOLD_PERCENT = 0.5;
 /** عملات المنصة التي نراقبها فعلياً (الدولار أولاً — هو سعر التداول). */
 const WATCHED = ['USD', 'SAR', 'AED', 'EUR', 'EGP'];
 
-const PHONE = (process.env.WHATSAPP_ALERT_PHONE || '').replace(/[^\d]/g, '');
+/**
+ * مستقبلو التنبيه: يدعم أكثر من رقم — مفصولة بفاصلة، وكل رقم قد يحمل مفتاحه
+ * الخاص بصيغة  phone:apikey  (لأن CallMeBot يصدر مفتاحاً لكل مستلم).
+ * مثال:
+ *   WHATSAPP_ALERT_PHONE=249966704757:123456,249912345678:654321
+ *   WHATSAPP_CALLMEBOT_KEY=123456        (مفتاح افتراضي لو لم يُحدد للرقم)
+ */
+const RECIPIENTS: Array<{ phone: string; key: string }> = String(
+  process.env.WHATSAPP_ALERT_PHONE || process.env.WHATSAPP_ALERT_RECIPIENTS || ''
+)
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean)
+  .map((item) => {
+    const [rawPhone, rawKey] = item.split(':');
+    return {
+      phone: (rawPhone || '').replace(/[^\d]/g, ''),
+      key: (rawKey || process.env.WHATSAPP_CALLMEBOT_KEY || '').trim(),
+    };
+  })
+  .filter((r) => r.phone.length >= 9);
+
 const CALLMEBOT_KEY = process.env.WHATSAPP_CALLMEBOT_KEY || '';
 /**
  * Provider endpoint is configuration, never code: when the free bot changes
@@ -54,12 +75,15 @@ export interface AlertResult {
 }
 
 /** Sends one WhatsApp text. Returns the provider verdict, never throws. */
-const sendWhatsApp = async (text: string): Promise<{ ok: boolean; reason: string }> => {
-  if (!PHONE || !CALLMEBOT_KEY) return { ok: false, reason: 'NOT_CONFIGURED' };
+const sendWhatsAppTo = async (
+  text: string,
+  recipient: { phone: string; key: string }
+): Promise<{ ok: boolean; reason: string }> => {
+  if (!recipient.phone || !recipient.key) return { ok: false, reason: 'NOT_CONFIGURED' };
   try {
     const url =
-      `${API_URL}?phone=${encodeURIComponent(PHONE)}` +
-      `&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(CALLMEBOT_KEY)}`;
+      `${API_URL}?phone=${encodeURIComponent(recipient.phone)}` +
+      `&text=${encodeURIComponent(text)}&apikey=${encodeURIComponent(recipient.key)}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(url, { signal: controller.signal });
@@ -71,6 +95,32 @@ const sendWhatsApp = async (text: string): Promise<{ ok: boolean; reason: string
   } catch (err) {
     return { ok: false, reason: (err as Error).name === 'AbortError' ? 'TIMEOUT' : 'NETWORK' };
   }
+};
+
+/** يرسل لكل المستقبلين ويجمع النتيجة. */
+const sendWhatsApp = async (text: string): Promise<{ ok: boolean; reason: string; sent: number }> => {
+  if (!RECIPIENTS.length) return { ok: false, reason: 'NOT_CONFIGURED', sent: 0 };
+  let sent = 0;
+  let reason = '';
+  for (const recipient of RECIPIENTS) {
+    const verdict = await sendWhatsAppTo(text, recipient);
+    if (verdict.ok) sent += 1;
+    else if (!reason) reason = verdict.reason;
+  }
+  return { ok: sent > 0, reason, sent };
+};
+
+/** اختبار الإرسال الحقيقي (زر «جرّب واتساب» في الإعدادات). */
+export const sendWhatsAppTest = async (
+  text: string
+): Promise<{ configured: boolean; recipients: number; sent: number; reason: string }> => {
+  const verdict = await sendWhatsApp(text);
+  return {
+    configured: RECIPIENTS.length > 0,
+    recipients: RECIPIENTS.length,
+    sent: verdict.sent,
+    reason: verdict.reason,
+  };
 };
 
 const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -85,7 +135,7 @@ export const checkRateMoves = async (
   const result: AlertResult = {
     triggered: [],
     inApp: 0,
-    whatsapp: { sent: 0, skipped: !PHONE || !CALLMEBOT_KEY ? 'NOT_CONFIGURED' : '' },
+    whatsapp: { sent: 0, skipped: RECIPIENTS.length ? '' : 'NOT_CONFIGURED' },
     telegram: { sent: 0, skipped: telegramConfigured() ? '' : 'NOT_CONFIGURED' },
   };
 
@@ -130,9 +180,9 @@ export const checkRateMoves = async (
       console.warn('[rate-alert] in-app failed:', (err as Error).message);
     }
 
-    if (PHONE && CALLMEBOT_KEY) {
+    if (RECIPIENTS.length) {
       const verdict = await sendWhatsApp(`📉 *منصة سند* — تنبيه سعر\n\n${body}`);
-      if (verdict.ok) result.whatsapp.sent += 1;
+      if (verdict.sent) result.whatsapp.sent += verdict.sent;
       else if (!result.whatsapp.skipped) result.whatsapp.skipped = verdict.reason;
     }
 
@@ -214,7 +264,8 @@ export const checkRateMovesBetween = async (
   return checkRateMoves(moves);
 };
 
-export const whatsappConfigured = (): boolean => !!PHONE && !!CALLMEBOT_KEY;
+export const whatsappConfigured = (): boolean => RECIPIENTS.length > 0;
+export const whatsappRecipientCount = (): number => RECIPIENTS.length;
 
 /** Host of the configured gateway, safe to expose (no key, no phone). */
 export const whatsappProviderHost = (): string => {

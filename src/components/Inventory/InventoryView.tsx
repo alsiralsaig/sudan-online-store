@@ -148,6 +148,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   /* تواريخ التتبع: الإنتاج والانتهاء (اختيارية لكن ظاهرة في كل صنف) */
   const [newProductionDate, setNewProductionDate] = useState('');
   const [newExpiryDate, setNewExpiryDate] = useState('');
+  /* أقل كمية مسموحة في طلب التوريد لهذا الصنف */
+  const [newMinOrderQty, setNewMinOrderQty] = useState('');
   const [newVideoUrl, setNewVideoUrl] = useState('');
   const [mediaBusy, setMediaBusy] = useState<null | 'image' | 'video'>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -321,6 +323,80 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     if (expiryOpen) void loadExpiryReport(expiryDays);
   }, [expiryOpen, expiryDays, loadExpiryReport]);
 
+  /**
+   * طباعة/حفظ تقرير الصلاحية PDF.
+   * نفتح نافذة طباعة بمحتوى مُنسّق (RTL، خط عربي واضح، ترويسة المتجر والتاريخ)
+   * ثم أمر الطباعة — ومنها «حفظ كـ PDF». لا مكتبات خارجية ولا خطوط شبكة.
+   */
+  const printExpiryReport = () => {
+    if (!expiryData) return;
+    const rows = [...expiryData.expired, ...expiryData.soon];
+    const money = (n: number) => Number(n || 0).toLocaleString('en-US');
+    const storeName = (currentBranch as any)?.name || branches[0]?.name || '';
+    const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8" />
+      <title>تقرير الصلاحية — ${new Date().toLocaleDateString('ar-EG')}</title>
+      <style>
+        *{box-sizing:border-box}
+        body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:18px;color:#0f172a}
+        h1{font-size:17px;margin:0 0 2px}
+        .muted{color:#64748b;font-size:11px}
+        .cards{display:flex;gap:8px;margin:12px 0}
+        .card{flex:1;border:1px solid #e2e8f0;border-radius:8px;padding:8px;text-align:center}
+        .card b{display:block;font-size:16px;margin-top:2px}
+        table{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
+        th,td{border:1px solid #cbd5e1;padding:5px 6px;text-align:right}
+        th{background:#f1f5f9;font-weight:700}
+        tr.expired td{background:#fef2f2}
+        tr.soon td{background:#fffbeb}
+        .tag{font-weight:700}
+        .footer{margin-top:12px;font-size:10px;color:#64748b;display:flex;justify-content:space-between}
+        @media print{ body{margin:8mm} .noprint{display:none} }
+      </style></head><body>
+      <h1>تقرير الصلاحية وقرب الانتهاء</h1>
+      <div class="muted">
+        ${storeName} · تاريخ التقرير: ${new Date().toLocaleString('ar-EG')} · الأفق: ${expiryData.days} يوم
+      </div>
+      <div class="cards">
+        <div class="card">منتهية<b>${expiryData.totals.expired}</b></div>
+        <div class="card">قريبة من الانتهاء<b>${expiryData.totals.soon}</b></div>
+        <div class="card">قيمة معرّضة<b>${money(expiryData.totals.expiringValueSdg)} ج.س</b></div>
+      </div>
+      <table>
+        <thead><tr>
+          <th>#</th><th>الصنف</th><th>التصنيف</th><th>الوحدة</th><th>الرصيد</th>
+          <th>الإنتاج</th><th>الانتهاء</th><th>الحالة</th><th>القيمة (ج.س)</th>
+        </tr></thead>
+        <tbody>
+          ${rows
+            .map(
+              (r: any, i: number) => `<tr class="${r.state}">
+                <td>${i + 1}</td>
+                <td>${r.name}</td>
+                <td>${r.category || '—'}</td>
+                <td>${r.unit || '—'}</td>
+                <td>${r.stock}</td>
+                <td>${r.productionDate || '—'}</td>
+                <td>${r.expiryDate}</td>
+                <td class="tag">${r.state === 'expired' ? `منتهي منذ ${Math.abs(r.daysLeft)} يوم` : `باقي ${r.daysLeft} يوم`}</td>
+                <td>${money(r.valueSdg)}</td>
+              </tr>`,
+            )
+            .join('') || '<tr><td colspan="9" style="text-align:center">لا أصناف في هذه الفترة</td></tr>'}
+        </tbody>
+      </table>
+      <div class="footer"><span>منصة سند — تقرير آلي</span><span>${rows.length} صنف</span></div>
+      <script>window.onload=function(){setTimeout(function(){window.print()},250)}</script>
+      </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) {
+      alert('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة ثم أعد المحاولة.');
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  };
+
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -345,6 +421,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         videoUrl: newVideoUrl || undefined,
         productionDate: newProductionDate || undefined,
         expiryDate: newExpiryDate || undefined,
+        minOrderQty: Number(newMinOrderQty) > 0 ? Number(newMinOrderQty) : undefined,
       });
 
       if (res.success) {
@@ -358,6 +435,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         setNewImageUrl('');
         setNewProductionDate('');
         setNewExpiryDate('');
+        setNewMinOrderQty('');
         setNewVideoUrl('');
         setMediaError(null);
         onRefresh();
@@ -1237,6 +1315,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </div>
 
               <div>
+                <label className="block font-semibold text-slate-700 mb-1">أقل كمية للطلب من هذا الصنف (اختياري):</label>
+                <input
+                  type="number"
+                  min="0"
+                  inputMode="numeric"
+                  value={newMinOrderQty}
+                  onChange={(e) => setNewMinOrderQty(e.target.value)}
+                  placeholder="مثال: 10 — اتركه فارغاً لبلا حد"
+                  className="w-full px-3 py-2 font-mono text-[13px] border border-slate-300 rounded-lg"
+                />
+              </div>
+
+              <div>
                 <label className="block font-semibold text-slate-700 mb-1">الرصيد الافتتاحي في هذا الفرع:</label>
                 <input
                   type="number"
@@ -1920,8 +2011,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   {d} يوم
                 </button>
               ))}
-              <button onClick={() => void loadExpiryReport(expiryDays)} className="mr-auto text-[11px] font-bold text-sky-700 underline">
+              <button onClick={() => void loadExpiryReport(expiryDays)} className="text-[11px] font-bold text-sky-700 underline">
                 تحديث
+              </button>
+              <button
+                onClick={printExpiryReport}
+                className="mr-auto rounded-lg bg-slate-900 text-white px-2.5 py-1 text-[11px] font-black flex items-center gap-1"
+              >
+                <FileText className="w-3.5 h-3.5" /> طباعة / PDF
               </button>
             </div>
 

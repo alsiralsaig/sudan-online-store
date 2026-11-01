@@ -31,7 +31,7 @@ import {
   asksForSources,
   sourcesWanted,
 } from './rateAnswer.ts';
-import { checkRateMoves, checkRateMovesBetween, detectMoves, whatsappConfigured, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
+import { checkRateMoves, checkRateMovesBetween, detectMoves, whatsappConfigured, whatsappRecipientCount, sendWhatsAppTest, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
 import { ntfyStatus } from './ntfy.ts';
 import { newId, newCode } from './ids.ts';
@@ -1259,6 +1259,7 @@ apiRouter.get('/links/catalog/:tenantId', merchantAuthMiddleware, (req, res) => 
         imageUrl: p.imageUrl,
         expiryDate: p.expiryDate,
         sellingPriceSdg: p.sellingPriceSdg,
+        minOrderQty: Number((p as any).minOrderQty) || 0,
         linked: Boolean(link),
         linkedPriceSdg: link ? priceWithMargin(p.sellingPriceSdg, link.marginPercent) : null,
       };
@@ -1390,6 +1391,16 @@ apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
       return res.status(400).json({ error: 'BAD_ITEM', message: 'أحد الأصناف لا يخص هذا المورد.' });
     }
     const quantity = Math.max(1, Math.round(Number(row?.quantity) || 0));
+    /* الحد الأدنى للكمية على مستوى الصنف (يفرضه المورد) */
+    const productMin = Number((product as any).minOrderQty) || 0;
+    if (productMin > 0 && quantity < productMin) {
+      return res.status(400).json({
+        error: 'BELOW_MIN_ITEM_QTY',
+        message: `أقل كمية لصنف «${product.name}» هي ${productMin} ${product.unit || 'وحدة'} — طلبت ${quantity}.`,
+        productId: product.id,
+        minOrderQty: productMin,
+      });
+    }
     const unitPriceSdg = Number(product.sellingPriceSdg) || 0;
     clean.push({
       productId: product.id,
@@ -1848,6 +1859,8 @@ apiRouter.post('/products', merchantAuthMiddleware, (req, res) => {
     /* تاريخ الإنتاج — يُستخدم لحساب الصلاحية وعرض «أنتج في / ينتهي في» */
     productionDate:
       productionDate && !Number.isNaN(Date.parse(String(productionDate))) ? String(productionDate) : undefined,
+    /* أقل كمية للطلب على مستوى الصنف */
+    minOrderQty: Number(req.body?.minOrderQty) > 0 ? Math.round(Number(req.body.minOrderQty)) : undefined,
     isTaxExempt: Boolean(isTaxExempt),
     customTaxRate: customTaxRate !== undefined && customTaxRate !== '' ? Number(customTaxRate) : undefined,
     isActive: true,
@@ -1933,6 +1946,10 @@ apiRouter.put('/products/:id', merchantAuthMiddleware, requireProductEditor, (re
     (product as any)[field] = raw === '' ? undefined : raw;
   }
   for (const field of ['purchaseCost', 'sellingPriceSdg', 'minStockAlert'] as const) if (field in body) (product as any)[field] = body[field];
+  if ('minOrderQty' in body) {
+    const q = Number(body.minOrderQty);
+    (product as any).minOrderQty = Number.isFinite(q) && q > 0 ? Math.round(q) : undefined;
+  }
   if ('minStockAlert' in body) product.minimumStock = body.minStockAlert;
   if ('isTaxExempt' in body) product.isTaxExempt = body.isTaxExempt;
   if ('customTaxRate' in body) product.customTaxRate = body.customTaxRate === null ? undefined : body.customTaxRate;
@@ -3482,6 +3499,17 @@ apiRouter.get('/currency/rate-moves', async (_req, res) => {
     source: snapshot?.source || null,
     fetchedAt: snapshot?.fetchedAt || null,
   });
+});
+
+/**
+ * «جرّب واتساب» — يرسل رسالة اختبار حقيقية لكل مستقبل مضبوط.
+ * إداري فقط (يستهلك حصة المزوّد).
+ */
+apiRouter.post('/admin/alerts/whatsapp-test', adminAuthMiddleware, async (_req, res) => {
+  const result = await sendWhatsAppTest(
+    '✅ *منصة سند* — رسالة اختبار\n\nتنبيهات أسعار الصرف وصلت بنجاح. هذا الرقم سيستلم أي تغيّر في السوق الموازي.'
+  );
+  res.json({ success: result.sent > 0, ...result });
 });
 
 /** What the admin screen needs: threshold + how alerts are delivered. */

@@ -146,6 +146,8 @@ export interface Product {
   expiryDate?: string;
   /** تاريخ الإنتاج — يُدخل عند إضافة الصنف ويُعرض مع تاريخ الانتهاء */
   productionDate?: string;
+  /** أقل كمية مسموحة في طلب التوريد لهذا الصنف (0/غير محدد = بلا حد) */
+  minOrderQty?: number;
   /** للقطاعي: الصنف مرتبط بمصدر (يُدار تلقائياً) */
   linkedToItemId?: string;
   /** معرّف سجل الربط إن وُجد */
