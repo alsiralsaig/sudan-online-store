@@ -33,7 +33,7 @@ import {
 } from './rateAnswer.ts';
 import { checkRateMoves, checkRateMovesBetween, detectMoves, whatsappConfigured, whatsappRecipientCount, sendWhatsAppTest, whatsappProviderHost, THRESHOLD_PERCENT } from './rateAlerts.ts';
 import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from './telegram.ts';
-import { ntfyStatus } from './ntfy.ts';
+import { ntfyStatus, sendNtfy } from './ntfy.ts';
 import { newId, newCode } from './ids.ts';
 import type { SupplyOrder, SupplyOrderItem } from '../types/index.ts';
 import {
@@ -3499,6 +3499,19 @@ apiRouter.get('/currency/rate-moves', async (_req, res) => {
     source: snapshot?.source || null,
     fetchedAt: snapshot?.fetchedAt || null,
   });
+});
+
+/**
+ * «جرّب التنبيه» — يرسل تنبيهاً فورياً عبر ntfy (لا يحتاج حساباً ولا مفتاحاً).
+ * يُستخدم للتحقق من أن تنبيهات الأسعار تصل للجوال فعلياً.
+ */
+apiRouter.post('/admin/alerts/push-test', adminAuthMiddleware, async (_req, res) => {
+  const verdict = await sendNtfy(
+    '📊 منصة سند — تجربة تنبيه',
+    'تم ضبط قناة التنبيه الفوري بنجاح. أي تغيّر في سعر الصرف (0.5% أو أكثر) سيصلك هنا.',
+    { priority: 3, tags: 'white_check_mark', dedupe: false }
+  );
+  res.json({ success: verdict.sent > 0, ...verdict, topic: ntfyStatus().topic });
 });
 
 /**

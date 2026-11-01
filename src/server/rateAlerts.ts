@@ -1,6 +1,7 @@
 import { db } from './db.ts';
 import { notify } from './notifications.ts';
 import { sendTelegram, telegramConfigured } from './telegram.ts';
+import { sendNtfy, ntfyConfigured } from './ntfy.ts';
 
 /**
  * Rate-move alerts.
@@ -72,6 +73,7 @@ export interface AlertResult {
   inApp: number;
   whatsapp: { sent: number; skipped: string };
   telegram: { sent: number; skipped: string };
+  ntfy: { sent: number; skipped: string };
 }
 
 /** Sends one WhatsApp text. Returns the provider verdict, never throws. */
@@ -137,6 +139,7 @@ export const checkRateMoves = async (
     inApp: 0,
     whatsapp: { sent: 0, skipped: RECIPIENTS.length ? '' : 'NOT_CONFIGURED' },
     telegram: { sent: 0, skipped: telegramConfigured() ? '' : 'NOT_CONFIGURED' },
+    ntfy: { sent: 0, skipped: ntfyConfigured() ? '' : 'NOT_CONFIGURED' },
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -184,6 +187,22 @@ export const checkRateMoves = async (
       const verdict = await sendWhatsApp(`📉 *منصة سند* — تنبيه سعر\n\n${body}`);
       if (verdict.sent) result.whatsapp.sent += verdict.sent;
       else if (!result.whatsapp.skipped) result.whatsapp.skipped = verdict.reason;
+    }
+
+    /*
+     * ntfy: قناة الجوال الفورية — لا تحتاج حساباً ولا مفتاحاً ولا انتظار مزوّد.
+     * اشتغل عليها الزر «جرّب التنبيه» في الإعدادات، وهي البديل العملي حين
+     * تكون حصة واتساب المجانية ممتلئة.
+     */
+    if (ntfyConfigured()) {
+      const arrow = move.percent > 0 ? '📈' : '📉';
+      const verdict = await sendNtfy(
+        `${arrow} ${move.name}: ${fmt(move.current)} ج.س`,
+        `${move.name} (${move.code}) ${move.percent > 0 ? 'ارتفع' : 'انخفض'} ${Math.abs(move.percent)}% — من ${fmt(move.previous)} إلى ${fmt(move.current)} ج.س. المصدر: السوق الموازي.`,
+        { priority: 4, tags: 'moneybag', dedupe: false }
+      );
+      if (verdict.sent) result.ntfy.sent += verdict.sent;
+      else if (!result.ntfy.skipped) result.ntfy.skipped = verdict.skipped;
     }
 
     // Telegram is the card-free channel: sent once per move (not per app).
@@ -259,7 +278,13 @@ export const checkRateMovesBetween = async (
     });
   }
   if (!moves.length) {
-    return { triggered: [], inApp: 0, whatsapp: { sent: 0, skipped: '' }, telegram: { sent: 0, skipped: '' } };
+    return {
+      triggered: [],
+      inApp: 0,
+      whatsapp: { sent: 0, skipped: '' },
+      telegram: { sent: 0, skipped: '' },
+      ntfy: { sent: 0, skipped: '' },
+    };
   }
   return checkRateMoves(moves);
 };

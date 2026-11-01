@@ -5369,6 +5369,7 @@ async function runNotificationScan(opts = {}) {
 
 // src/server/rateAlerts.ts
 init_telegram();
+init_ntfy();
 var THRESHOLD_PERCENT = 0.5;
 var WATCHED = ["USD", "SAR", "AED", "EUR", "EGP"];
 var RECIPIENTS = String(
@@ -5425,7 +5426,8 @@ var checkRateMoves = async (moves = detectMoves()) => {
     triggered: [],
     inApp: 0,
     whatsapp: { sent: 0, skipped: RECIPIENTS.length ? "" : "NOT_CONFIGURED" },
-    telegram: { sent: 0, skipped: telegramConfigured() ? "" : "NOT_CONFIGURED" }
+    telegram: { sent: 0, skipped: telegramConfigured() ? "" : "NOT_CONFIGURED" },
+    ntfy: { sent: 0, skipped: ntfyConfigured() ? "" : "NOT_CONFIGURED" }
   };
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   for (const move of moves) {
@@ -5464,6 +5466,16 @@ var checkRateMoves = async (moves = detectMoves()) => {
 ${body}`);
       if (verdict.sent) result.whatsapp.sent += verdict.sent;
       else if (!result.whatsapp.skipped) result.whatsapp.skipped = verdict.reason;
+    }
+    if (ntfyConfigured()) {
+      const arrow = move.percent > 0 ? "\u{1F4C8}" : "\u{1F4C9}";
+      const verdict = await sendNtfy(
+        `${arrow} ${move.name}: ${fmt(move.current)} \u062C.\u0633`,
+        `${move.name} (${move.code}) ${move.percent > 0 ? "\u0627\u0631\u062A\u0641\u0639" : "\u0627\u0646\u062E\u0641\u0636"} ${Math.abs(move.percent)}% \u2014 \u0645\u0646 ${fmt(move.previous)} \u0625\u0644\u0649 ${fmt(move.current)} \u062C.\u0633. \u0627\u0644\u0645\u0635\u062F\u0631: \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A.`,
+        { priority: 4, tags: "moneybag", dedupe: false }
+      );
+      if (verdict.sent) result.ntfy.sent += verdict.sent;
+      else if (!result.ntfy.skipped) result.ntfy.skipped = verdict.skipped;
     }
     if (telegramConfigured()) {
       const arrow = move.percent > 0 ? "\u{1F4C8}" : "\u{1F4C9}";
@@ -5523,7 +5535,13 @@ var checkRateMovesBetween = async (previous, current) => {
     });
   }
   if (!moves.length) {
-    return { triggered: [], inApp: 0, whatsapp: { sent: 0, skipped: "" }, telegram: { sent: 0, skipped: "" } };
+    return {
+      triggered: [],
+      inApp: 0,
+      whatsapp: { sent: 0, skipped: "" },
+      telegram: { sent: 0, skipped: "" },
+      ntfy: { sent: 0, skipped: "" }
+    };
   }
   return checkRateMoves(moves);
 };
@@ -9248,6 +9266,14 @@ apiRouter.get("/currency/rate-moves", async (_req, res) => {
     source: snapshot?.source || null,
     fetchedAt: snapshot?.fetchedAt || null
   });
+});
+apiRouter.post("/admin/alerts/push-test", adminAuthMiddleware, async (_req, res) => {
+  const verdict = await sendNtfy(
+    "\u{1F4CA} \u0645\u0646\u0635\u0629 \u0633\u0646\u062F \u2014 \u062A\u062C\u0631\u0628\u0629 \u062A\u0646\u0628\u064A\u0647",
+    "\u062A\u0645 \u0636\u0628\u0637 \u0642\u0646\u0627\u0629 \u0627\u0644\u062A\u0646\u0628\u064A\u0647 \u0627\u0644\u0641\u0648\u0631\u064A \u0628\u0646\u062C\u0627\u062D. \u0623\u064A \u062A\u063A\u064A\u0651\u0631 \u0641\u064A \u0633\u0639\u0631 \u0627\u0644\u0635\u0631\u0641 (0.5% \u0623\u0648 \u0623\u0643\u062B\u0631) \u0633\u064A\u0635\u0644\u0643 \u0647\u0646\u0627.",
+    { priority: 3, tags: "white_check_mark", dedupe: false }
+  );
+  res.json({ success: verdict.sent > 0, ...verdict, topic: ntfyStatus().topic });
 });
 apiRouter.post("/admin/alerts/whatsapp-test", adminAuthMiddleware, async (_req, res) => {
   const result = await sendWhatsAppTest(
