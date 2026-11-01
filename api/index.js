@@ -4484,6 +4484,55 @@ var buySellFor = (scope, label) => {
   }
   return null;
 };
+var parseArticleTables = (html) => {
+  const best = /* @__PURE__ */ new Map();
+  const tables = html.split(/<table/i).slice(1);
+  const num = (x) => toNumber(x);
+  const ok = (n) => n !== null && n >= 100 && n < 15e5;
+  for (const table of tables) {
+    const headPlain = (table.split(/<\/thead>/i)[0] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    const isRateTable = /العملة|السعر|الصرف|متوسط/.test(headPlain) || /للبيع|للشراء/.test(table.slice(0, 4e3));
+    for (const row of table.split(/<tr/i).slice(1)) {
+      const plain = row.replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/\s+/g, " ").trim();
+      if (!plain) continue;
+      if (/اقرا ايضا|اقرأ أيضا|تابع اسعار|قفزة بنسبة|تفاصيل في تقرير/.test(plain)) continue;
+      const hit = AR_LABEL_TO_CODE.find(({ re }) => re.exec(plain)?.[0] !== void 0 && re.test(plain));
+      if (!hit) continue;
+      const labelAt = plain.search(hit.re);
+      if (labelAt < 0 || labelAt > 40) continue;
+      const after = plain.slice(labelAt);
+      const both = after.match(
+        /([0-9][0-9,]{2,}(?:\.[0-9]+)?)\s*(?:جنيه[اً]?)?\s*للشراء\s*([0-9][0-9,]{2,}(?:\.[0-9]+)?)\s*(?:جنيه[اً]?)?\s*للبيع/
+      );
+      if (both) {
+        const a = num(both[1]);
+        const b = num(both[2]);
+        if (ok(a) && ok(b)) {
+          best.set(hit.code, { buy: Math.min(a, b), sell: Math.max(a, b), score: 3 });
+          continue;
+        }
+      }
+      const single = after.match(/\s*([0-9][0-9,]{2,}(?:\.[0-9]+)?)/);
+      if (!single) continue;
+      const sell = num(single[1]);
+      if (!ok(sell) || sell < 500) continue;
+      const score = isRateTable ? 2 : 1;
+      const prev = best.get(hit.code);
+      if (!prev || score >= prev.score) {
+        best.set(hit.code, { buy: prev?.buy && prev.score >= score ? prev.buy : void 0, sell, score });
+      }
+    }
+  }
+  const out = /* @__PURE__ */ new Map();
+  for (const [code, v] of best) out.set(code, { buy: v.buy, sell: v.sell });
+  return out;
+};
+var isHistoricalSentence = (t) => {
+  const monthRe = new RegExp(
+    String.raw`\d{1,2}\s*(?:` + Object.keys(AR_MONTHS).join("|") + ")"
+  );
+  return monthRe.test(t) || /مقارنة|مقابل\s*[0-9]|الشهر\s*الماضي|بداية\s*الشهر|نهاية\s*الشهر/.test(t);
+};
 var parseSudanAkhbarArticle = (html) => {
   const text2 = htmlToText(html);
   const title = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -4491,6 +4540,7 @@ var parseSudanAkhbarArticle = (html) => {
   const scope = blockStart >= 0 ? text2.slice(blockStart) : text2;
   const rates = [];
   const seen = /* @__PURE__ */ new Set();
+  const tableRates = parseArticleTables(html);
   const NUM = "([0-9][0-9,]{2,}(?:\\.[0-9]+)?)";
   const patternsFor = (source) => [
     {
@@ -4528,7 +4578,17 @@ var parseSudanAkhbarArticle = (html) => {
   for (const { re, code } of AR_LABEL_TO_CODE) {
     if (seen.has(code)) continue;
     let value = null;
-    const bs = buySellFor(text2, re) || buySellFor(scope, re);
+    const fromTable = tableRates.get(code);
+    if (fromTable?.sell) {
+      const sell = fromTable.sell;
+      const buy = fromTable.buy && fromTable.buy <= sell ? fromTable.buy : void 0;
+      rates.push({ code, official: null, parallel: sell, buy, sell });
+      seen.add(code);
+      continue;
+    }
+    const sentences = text2.split(/[!؟\n]+|\.\s+/).map((x) => x.trim()).filter(Boolean);
+    const currentOnly = sentences.filter((t) => re.test(t) && !isHistoricalSentence(t)).join(". ");
+    const bs = buySellFor(currentOnly, re) || buySellFor(scope, re) || buySellFor(text2, re);
     if (bs) {
       rates.push({ code, official: null, parallel: bs.sell, buy: bs.buy, sell: bs.sell });
       seen.add(code);

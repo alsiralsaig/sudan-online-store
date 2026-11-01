@@ -247,6 +247,91 @@ const buySellFor = (scope: string, label: RegExp): { buy: number; sell: number }
   return null;
 };
 
+/**
+ * جداول المقال هي المصدر الأدق للأسعار.
+ * ------------------------------------------------------------------
+ * مقال «أخبار السودان» يحوي حتى 4 جداول، أهمها:
+ *   1) «متوسط اسعار العملات … السوق الموازي»  → سعر البيع.
+ *   2) «سعر الصرف» بعمودَي «للشراء» و«للبيع»   → الشراء والبيع معاً.
+ * الاعتماد على الجُمل وحدها كان يلتقط جملة تاريخية («بلغ الدولار في 8
+ * أكتوبر 8700 جنيه للشراء و8863.01 جنيه للبيع») فيعرض 8,863 بدل 10,500.
+ */
+const parseArticleTables = (html: string): Map<string, { buy?: number; sell?: number }> => {
+  const best = new Map<string, { buy?: number; sell?: number; score: number }>();
+  const tables = html.split(/<table/i).slice(1);
+  const num = (x?: string) => toNumber(x);
+  const ok = (n: number | null): n is number => n !== null && n >= 100 && n < 1_500_000;
+
+  for (const table of tables) {
+    /* رأس الجدول يحدد قيمة صفوفه: جدول «متوسط/العملة» هو المعتمد */
+    const headPlain = (table.split(/<\/thead>/i)[0] || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const isRateTable = /العملة|السعر|الصرف|متوسط/.test(headPlain) || /للبيع|للشراء/.test(table.slice(0, 4000));
+
+    for (const row of table.split(/<tr/i).slice(1)) {
+      const plain = row
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;|&#160;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!plain) continue;
+
+      /* صفوف «اقرأ أيضاً» وعناوين المقالات ليست أسعاراً */
+      if (/اقرا ايضا|اقرأ أيضا|تابع اسعار|قفزة بنسبة|تفاصيل في تقرير/.test(plain)) continue;
+
+      const hit = AR_LABEL_TO_CODE.find(({ re }) => re.exec(plain)?.[0] !== undefined && re.test(plain));
+      if (!hit) continue;
+
+      /* اسم العملة يجب أن يكون في بداية الصف — لا في وسط جملة طويلة */
+      const labelAt = plain.search(hit.re);
+      if (labelAt < 0 || labelAt > 40) continue;
+      const after = plain.slice(labelAt);
+
+      /* الصيغة الصريحة: «10300 جنيه للشراء 10500 جنيه للبيع» */
+      const both = after.match(
+        /([0-9][0-9,]{2,}(?:\.[0-9]+)?)\s*(?:جنيه[اً]?)?\s*للشراء\s*([0-9][0-9,]{2,}(?:\.[0-9]+)?)\s*(?:جنيه[اً]?)?\s*للبيع/
+      );
+      if (both) {
+        const a = num(both[1]);
+        const b = num(both[2]);
+        if (ok(a) && ok(b)) {
+          best.set(hit.code, { buy: Math.min(a, b), sell: Math.max(a, b), score: 3 });
+          continue;
+        }
+      }
+
+      /* جدول «متوسط اسعار العملات» → رقم واحد = سعر البيع/التداول */
+      const single = after.match(/\s*([0-9][0-9,]{2,}(?:\.[0-9]+)?)/);
+      if (!single) continue;
+      const sell = num(single[1]);
+      if (!ok(sell) || sell < 500) continue; /* استثناء أرقام السنوات والهوامش */
+
+      const score = isRateTable ? 2 : 1;
+      const prev = best.get(hit.code);
+      if (!prev || score >= prev.score) {
+        best.set(hit.code, { buy: prev?.buy && prev.score >= score ? prev.buy : undefined, sell, score });
+      }
+    }
+  }
+
+  const out = new Map<string, { buy?: number; sell?: number }>();
+  for (const [code, v] of best) out.set(code, { buy: v.buy, sell: v.sell });
+  return out;
+};
+
+/** جملة تاريخية؟ («في 8 أكتوبر»، «مقابل 8331.83»، «مقارنة بـ…») */
+const isHistoricalSentence = (t: string): boolean => {
+  const monthRe = new RegExp(
+    String.raw`\d{1,2}\s*(?:` + Object.keys(AR_MONTHS).join('|') + ')'
+  );
+  return (
+    monthRe.test(t) ||
+    /مقارنة|مقابل\s*[0-9]|الشهر\s*الماضي|بداية\s*الشهر|نهاية\s*الشهر/.test(t)
+  );
+};
+
 export const parseSudanAkhbarArticle = (
   html: string
 ): { rates: LiveRate[]; publishedAt?: string; title?: string } => {
@@ -262,6 +347,8 @@ export const parseSudanAkhbarArticle = (
 
   const rates: LiveRate[] = [];
   const seen = new Set<string>();
+  /* الجداول أولاً — أدق من الجُمل */
+  const tableRates = parseArticleTables(html);
 
   const NUM = '([0-9][0-9,]{2,}(?:\\.[0-9]+)?)';
   /**
@@ -316,7 +403,23 @@ export const parseSudanAkhbarArticle = (
      * «متوسط اسعار العملات»، فلو بحثنا في الجدول وحده نأخذ رقم المتوسط
      * (10300) ونخسر سعر البيع الحقيقي (10500).
      */
-    const bs = buySellFor(text, re) || buySellFor(scope, re);
+    /* 1) جدول فيه «للشراء … للبيع» أو جدول المتوسط */
+    const fromTable = tableRates.get(code);
+    if (fromTable?.sell) {
+      const sell = fromTable.sell;
+      const buy = fromTable.buy && fromTable.buy <= sell ? fromTable.buy : undefined;
+      rates.push({ code, official: null, parallel: sell, buy, sell });
+      seen.add(code);
+      continue;
+    }
+
+    /* 2) الجُمل — بعد استبعاد الجُمل التاريخية */
+    const sentences = text.split(/[!؟\n]+|\.\s+/).map((x) => x.trim()).filter(Boolean);
+    const currentOnly = sentences.filter((t) => re.test(t) && !isHistoricalSentence(t)).join('. ');
+    const bs =
+      buySellFor(currentOnly, re) ||
+      buySellFor(scope, re) ||
+      buySellFor(text, re);
     if (bs) {
       rates.push({ code, official: null, parallel: bs.sell, buy: bs.buy, sell: bs.sell });
       seen.add(code);
