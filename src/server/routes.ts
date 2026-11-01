@@ -1870,7 +1870,15 @@ apiRouter.put('/products/:id', merchantAuthMiddleware, requireProductEditor, (re
     }
   }
 
-  for (const field of textFields) if (field in body) (product as any)[field] = body[field].trim();
+  /*
+   * تاريخ الانتهاء والإنتاج: وصول قيمة فارغة يعني **مسح** الحقل (لا ترك القيمة
+   * القديمة) — كان الفارغ يُهمَل فيبقى الحقل بلا شيء بعد الحفظ.
+   */
+  for (const field of textFields) {
+    if (!(field in body)) continue;
+    const raw = String(body[field] ?? '').trim();
+    (product as any)[field] = raw === '' ? undefined : raw;
+  }
   for (const field of ['purchaseCost', 'sellingPriceSdg', 'minStockAlert'] as const) if (field in body) (product as any)[field] = body[field];
   if ('minStockAlert' in body) product.minimumStock = body.minStockAlert;
   if ('isTaxExempt' in body) product.isTaxExempt = body.isTaxExempt;

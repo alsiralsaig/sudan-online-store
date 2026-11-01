@@ -7910,7 +7910,11 @@ apiRouter.put("/products/:id", merchantAuthMiddleware, requireProductEditor, (re
       if (!adjustment.success) return res.status(400).json({ error: adjustment.error });
     }
   }
-  for (const field of textFields) if (field in body) product[field] = body[field].trim();
+  for (const field of textFields) {
+    if (!(field in body)) continue;
+    const raw = String(body[field] ?? "").trim();
+    product[field] = raw === "" ? void 0 : raw;
+  }
   for (const field of ["purchaseCost", "sellingPriceSdg", "minStockAlert"]) if (field in body) product[field] = body[field];
   if ("minStockAlert" in body) product.minimumStock = body.minStockAlert;
   if ("isTaxExempt" in body) product.isTaxExempt = body.isTaxExempt;

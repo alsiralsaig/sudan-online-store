@@ -31,6 +31,13 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
   const [taxExempt, setTaxExempt] = useState(Boolean(product.isTaxExempt));
   const [taxRate, setTaxRate] = useState(product.customTaxRate == null ? '' : String(product.customTaxRate));
   const [imageUrl, setImageUrl] = useState(product.imageUrl || '');
+  /* تواريخ الإنتاج والانتهاء — تظهر بعد الحفظ وتُعدَّل من هنا */
+  const [productionDate, setProductionDate] = useState(
+    (product as any).productionDate ? String((product as any).productionDate).slice(0, 10) : ''
+  );
+  const [expiryDate, setExpiryDate] = useState(
+    product.expiryDate ? String(product.expiryDate).slice(0, 10) : ''
+  );
   const [videoUrl, setVideoUrl] = useState(product.videoUrl || '');
   const [scannerOpen, setScannerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -69,6 +76,7 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
       name: name.trim(), sku: sku.trim(), barcode: barcode.trim(), category: category.trim(), unit: unit.trim(),
       sellingPriceSdg: Number(price), minStockAlert: Number(minimum), isTaxExempt: taxExempt,
       customTaxRate: taxRate === '' ? null : Number(taxRate), imageUrl, videoUrl,
+      productionDate, expiryDate,
     };
     if (canViewCogs) { payload.purchaseCost = Number(cost); payload.costCurrency = currency.trim() || 'SDG'; }
     if (branch && stockReady && stockAtEdit !== null && Number(quantity) !== stockAtEdit) {
@@ -124,6 +132,15 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
               {canViewCogs && <div><label className={labelClass} htmlFor="edit-product-currency">عملة التكلفة</label><input id="edit-product-currency" value={currency} onChange={(e) => setCurrency(e.target.value)} dir="ltr" className={inputClass} /></div>}
               <div><label className={labelClass} htmlFor="edit-product-minimum">حد تنبيه النواقص</label><input id="edit-product-minimum" type="number" min="0" step="any" required value={minimum} onChange={(e) => setMinimum(e.target.value)} className={inputClass} /></div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className={labelClass} htmlFor="edit-product-production">تاريخ الإنتاج</label><input id="edit-product-production" type="date" value={productionDate} onChange={(e) => setProductionDate(e.target.value)} className={`${inputClass} font-mono`} /></div>
+              <div><label className={labelClass} htmlFor="edit-product-expiry">تاريخ الانتهاء</label><input id="edit-product-expiry" type="date" min={productionDate || undefined} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className={`${inputClass} font-mono`} /></div>
+            </div>
+            {productionDate && expiryDate && (
+              <p className="text-xs text-slate-600 -mt-1">
+                الصلاحية: {Math.max(0, Math.round((Date.parse(expiryDate) - Date.parse(productionDate)) / 86400000))} يوم
+              </p>
+            )}
             <div><label className={labelClass} htmlFor="edit-product-stock">الرصيد في {branch?.name || 'الفرع'}</label><input id="edit-product-stock" type="number" step="any" disabled={!branch || !stockReady} value={stockAtEdit === null ? String(stock) : quantity} onChange={(e) => { if (stockAtEdit === null) setStockAtEdit(stock); setQuantity(e.target.value); }} className={inputClass} /><p className="text-xs text-slate-500 mt-1">تغيير الرصيد يُسجّل كتسوية مخزنية لهذا الفرع فقط.</p></div>
             <div className="grid grid-cols-2 gap-3 items-end"><label className="flex items-center gap-2 text-slate-700 font-bold"><input type="checkbox" checked={taxExempt} onChange={(e) => setTaxExempt(e.target.checked)} /> معفى من الضريبة</label><div><label className={labelClass} htmlFor="edit-product-tax">نسبة ضريبة خاصة %</label><input id="edit-product-tax" type="number" min="0" max="100" step="any" placeholder="الافتراضية" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} className={inputClass} /></div></div>
             <div className="grid grid-cols-2 gap-3">
