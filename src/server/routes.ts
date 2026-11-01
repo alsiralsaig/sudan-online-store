@@ -5089,6 +5089,28 @@ const buildCalcReply = (amount: number, pct: number | null, code: string, rate: 
   return lines.join('\n');
 };
 
+/**
+ * يضمن أن اللقطة المخزّنة من «أخبار السودان» وحديثة قبل أي إجابة رقمية.
+ * ------------------------------------------------------------------
+ * المساعد كان أحياناً يجاوب من لقطة قديمة (قبل إصلاح قراءة الجداول) فيظهر
+ * 8,863 بدل 10,500 بينما شاشة العملات تعرض الصحيح. الآن: أي مسار رقمي
+ * (سعر/تحويل/حسبة) يضمن لقطة معتمدة حديثة أولاً.
+ */
+const ensureAuthoritativeRates = async () => {
+  const current = db.getRatesSnapshot();
+  const hours = current?.fetchedAt ? ageHours(current.fetchedAt) : null;
+  if (current && isSudanAkhbarSnapshot(current) && hours !== null && hours < 0.25) return current;
+  const fresh = await withTimeout(
+    fetchSudanAkhbarSnapshot([], { fast: true }).catch(() => null),
+    10000
+  );
+  if (fresh?.rates?.length) {
+    db.applyLiveRates(fresh, 'المساعد الذكي — المصدر المعتمد');
+    await db.flush({ lock: false }).catch(() => {});
+  }
+  return db.getRatesSnapshot();
+};
+
 apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
   const { message, mode, context, history } = req.body || {};
   if (!message || typeof message !== 'string' || !message.trim()) {
@@ -5144,7 +5166,7 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
     if (isCalcQuery(message) || isConversionQuery(message) || followUp) {
       const usable = (snap: any) =>
         snap?.rates?.length ? snap : null;
-      let snap: any = usable(db.getRatesSnapshot());
+      let snap: any = usable(await ensureAuthoritativeRates());
       if (!snap) {
         snap = usable(await fetchLiveRates().catch(() => null));
       }
@@ -5258,6 +5280,15 @@ apiRouter.post('/assistant/chat', async (req: Request, res: Response) => {
     if (asksAboutRates) {
       const sources = await fetchAllSources().catch(() => []);
       if (sources.length) {
+        /*
+         * نُثبّت قراءة «أخبار السودان» في اللقطة المخزّنة كي تتطابق شاشة
+         * العملات والكاشير وأوامر التوريد مع ما يقوله المساعد (مصدر واحد).
+         */
+        const akhbarNow = sources.find((x) => isSudanAkhbarSnapshot(x as any)) as any;
+        if (akhbarNow?.rates?.length) {
+          db.applyLiveRates(akhbarNow, 'المساعد الذكي — المصدر المعتمد');
+          await db.flush({ lock: false }).catch(() => {});
+        }
         const ordered = [...sources].sort((a, b) => {
           const rank = (x: any) => (x.source.includes('sudanakhbar') ? 0 : 1);
           return rank(a) - rank(b);

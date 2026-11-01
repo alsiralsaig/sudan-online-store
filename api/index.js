@@ -10442,6 +10442,21 @@ var buildCalcReply = (amount, pct, code, rate) => {
   lines.push(`(\u0639\u0644\u0649 \u0633\u0639\u0631 ${name} ${rate.toLocaleString("en-US")} \u062C.\u0633 \u2014 \u0627\u0644\u0633\u0648\u0642 \u0627\u0644\u0645\u0648\u0627\u0632\u064A)`);
   return lines.join("\n");
 };
+var ensureAuthoritativeRates = async () => {
+  const current = db.getRatesSnapshot();
+  const hours = current?.fetchedAt ? ageHours(current.fetchedAt) : null;
+  if (current && isSudanAkhbarSnapshot(current) && hours !== null && hours < 0.25) return current;
+  const fresh = await withTimeout2(
+    fetchSudanAkhbarSnapshot([], { fast: true }).catch(() => null),
+    1e4
+  );
+  if (fresh?.rates?.length) {
+    db.applyLiveRates(fresh, "\u0627\u0644\u0645\u0633\u0627\u0639\u062F \u0627\u0644\u0630\u0643\u064A \u2014 \u0627\u0644\u0645\u0635\u062F\u0631 \u0627\u0644\u0645\u0639\u062A\u0645\u062F");
+    await db.flush({ lock: false }).catch(() => {
+    });
+  }
+  return db.getRatesSnapshot();
+};
 apiRouter.post("/assistant/chat", async (req, res) => {
   const { message, mode, context, history } = req.body || {};
   if (!message || typeof message !== "string" || !message.trim()) {
@@ -10463,7 +10478,7 @@ apiRouter.post("/assistant/chat", async (req, res) => {
     const followUp = followUpEarly;
     if (isCalcQuery(message) || isConversionQuery(message) || followUp) {
       const usable = (snap2) => snap2?.rates?.length ? snap2 : null;
-      let snap = usable(db.getRatesSnapshot());
+      let snap = usable(await ensureAuthoritativeRates());
       if (!snap) {
         snap = usable(await fetchLiveRates().catch(() => null));
       }
@@ -10551,6 +10566,12 @@ apiRouter.post("/assistant/chat", async (req, res) => {
     if (asksAboutRates) {
       const sources = await fetchAllSources().catch(() => []);
       if (sources.length) {
+        const akhbarNow = sources.find((x) => isSudanAkhbarSnapshot(x));
+        if (akhbarNow?.rates?.length) {
+          db.applyLiveRates(akhbarNow, "\u0627\u0644\u0645\u0633\u0627\u0639\u062F \u0627\u0644\u0630\u0643\u064A \u2014 \u0627\u0644\u0645\u0635\u062F\u0631 \u0627\u0644\u0645\u0639\u062A\u0645\u062F");
+          await db.flush({ lock: false }).catch(() => {
+          });
+        }
         const ordered = [...sources].sort((a, b) => {
           const rank = (x) => x.source.includes("sudanakhbar") ? 0 : 1;
           return rank(a) - rank(b);
