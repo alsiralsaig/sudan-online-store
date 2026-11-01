@@ -3154,12 +3154,21 @@ var Database = class {
   getRateAlertLog() {
     return this.data.currencyRateAlerts || [];
   }
-  markRateAlerted(code, percent, rate) {
+  markRateAlerted(code, percent, rate, meta = {}) {
     const data = this.data;
     if (!Array.isArray(data.currencyRateAlerts)) data.currencyRateAlerts = [];
     const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     data.currencyRateAlerts = [
-      { id: `${code}_${day}`, code, day, percent, rate },
+      {
+        id: `${code}_${day}`,
+        code,
+        day,
+        percent,
+        rate,
+        previous: meta.previous,
+        source: meta.source,
+        at: (/* @__PURE__ */ new Date()).toISOString()
+      },
       ...data.currencyRateAlerts.filter((a) => !(a.code === code && a.day === day))
     ].slice(0, 200);
     this.commit();
@@ -5490,7 +5499,9 @@ ${body}`);
       if (verdict.sent) result.telegram.sent += verdict.sent;
       else if (!result.telegram.skipped) result.telegram.skipped = verdict.skipped;
     }
-    db.markRateAlerted(move.code, move.percent, move.current);
+    db.markRateAlerted(move.code, move.percent, move.current, {
+      previous: move.previous
+    });
   }
   return result;
 };
@@ -5501,13 +5512,19 @@ function detectMoves() {
     const pct = c.lastMovePercent;
     if (typeof pct !== "number" || !Number.isFinite(pct)) continue;
     if (Math.abs(pct) < THRESHOLD_PERCENT) continue;
-    const previous = c.parallelRate ? c.parallelRate / (1 + pct / 100) : c.rateToSdg;
+    const snapshot = db.getRatesSnapshot();
+    const live = (snapshot?.rates || []).find((r) => String(r.code).toUpperCase() === c.code);
+    const liveRate = Number(live?.parallel) || Number(live?.sell) || Number(live?.official) || null;
+    const current = liveRate ?? c.rateToSdg;
+    const previous = Number(live?.previous) || (liveRate ? Number((liveRate / (1 + pct / 100)).toFixed(2)) : c.rateToSdg);
+    const direction = current >= previous ? Math.abs(pct) : -Math.abs(pct);
+    if (Math.abs(direction) < THRESHOLD_PERCENT) continue;
     moves.push({
       code: c.code,
       name: c.name,
       previous: Math.round(previous * 100) / 100,
-      current: c.rateToSdg,
-      percent: pct
+      current,
+      percent: Number(direction.toFixed(2))
     });
   }
   return moves;

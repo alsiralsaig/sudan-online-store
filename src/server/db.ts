@@ -2426,12 +2426,26 @@ class Database {
     return (this.data as any).currencyRateAlerts || [];
   }
 
-  public markRateAlerted(code: string, percent: number, rate: number): void {
+  public markRateAlerted(
+    code: string,
+    percent: number,
+    rate: number,
+    meta: { previous?: number; source?: string } = {}
+  ): void {
     const data: any = this.data;
     if (!Array.isArray(data.currencyRateAlerts)) data.currencyRateAlerts = [];
     const day = new Date().toISOString().slice(0, 10);
     data.currencyRateAlerts = [
-      { id: `${code}_${day}`, code, day, percent, rate },
+      {
+        id: `${code}_${day}`,
+        code,
+        day,
+        percent,
+        rate,
+        previous: meta.previous,
+        source: meta.source,
+        at: new Date().toISOString(),
+      },
       ...data.currencyRateAlerts.filter((a: any) => !(a.code === code && a.day === day)),
     ].slice(0, 200);
     this.commit();
@@ -2480,6 +2494,11 @@ class Database {
           : 0;
 
       currency.rateToSdg = Math.round(trading * 100) / 100;
+      /*
+       * @deprecated: كان يُخزَّن **بدون إشارة** («حجم» التغيّر) فيظهر في
+       * التنبيهات «انخفض» بينما السعر ارتفع. بقي للحقول القديمة فقط؛ التنبيه
+       * الحقيقي صار يعتمد على مقارنة لقطتين (checkRateMovesBetween).
+       */
       (currency as any).lastMovePercent = movePercent;
       if (live.official) currency.officialRate = live.official;
       if (live.parallel) currency.parallelRate = live.parallel;

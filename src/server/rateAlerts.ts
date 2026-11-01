@@ -219,7 +219,9 @@ export const checkRateMoves = async (
       else if (!result.telegram.skipped) result.telegram.skipped = verdict.skipped;
     }
 
-    db.markRateAlerted(move.code, move.percent, move.current);
+    db.markRateAlerted(move.code, move.percent, move.current, {
+      previous: move.previous,
+    });
   }
 
   return result;
@@ -230,16 +232,29 @@ export function detectMoves(): MoveAlert[] {
   const moves: MoveAlert[] = [];
   for (const c of db.getSchema().currencies) {
     if (c.isBase) continue;
+    /*
+     * lastMovePercent يُحسب دائماً **موجباً** (حجم التغيّر)، فمقارنة الإشارة
+     * كانت تنتج نسبة سالبة كاذبة («انخفض 15.59%» بينما السعر ارتفع من
+     * 8,863 إلى 10,499.95). نأخذ حجم التغيّر والمصدر من لقطة الأسعار نفسها.
+     */
     const pct = (c as any).lastMovePercent;
     if (typeof pct !== 'number' || !Number.isFinite(pct)) continue;
     if (Math.abs(pct) < THRESHOLD_PERCENT) continue;
-    const previous = c.parallelRate ? c.parallelRate / (1 + pct / 100) : c.rateToSdg;
+
+    const snapshot = db.getRatesSnapshot() as any;
+    const live = (snapshot?.rates || []).find((r: any) => String(r.code).toUpperCase() === c.code);
+    const liveRate = Number(live?.parallel) || Number(live?.sell) || Number(live?.official) || null;
+    const current = liveRate ?? c.rateToSdg;
+    const previous = Number((live as any)?.previous) || (liveRate ? Number((liveRate / (1 + pct / 100)).toFixed(2)) : c.rateToSdg);
+    const direction = current >= previous ? Math.abs(pct) : -Math.abs(pct);
+    if (Math.abs(direction) < THRESHOLD_PERCENT) continue;
+
     moves.push({
       code: c.code,
       name: c.name,
       previous: Math.round(previous * 100) / 100,
-      current: c.rateToSdg,
-      percent: pct,
+      current,
+      percent: Number(direction.toFixed(2)),
     });
   }
   return moves;
