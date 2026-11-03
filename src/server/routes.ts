@@ -3345,8 +3345,17 @@ const needsRefresh = (): boolean => {
 };
 
 /** Yesterday's parallel prices — what the dashboard shows. */
-apiRouter.get('/currency/parallel-rates', async (_req, res) => {
-  if (needsRefresh()) {
+apiRouter.get('/currency/parallel-rates', async (req, res) => {
+  /*
+   * ?force=1 — «حدّث الآن» من الواجهة.
+   * مسموح بلا صلاحية (قراءة من مصدر عام) لكن بحد أقصى مرة كل 5 دقائق
+   * حتى لا يتحول الزر إلى ضغط على مصدر الأسعار.
+   */
+  const wantsForce = String((req.query as any)?.force ?? '') === '1';
+  const lastAt = db.getRatesSnapshot()?.fetchedAt;
+  const forceAllowed =
+    wantsForce && (!lastAt || (Date.now() - Date.parse(lastAt)) / 60_000 >= 5);
+  if (forceAllowed || needsRefresh()) {
     try {
       await refreshLiveRates();
     } catch {

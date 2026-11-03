@@ -604,7 +604,16 @@ const fetchViaReader = async (url: string, timeoutMs = 9000): Promise<string | n
     const t = setTimeout(() => c.abort(), timeoutMs);
     const res = await fetch(READER(url), {
       signal: c.signal,
-      headers: { Accept: 'text/plain', 'X-Return-Format': 'text' },
+      headers: {
+        Accept: 'text/plain',
+        'X-Return-Format': 'text',
+        /*
+         * ملاحظة مهمة (تحقّق حيّ 2026-11-03): بدون هذه الترويسة كان القارئ
+         * يُرجع **نسخة مخزّنة قديمة** من صفحة أسعار اليوم (ظهر 10200 وهو سعر
+         * عروض أدنى ذُكرت في المقال) بينما الصفحة نفسها فيها 10500.
+         */
+        'X-No-Cache': 'true',
+      },
     });
     clearTimeout(t);
     if (!res.ok) return null;

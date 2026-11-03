@@ -2519,6 +2519,21 @@ class Database {
       }
     }
 
+    /*
+     * لا نستبدل لقطة أحدث بتاريخ أقدم.
+     * ------------------------------------------------------------------
+     * حدث فعلاً (3 نوفمبر): بقيت لقطة 8200 بتاريخ 2 نوفمبر في القاعدة، ولأن
+     * طلب التحديث كان يقع في مهلة Vercel لم تُستبدل، فاستمر التطبيق يعرض
+     * رقماً عمره يوم كامل. الآن: أي لقطة أقدم زمنياً من المخزّنة تُرفض،
+     * فتظل القاعدة على الأحدث دائماً.
+     */
+    const stored = (this.data.currencyRatesSnapshot || [])[0];
+    const storedAt = stored?.fetchedAt ? Date.parse(stored.fetchedAt) : 0;
+    const incomingAt = snapshot.fetchedAt ? Date.parse(snapshot.fetchedAt) : Date.now();
+    if (storedAt && Number.isFinite(storedAt) && incomingAt < storedAt) {
+      return { updated: 0, skipped: ['STALE_SNAPSHOT'] };
+    }
+
     this.data.currencyRatesSnapshot = [{ id: 'latest', ...snapshot }];
     this.commit();
     return { updated, skipped };
