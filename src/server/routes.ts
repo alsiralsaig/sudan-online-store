@@ -3390,6 +3390,46 @@ apiRouter.get('/currency/parallel-rates', async (req, res) => {
 });
 
 /**
+ * جدول الأسعار الكامل جاهزاً للحساب (sell/buy + وقت النشر + رابط المقال).
+ * ------------------------------------------------------------------
+ * كل شاشة فيها تسعير بالعملات تحتاج: سعر البيع للتحصيل، وسعر الشراء
+ * للتكلفة، وتاريخ نشر الخبر، ورابط المصدر. تجميعها هنا يمنع تكرار المنطق
+ * في الواجهات ويمنع أي رقم مكتوب في الكود.
+ */
+apiRouter.get('/currency/market-rates', async (req, res) => {
+  /* نفس مسار اللقطة: تحديث لو مضى ساعة أو لو صار سعر أمس */
+  try {
+    if (needsRefresh()) await refreshLiveRates();
+  } catch {
+    /* نكمل باللقطة المحفوظة */
+  }
+  const snap: any = db.getRatesSnapshot();
+  const sell: Record<string, number> = { SDG: 1 };
+  const buy: Record<string, number> = { SDG: 1 };
+  for (const r of snap?.rates || []) {
+    const code = String(r?.code || '').toUpperCase();
+    if (!code || code === 'SDG') continue;
+    const s = Number(r?.sell ?? r?.parallel) || 0;
+    if (s > 1) sell[code] = s;
+    const b = Number(r?.buy) || 0;
+    if (b > 1 && b < s) buy[code] = b;
+  }
+  res.json({
+    sell,
+    buy,
+    meta: {
+      fetchedAt: snap?.fetchedAt || null,
+      publishedAt: snap?.sourceUpdatedAt || null,
+      articleUrl: snap?.sourceUrl || null,
+      articlesUrl: 'https://www.sudanakhbar.com/business-news/currency-rates-prices',
+      sourceName: snap?.source || 'أخبار السودان',
+    },
+    stale: snap?.fetchedAt ? isStale(snap.fetchedAt) : true,
+    refreshEveryHours: RATES_REFRESH_HOURS,
+  });
+});
+
+/**
  * «تحديث الآن» — نسخة آمنة لأي مستخدم مسجّل (تاجر أو إدارة).
  * ------------------------------------------------------------------
  * الزر داخل تطبيق التاجر كان ينادي /admin/currency/refresh المحمي، فيرد

@@ -6,6 +6,8 @@ import {
   FileText, Printer, MessageCircle,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
+import { MARKET_RATES_ARTICLES_URL, MARKET_RATES_SOURCE_NAME } from '../../lib/marketRates.ts';
+import { RateSourceLine } from '../Common/RateSourceLine.tsx';
 import {
   buildOrderInvoice,
   orderHasInvoice,
@@ -54,8 +56,14 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   /* أسعار السوق الموازي الحيّة: تُستخدم لملء سعر الصرف تلقائياً */
   const [parallelRates, setParallelRates] = useState<Record<string, number>>({});
   const [ratesAt, setRatesAt] = useState<string | null>(null);
-  const [rateSource, setRateSource] = useState<{ name: string; url?: string; marketAt?: string } | null>(null);
+  const [rateSource, setRateSource] = useState<{
+    name: string;
+    url?: string;
+    marketAt?: string;
+    fetchedAt?: string;
+  } | null>(null);
   const [rateDetail, setRateDetail] = useState<Record<string, { buy?: number; sell?: number }>>({});
+  const [ratesRefreshing, setRatesRefreshing] = useState(false);
   /* الحد الأدنى للطلب (للمورد/الجملة) */
   const [minOrderValue, setMinOrderValue] = useState('');
   const [minOrderQty, setMinOrderQty] = useState('');
@@ -69,8 +77,10 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
   const myMinOrder = (sources || []).find((x: any) => x.minOrderValueSdg !== undefined && (x as any).isMe) || null;
 
   /* أسعار السوق الموازي: عند فتح الشاشة وكل دقيقة، ووقت إرسال الطلب */
-  const loadParallelRates = useCallback(async () => {
+  const loadParallelRates = useCallback(async (force = false) => {
     try {
+      setRatesRefreshing(true);
+      if (force) await api.refreshParallelRates().catch(() => null);
       const res = await api.getParallelRates();
       const map: Record<string, number> = { SDG: 1 };
       for (const r of res.snapshot?.rates || []) {
@@ -90,6 +100,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
         name: String(res.snapshot?.source || ''),
         url: res.snapshot?.sourceUrl,
         marketAt: res.snapshot?.sourceUpdatedAt,
+        fetchedAt: res.snapshot?.fetchedAt,
       });
       const detail: Record<string, { buy?: number; sell?: number }> = {};
       for (const r of res.snapshot?.rates || []) {
@@ -98,6 +109,8 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
       setRateDetail(detail);
     } catch {
       /* نبقى على آخر أسعار معروفة */
+    } finally {
+      setRatesRefreshing(false);
     }
   }, []);
 
@@ -698,10 +711,14 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                         className="mt-0.5 w-full rounded-lg border border-sky-300 bg-white px-1.5 py-1 text-[11px] font-bold text-slate-800"
                       >
                         <option value="SDG">جنيه سوداني (SDG)</option>
-                        <option value="USD">دولار (USD)</option>
-                        <option value="SAR">ريال سعودي (SAR)</option>
-                        <option value="AED">درهم (AED)</option>
-                        <option value="CNY">يوان (CNY)</option>
+                        {Object.keys(parallelRates)
+                          .filter((c) => c !== 'SDG')
+                          .sort()
+                          .map((c) => (
+                            <option key={c} value={c}>
+                              {c} — {Number(parallelRates[c]).toLocaleString('en-US')} ج.س
+                            </option>
+                          ))}
                       </select>
                     </label>
                     {payCurrency !== 'SDG' && (
@@ -739,18 +756,19 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                           {rateDetail[payCurrency]?.buy ? ` (شراء ${Number(rateDetail[payCurrency].buy).toLocaleString('en-US')})` : ''}
                           {ratesAt ? ` • آخر تحديث ${new Date(ratesAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}` : ''}
                         </div>
-                        {rateSource?.name && (
-                          <div className="mt-0.5 flex items-center gap-1 text-[9px] text-slate-500">
-                            <span className="rounded bg-sky-100 px-1 py-0.5 font-bold text-sky-800">
-                              المصدر: {rateSource.name.includes('اخبار السودان') ? 'أخبار السودان' : rateSource.name}
-                            </span>
-                            {rateSource.marketAt && (
-                              <span>
-                                سعر السوق {new Date(rateSource.marketAt).toLocaleDateString('ar-EG', { day: 'numeric', month: 'long' })}
-                              </span>
-                            )}
-                          </div>
-                        )}
+                        <RateSourceLine
+                          meta={{
+                            articleUrl: rateSource?.url || null,
+                            fetchedAt: rateSource?.fetchedAt || ratesAt,
+                            publishedAt: rateSource?.marketAt || null,
+                            sourceName: rateSource?.name || MARKET_RATES_SOURCE_NAME,
+                            articlesUrl: MARKET_RATES_ARTICLES_URL,
+                          }}
+                          compact
+                          refreshing={ratesRefreshing}
+                          onRefresh={() => { setRateTouched(false); void loadParallelRates(true); }}
+                          className="mt-1"
+                        />
                       </div>
                     )}
                   </div>

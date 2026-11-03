@@ -448,10 +448,21 @@ export interface CurrencyConfig {
 
 /** Snapshot of the parallel-market table pulled from the public sources. */
 export interface CurrencyRatesSnapshot {
-  rates: Array<{ code: string; official: number | null; parallel: number | null }>;
+  rates: Array<{
+    code: string;
+    official: number | null;
+    parallel: number | null;
+    /** سعر البيع في السوق (الأعلى) */
+    sell?: number;
+    /** سعر الشراء في السوق (الأقل) */
+    buy?: number;
+  }>;
   source: string;
+  /** رابط المقال الذي أُخذت منه الأرقام */
   sourceUrl: string;
   fetchedAt: string;
+  /** وقت نشر المقال في المصدر — يفرّق «سعر اليوم» عن سعر أمس */
+  sourceUpdatedAt?: string;
   stale?: boolean;
 }
 

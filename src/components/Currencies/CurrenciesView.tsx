@@ -316,6 +316,20 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
                     )}
                   </div>
 
+                  {/* سعر البيع/الشراء من جدول المصدر — البطاقة تعرض سعر البيع */}
+                  {!curr.isBase && (ratesMeta as any)?.snapshot?.rates?.length ? (() => {
+                    const r = (ratesMeta as any).snapshot.rates.find(
+                      (x: any) => String(x.code).toUpperCase() === curr.code
+                    );
+                    if (!r) return null;
+                    return (
+                      <span className="text-[10px] text-slate-500 block font-mono">
+                        السوق: بيع {r?.sell ? Number(r.sell).toLocaleString('en-US') : '—'} · شراء{' '}
+                        {r?.buy ? Number(r.buy).toLocaleString('en-US') : '—'}
+                      </span>
+                    );
+                  })() : null}
+
                   {!curr.isBase && curr.officialRate ? (
                     <span className="text-[10px] text-slate-500 block">
                       البنك: <span className="font-mono">{curr.officialRate.toLocaleString()}</span> ج.س

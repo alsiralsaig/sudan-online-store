@@ -47,6 +47,15 @@ import type {
   Tenant,
 } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
+import {
+  EMPTY_MARKET_RATES,
+  loadMarketRates,
+  marketRateFor,
+  fmtRate,
+  type MarketRates,
+  type RateSide,
+} from '../../lib/marketRates.ts';
+import { RateSourceLine } from '../Common/RateSourceLine.tsx';
 import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
 import { CameraBarcodeScanner } from './CameraBarcodeScanner.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
@@ -152,6 +161,14 @@ export const PosView: React.FC<PosViewProps> = ({
   const [selectedCurrency, setSelectedCurrency] = useState<string>('SDG');
   const [customExchangeRate, setCustomExchangeRate] = useState<number>(1);
   const [foreignCashReceived, setForeignCashReceived] = useState<string>('');
+  /*
+   * أسعار السوق الحيّة (متغيّرة): لا رقم صرف مكتوب في هذا الملف.
+   * نأخذ سعر البيع للتحصيل من العميل، ويُعرض سعر الشراء للمعلومة.
+   */
+  const [marketRates, setMarketRates] = useState<MarketRates>(EMPTY_MARKET_RATES);
+  const [ratesRefreshing, setRatesRefreshing] = useState(false);
+  const [rateTouched, setRateTouched] = useState(false);
+  const [rateMissing, setRateMissing] = useState(false);
 
   // Scanner Audio & Status
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -514,30 +531,61 @@ export const PosView: React.FC<PosViewProps> = ({
     );
   };
 
-  // Currency Selection Helper
+  /*
+   * جلب أسعار السوق الحيّة — مرة عند الفتح وكل دقيقة، وعند طلب الحساب.
+   * كل الأرقام متغيّرة وتأتي من «أخبار السودان»؛ لا يوجد سعر افتراضي هنا.
+   */
+  const refreshMarketRates = useCallback(
+    async (force = false) => {
+      setRatesRefreshing(true);
+      try {
+        if (force) await api.refreshParallelRates().catch(() => null);
+        const next = await loadMarketRates();
+        setMarketRates(next);
+        return next;
+      } catch {
+        return null;
+      } finally {
+        setRatesRefreshing(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    void refreshMarketRates();
+    const timer = setInterval(() => void refreshMarketRates(), 60 * 1000);
+    return () => clearInterval(timer);
+  }, [refreshMarketRates]);
+
+  // Currency Selection Helper — السعر يُقرأ من السوق، ولو غير متاح نُظهر تحذيراً
   const handleCurrencySelect = (code: string) => {
     setSelectedCurrency(code);
     if (code === 'SDG') {
       setCustomExchangeRate(1);
       setForeignCashReceived('');
+      return;
+    }
+    const live = marketRateFor(marketRates, code, 'sell');
+    setRateMissing(!live);
+    if (live && live > 1) {
+      setCustomExchangeRate(live);
+      setForeignCashReceived((grandTotal / live).toFixed(2));
     } else {
-      const found = currencies.find((c) => c.code === code);
-      let defaultRate = 2750;
-      if (code === 'USD') defaultRate = 2750;
-      else if (code === 'SAR') defaultRate = 733.33;
-      else if (code === 'TRY') defaultRate = 82.5;
-      else if (code === 'EGP') defaultRate = 56.8;
-      else if (code === 'AED') defaultRate = 748.5;
-      else if (code === 'EUR') defaultRate = 2980;
-      else if (code === 'QAR') defaultRate = 755;
-      else if (found) defaultRate = found.rateToSdg;
-
-      const activeRate = found?.rateToSdg && found.rateToSdg > 0 ? found.rateToSdg : defaultRate;
-      setCustomExchangeRate(activeRate);
-      const foreignTotal = (grandTotal / activeRate).toFixed(2);
-      setForeignCashReceived(foreignTotal);
+      setCustomExchangeRate(0);
+      setForeignCashReceived('');
     }
   };
+
+  /* أي تحديث لأسعار السوق يعيد ضبط الحقل تلقائياً (إلا لو عدّله الكاشير يدوياً) */
+  useEffect(() => {
+    if (selectedCurrency === 'SDG' || rateTouched) return;
+    const live = marketRateFor(marketRates, selectedCurrency, 'sell');
+    if (live && live > 1) {
+      setRateMissing(false);
+      setCustomExchangeRate(live);
+    }
+  }, [marketRates, selectedCurrency, rateTouched]);
 
   // VAT and Tax Calculations
   const isVatActive = receiptSettings.vatEnabled ?? true;
@@ -1503,34 +1551,62 @@ export const PosView: React.FC<PosViewProps> = ({
                   </span>
                 </div>
 
-                                {/* Currency selector chips */}
+                                {/*
+                  * شرائح العملات — الرقم تحت كل عملة هو **سعر السوق الآن**
+                  * (متغيّر، من أخبار السودان). كانت أرقاماً ثابتة في الكود
+                  * (2,750 · 733 · 82.5 …) لا علاقة لها بالسوق.
+                  */}
                 <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
                   {[
-                    { code: "SDG", label: "SDG جنيه", badge: "أساس" },
-                    { code: "USD", label: "USD دولار", badge: "2,750" },
-                    { code: "SAR", label: "SAR ريال", badge: "733" },
-                    { code: "TRY", label: "TRY ليرة", badge: "82.5" },
-                    { code: "EGP", label: "EGP مصري", badge: "56.8" },
-                    { code: "AED", label: "AED درهم", badge: "748" },
-                    { code: "EUR", label: "EUR يورو", badge: "2,980" },
-                  ].map((cur) => (
-                    <button
-                      key={cur.code}
-                      type="button"
-                      onClick={() => handleCurrencySelect(cur.code)}
-                      className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
-                        selectedCurrency === cur.code
-                          ? "bg-emerald-600 text-white shadow-xs"
-                          : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
-                      }`}
-                    >
-                      <span>{cur.label}</span>
-                      <span className={`text-[9px] font-mono ${selectedCurrency === cur.code ? "text-emerald-200" : "text-slate-400"}`}>
-                        {cur.badge}
-                      </span>
-                    </button>
-                  ))}
+                    { code: 'SDG', label: 'SDG جنيه' },
+                    { code: 'USD', label: 'USD دولار' },
+                    { code: 'SAR', label: 'SAR ريال' },
+                    { code: 'TRY', label: 'TRY ليرة' },
+                    { code: 'EGP', label: 'EGP مصري' },
+                    { code: 'AED', label: 'AED درهم' },
+                    { code: 'EUR', label: 'EUR يورو' },
+                  ].map((cur) => {
+                    const live = cur.code === 'SDG' ? 1 : marketRateFor(marketRates, cur.code, 'sell');
+                    const buyLive = cur.code === 'SDG' ? null : marketRateFor(marketRates, cur.code, 'buy');
+                    return (
+                      <button
+                        key={cur.code}
+                        type="button"
+                        onClick={() => handleCurrencySelect(cur.code)}
+                        className={`py-1.5 px-1 rounded-lg text-[11px] font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
+                          selectedCurrency === cur.code
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span>{cur.label}</span>
+                        <span
+                          className={`text-[9px] font-mono ${
+                            selectedCurrency === cur.code ? 'text-emerald-200' : 'text-slate-400'
+                          }`}
+                        >
+                          {cur.code === 'SDG' ? 'أساس' : live ? fmtRate(live) : '—'}
+                        </span>
+                        {buyLive && buyLive !== live && (
+                          <span
+                            className={`text-[8px] font-mono ${
+                              selectedCurrency === cur.code ? 'text-emerald-100/90' : 'text-slate-400'
+                            }`}
+                          >
+                            ش {fmtRate(buyLive)}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
+
+                {/* سطر المصدر: سعر اليوم + رابط جدول أخبار السودان + تحديث فوري */}
+                <RateSourceLine
+                  meta={marketRates.meta}
+                  refreshing={ratesRefreshing}
+                  onRefresh={() => void refreshMarketRates(true)}
+                />
 
                 {/* Foreign Currency Calculation Fields */}
                 {selectedCurrency !== 'SDG' && (
@@ -1538,19 +1614,60 @@ export const PosView: React.FC<PosViewProps> = ({
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="block text-[11px] font-semibold text-amber-950 mb-0.5">
-                          سعر الصرف المخصص (ج.س/1 {selectedCurrency}):
+                          سعر الصرف (ج.س/1 {selectedCurrency}) — سعر السوق الآن:
                         </label>
                         <input
                           type="number"
                           min="1"
-                          value={customExchangeRate}
+                          value={customExchangeRate || ''}
                           onChange={(e) => {
-                            const rate = Number(e.target.value) || 1;
+                            const rate = Number(e.target.value) || 0;
+                            setRateTouched(true);
                             setCustomExchangeRate(rate);
-                            setForeignCashReceived((grandTotal / rate).toFixed(2));
+                            if (rate > 1) setForeignCashReceived((grandTotal / rate).toFixed(2));
                           }}
-                          className="w-full px-2.5 py-1.5 text-xs font-mono font-bold border border-amber-300 rounded bg-white"
+                          className={`w-full px-2.5 py-1.5 text-xs font-mono font-bold border rounded bg-white ${
+                            rateMissing ? 'border-rose-400 text-rose-700' : 'border-amber-300'
+                          }`}
                         />
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <span
+                            className={`rounded px-1 py-0.5 text-[9px] font-black ${
+                              rateTouched
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {rateTouched ? 'إدخال يدوي' : 'سعر السوق تلقائي'}
+                          </span>
+                          {marketRateFor(marketRates, selectedCurrency, 'buy') && (
+                            <span className="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-600">
+                              شراء السوق {fmtRate(marketRateFor(marketRates, selectedCurrency, 'buy'))}
+                            </span>
+                          )}
+                          {rateTouched && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const live = marketRateFor(marketRates, selectedCurrency, 'sell');
+                                setRateTouched(false);
+                                if (live) {
+                                  setRateMissing(false);
+                                  setCustomExchangeRate(live);
+                                  setForeignCashReceived((grandTotal / live).toFixed(2));
+                                }
+                              }}
+                              className="rounded bg-sky-100 px-1 py-0.5 text-[9px] font-black text-sky-800 underline"
+                            >
+                              رجوع لسعر السوق
+                            </button>
+                          )}
+                        </div>
+                        {rateMissing && (
+                          <p className="mt-1 text-[9.5px] font-bold text-rose-700">
+                            المصدر لم ينشر سعر {selectedCurrency} بعد — أدخله يدوياً أو اضغط «تحديث السعر».
+                          </p>
+                        )}
                       </div>
 
                       <div>
@@ -1562,6 +1679,13 @@ export const PosView: React.FC<PosViewProps> = ({
                         </div>
                       </div>
                     </div>
+
+                    <RateSourceLine
+                      meta={marketRates.meta}
+                      refreshing={ratesRefreshing}
+                      onRefresh={() => void refreshMarketRates(true)}
+                      className="border-t border-amber-200 pt-1.5"
+                    />
 
                     <div className="pt-2 border-t border-amber-200 grid grid-cols-2 gap-2">
                       <div>

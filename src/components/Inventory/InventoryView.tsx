@@ -29,6 +29,14 @@ import {
 } from 'lucide-react';
 import type { Product, Branch, BranchInventory, StockMovement } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
+import {
+  EMPTY_MARKET_RATES,
+  loadMarketRates,
+  marketRateFor,
+  fmtRate,
+  type MarketRates,
+} from '../../lib/marketRates.ts';
+import { RateSourceLine } from '../Common/RateSourceLine.tsx';
 import { PRODUCT_UNITS, mergeUnit } from '../../lib/units.ts';
 import { InventoryAuditModal } from './InventoryAuditModal.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
@@ -110,6 +118,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [poBranchId, setPoBranchId] = useState(currentBranch?.id || branches[0]?.id || '');
   const [poPaymentStatus, setPoPaymentStatus] = useState<'paid' | 'partial' | 'credit'>('paid');
   const [poNotes, setPoNotes] = useState('أمر شراء وتوريد مباشر لتعزيز مخزون النواقص');
+  /*
+   * عملة الشراء وسعر الصرف: كان أمر الشراء يُسجّل دائماً بالجنيه بسعر 1،
+   * فلا يمكن إدخال تكلفة بالدولار. السعر الآن **سعر الشراء من السوق** كما
+   * ينشره جدول أخبار السودان (متغيّر — لا رقم في الكود).
+   */
+  const [poCurrency, setPoCurrency] = useState('SDG');
+  const [poRate, setPoRate] = useState<number>(1);
+  const [poRateTouched, setPoRateTouched] = useState(false);
+  const [marketRates, setMarketRates] = useState<MarketRates>(EMPTY_MARKET_RATES);
+  const [ratesRefreshing, setRatesRefreshing] = useState(false);
   const [isPoSubmitting, setIsPoSubmitting] = useState(false);
 
   // Inventories from server
@@ -264,6 +282,37 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   useEffect(() => {
     loadData();
   }, [selectedBranchId, activeTab]);
+
+  /* أسعار السوق للشراء (متغيّرة) — تُستخدم كسعر صرف افتراضي لأمر الشراء */
+  const refreshMarketRates = React.useCallback(async (force = false) => {
+    setRatesRefreshing(true);
+    try {
+      if (force) await api.refreshParallelRates().catch(() => null);
+      setMarketRates(await loadMarketRates());
+    } catch {
+      /* نبقى على آخر أسعار معروفة */
+    } finally {
+      setRatesRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshMarketRates();
+    const t = setInterval(() => void refreshMarketRates(), 60 * 1000);
+    return () => clearInterval(t);
+  }, [refreshMarketRates]);
+
+  /* أي تغيير في عملة الشراء يعبّي سعر الشراء من السوق (إلا لو عدّله المستخدم) */
+  useEffect(() => {
+    if (poCurrency === 'SDG') {
+      setPoRate(1);
+      setPoRateTouched(false);
+      return;
+    }
+    if (poRateTouched) return;
+    const live = marketRateFor(marketRates, poCurrency, 'buy');
+    if (live && live > 1) setPoRate(live);
+  }, [poCurrency, marketRates, poRateTouched]);
 
   const categories = ['الكل', ...Array.from(new Set(products.map((p) => p.category)))];
 
@@ -565,16 +614,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         branchId: poBranchId,
         supplierName: poSupplier,
         invoiceNumber: poInvoiceNo,
-        currency: 'SDG',
-        exchangeRate: 1,
+        currency: poCurrency,
+        exchangeRate: poCurrency === 'SDG' ? 1 : poRate,
         items: poItems.map((it) => ({
           productId: it.productId,
           productName: it.productName,
           quantity: it.orderQuantity,
+          /* التكلفة تُدخَل بعملة الفاتورة، والجنيه يُحسب بسعر اليوم */
           costInCurrency: it.unitCostSdg,
-          currency: 'SDG',
-          exchangeRate: 1,
-          costSdg: it.unitCostSdg,
+          currency: poCurrency,
+          exchangeRate: poCurrency === 'SDG' ? 1 : poRate,
+          costSdg: poCurrency === 'SDG' ? it.unitCostSdg : it.unitCostSdg * poRate,
         })),
         paymentStatus: poPaymentStatus,
         notes: poNotes,
@@ -1811,6 +1861,75 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
               </div>
 
+              {/* عملة الشراء + سعر الصرف من السوق */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">عملة فاتورة المورد:</label>
+                  <select
+                    value={poCurrency}
+                    onChange={(e) => setPoCurrency(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-medium"
+                  >
+                    <option value="SDG">جنيه سوداني (SDG)</option>
+                    {Object.keys(marketRates.buy)
+                      .concat(Object.keys(marketRates.sell))
+                      .filter((c, i, a) => c !== 'SDG' && a.indexOf(c) === i)
+                      .sort()
+                      .map((c) => (
+                        <option key={c} value={c}>
+                          {c} — شراء {fmtRate(marketRateFor(marketRates, c, 'buy'))} ج.س
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                {poCurrency !== 'SDG' && (
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      سعر الصرف (ج.س لكل 1 {poCurrency}) — سعر الشراء من السوق:
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="any"
+                      value={poRate || ''}
+                      onChange={(e) => {
+                        setPoRateTouched(true);
+                        setPoRate(Number(e.target.value) || 0);
+                      }}
+                      className="w-full px-3 py-2 font-mono font-bold border border-slate-300 rounded-lg"
+                    />
+                    <div className="mt-1 flex items-center gap-1">
+                      <span
+                        className={`rounded px-1 py-0.5 text-[9px] font-black ${
+                          poRateTouched ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                        }`}
+                      >
+                        {poRateTouched ? 'إدخال يدوي' : 'سعر السوق تلقائي'}
+                      </span>
+                      {poRateTouched && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPoRateTouched(false);
+                            const live = marketRateFor(marketRates, poCurrency, 'buy');
+                            if (live) setPoRate(live);
+                          }}
+                          className="rounded bg-sky-100 px-1 py-0.5 text-[9px] font-black text-sky-800 underline"
+                        >
+                          رجوع لسعر السوق
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <RateSourceLine
+                meta={marketRates.meta}
+                refreshing={ratesRefreshing}
+                onRefresh={() => void refreshMarketRates(true)}
+              />
+
               {/* Supplier Selection */}
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">اسم المورد / شركة التوريد:</label>
@@ -1867,7 +1986,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         <th className="py-2 px-3">الصنف</th>
                         <th className="py-2 px-3">الرصيد / الحد</th>
                         <th className="py-2 px-3 w-24">الكمية المطلوبة</th>
-                        <th className="py-2 px-3 w-28">سعر التكلفة (ج.س)</th>
+                        <th className="py-2 px-3 w-28">
+                          سعر التكلفة ({poCurrency === 'SDG' ? 'ج.س' : poCurrency})
+                        </th>
                         <th className="py-2 px-3">الإجمالي</th>
                       </tr>
                     </thead>
@@ -1912,7 +2033,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                             />
                           </td>
                           <td className="py-2 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
-                            {(item.orderQuantity * item.unitCostSdg).toLocaleString()} ج.س
+                            {(item.orderQuantity * item.unitCostSdg).toLocaleString()}{' '}
+                            {poCurrency === 'SDG' ? 'ج.س' : poCurrency}
+                            {poCurrency !== 'SDG' && poRate > 1 && (
+                              <span className="block text-[10px] font-normal text-slate-500">
+                                = {(Math.round(item.orderQuantity * item.unitCostSdg * poRate)).toLocaleString()} ج.س
+                              </span>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1930,7 +2057,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   </span>
                 </div>
                 <div className="font-mono text-lg sm:text-xl font-bold text-emerald-400 whitespace-nowrap">
-                  {poItems.reduce((acc, it) => acc + it.orderQuantity * it.unitCostSdg, 0).toLocaleString()} ج.س
+                  {poItems.reduce((acc, it) => acc + it.orderQuantity * it.unitCostSdg, 0).toLocaleString()}{' '}
+                  {poCurrency === 'SDG' ? 'ج.س' : poCurrency}
+                  {poCurrency !== 'SDG' && poRate > 1 && (
+                    <span className="block text-[11px] font-normal text-emerald-200">
+                      = {(Math.round(poItems.reduce((acc, it) => acc + it.orderQuantity * it.unitCostSdg, 0) * poRate)).toLocaleString()} ج.س
+                    </span>
+                  )}
                 </div>
               </div>
 

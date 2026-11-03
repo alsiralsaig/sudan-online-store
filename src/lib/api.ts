@@ -861,6 +861,25 @@ class ApiClient {
     });
   }
 
+  /**
+   * جدول الأسعار الجاهز للحساب: sell/buy + وقت النشر + رابط المقال.
+   * تُستخدم في كل شاشة فيها تسعير بالعملات (POS، الطلبات، المشتريات…).
+   */
+  public async getMarketRates(): Promise<{
+    sell: Record<string, number>;
+    buy: Record<string, number>;
+    meta: {
+      fetchedAt: string | null;
+      publishedAt: string | null;
+      articleUrl: string | null;
+      articlesUrl: string;
+      sourceName: string;
+    };
+    stale: boolean;
+  }> {
+    return this.request('/currency/market-rates');
+  }
+
   /** Live parallel-market rates snapshot (used by the currencies screen). */
   public async getParallelRates(): Promise<{
     snapshot: any;
