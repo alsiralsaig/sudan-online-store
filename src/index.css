@@ -396,3 +396,25 @@ textarea::placeholder {
 [data-theme='dark'] .super-admin-shell .bg-white .text-slate-700,
 [data-theme='dark'] .super-admin-shell .bg-white .text-slate-800,
 [data-theme='dark'] .super-admin-shell .bg-white .text-slate-900 { color: #e2e8f0 !important; }
+
+/* ==========================================================================
+   طباعة الفاتورة من داخل الصفحة (بديل نافذة الطباعة على الجوال)
+   --------------------------------------------------------------------------
+   عندما يمنع المتصفح window.open نطبع الصفحة الحالية، لكن يجب أن يظهر
+   مستند الفاتورة وحده بلا واجهة التطبيق حوله.
+   ========================================================================== */
+@media print {
+  body > *:not(#sanad-inline-print) { display: none !important; }
+  #sanad-inline-print {
+    display: block !important;
+    position: static !important;
+    background: #fff !important;
+    color: #000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  #sanad-inline-print table { width: 100% !important; border-collapse: collapse !important; }
+  #sanad-inline-print th,
+  #sanad-inline-print td { border: 1px solid #cbd5e1 !important; padding: 4px 5px !important; }
+  @page { size: A4; margin: 8mm; }
+}

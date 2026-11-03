@@ -416,6 +416,17 @@ class ApiClient {
     });
   }
 
+  /**
+   * إرسال نسخة من فاتورة طلب توريد إلى صاحب المتجر (إشعار + Push).
+   * تُستخدم من زر «نسخة لصاحب المتجر» داخل نافذة الفاتورة.
+   */
+  public async sendInvoiceCopyToStoreOwner(orderId: string, text?: string) {
+    return this.request(`/supply-orders/${orderId}/invoice-copy`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+  }
+
   /** للطبقة الأعلى: من ربط بأصنافي وبأي هامش وسعر. */
   public async getIncomingLinks(): Promise<{ buyers: any[]; totals: { buyers: number; links: number; itemsLinked: number } }> {
     return this.request('/links/incoming');

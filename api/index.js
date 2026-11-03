@@ -7968,11 +7968,53 @@ apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, (req, res) => {
     entityId: order.id,
     details: `\u0627\u0644\u0637\u0644\u0628 ${order.orderNumber} \u0623\u0635\u0628\u062D: ${status}`
   });
+  const otherTenantId = isSeller ? order.buyerTenantId : order.sellerTenantId;
+  const statusAr = status === "accepted" ? "\u0645\u0642\u0628\u0648\u0644 \u2014 \u062C\u0627\u0631\u064D \u0627\u0644\u062A\u062D\u0636\u064A\u0631" : status === "rejected" ? "\u0645\u0631\u0641\u0648\u0636" : status === "fulfilled" ? "\u062A\u0645 \u0627\u0644\u062A\u0633\u0644\u064A\u0645" : "\u0645\u0644\u063A\u064A";
+  notify({
+    app: "merchant",
+    kind: "order_status",
+    title: `\u0627\u0644\u0637\u0644\u0628 ${order.orderNumber}: ${statusAr}`,
+    body: `${isSeller ? "\u0627\u0644\u0645\u0648\u0631\u062F" : "\u0627\u0644\u0645\u0634\u062A\u0631\u064A"} \u062D\u062F\u0651\u062B \u062D\u0627\u0644\u0629 \u0637\u0644\u0628 \u0627\u0644\u062A\u0648\u0631\u064A\u062F \u0628\u0642\u064A\u0645\u0629 ${Number(order.totalSdg).toLocaleString("en-US")} \u062C.\u0633${order.invoiceNumber ? ` \u2022 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 ${order.invoiceNumber}` : ""}`,
+    linkTab: "links",
+    tenantId: otherTenantId,
+    dedupeKey: `supply_${order.id}_${status}`
+  }).catch(() => {
+  });
   res.json({
     success: true,
     order,
     invoice: order.invoiceNumber ? { invoiceNumber: order.invoiceNumber, purchaseId: order.purchaseId } : null
   });
+});
+apiRouter.post("/supply-orders/:id/invoice-copy", merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant(req.tenantId);
+  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (order.sellerTenantId !== me.id && order.buyerTenantId !== me.id) {
+    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0644\u0627 \u064A\u062E\u0635\u0643." });
+  }
+  const invoiceNumber = order.sellerInvoiceNumber || order.invoiceNumber || order.orderNumber;
+  const total = Number(order.totalSdg) || 0;
+  const currency = order.paymentCurrency || "SDG";
+  const rate = Number(order.paymentExchangeRate) || 1;
+  const lines = (order.items || []).map((it) => `${it.productName} \xD7 ${it.quantity}`).join(" \xB7 ");
+  const body = `\u0641\u0627\u062A\u0648\u0631\u0629 ${invoiceNumber} \u2022 \u0637\u0644\u0628 ${order.orderNumber} \u2022 ${total.toLocaleString("en-US")} \u062C.\u0633` + (currency !== "SDG" && rate > 1 ? ` (${currency}: ${(total / rate).toLocaleString("en-US", { maximumFractionDigits: 2 })})` : "") + `
+${lines}
+\u0627\u0644\u0645\u0634\u062A\u0631\u064A: ${order.buyerName}${order.buyerPhone ? ` \u2014 ${order.buyerPhone}` : ""}` + (typeof req.body?.text === "string" && req.body.text.trim() ? `
+
+${String(req.body.text).slice(0, 1200)}` : "");
+  notify({
+    app: "merchant",
+    kind: "invoice_copy",
+    title: `\u0646\u0633\u062E\u0629 \u0641\u0627\u062A\u0648\u0631\u0629 \u2014 ${invoiceNumber}`,
+    body,
+    linkTab: "links",
+    tenantId: me.id,
+    dedupeKey: `invoicecopy_${order.id}_${Date.now()}`
+  }).catch(() => {
+  });
+  res.json({ success: true, invoiceNumber, notified: true });
 });
 apiRouter.get("/links/incoming", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);

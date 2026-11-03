@@ -1469,10 +1469,15 @@ export const PosView: React.FC<PosViewProps> = ({
           PAYMENT MODAL
           ========================================================================= */}
       {isPaymentModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+        /*
+         * تمرير أفقي/رأسي محكوم داخل الشاشة.
+         * سبب الإصلاح: على الجوال كان الصندوق أعرض من الشاشة فيسحب الصفحة
+         * كلها إلى اليمين ويقصّ الحواف، ويفقد المستخدم الوصول للأزرار.
+         */
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-stretch sm:items-center justify-center overflow-y-auto overflow-x-hidden p-2 sm:p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[100dvh] sm:max-h-[90dvh] overflow-y-auto overflow-x-hidden shadow-2xl flex flex-col border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+            <div className="px-3 sm:px-6 py-3 sm:py-4 bg-slate-900 text-white flex items-center justify-between gap-2">
               <div>
                 <h3 className="font-bold text-base">إتمام عملية الدفع</h3>
                 <p className="text-xs text-slate-400">إجمالي الفاتورة: {grandTotal.toLocaleString()} ج.س</p>
@@ -1556,7 +1561,7 @@ export const PosView: React.FC<PosViewProps> = ({
                   * (متغيّر، من أخبار السودان). كانت أرقاماً ثابتة في الكود
                   * (2,750 · 733 · 82.5 …) لا علاقة لها بالسوق.
                   */}
-                <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+                <div className="grid grid-cols-3 sm:grid-cols-7 gap-1.5">
                   {[
                     { code: 'SDG', label: 'SDG جنيه' },
                     { code: 'USD', label: 'USD دولار' },
@@ -1611,7 +1616,7 @@ export const PosView: React.FC<PosViewProps> = ({
                 {/* Foreign Currency Calculation Fields */}
                 {selectedCurrency !== 'SDG' && (
                   <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-lg space-y-2 text-xs">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
                         <label className="block text-[11px] font-semibold text-amber-950 mb-0.5">
                           سعر الصرف (ج.س/1 {selectedCurrency}) — سعر السوق الآن:
@@ -1687,7 +1692,7 @@ export const PosView: React.FC<PosViewProps> = ({
                       className="border-t border-amber-200 pt-1.5"
                     />
 
-                    <div className="pt-2 border-t border-amber-200 grid grid-cols-2 gap-2">
+                    <div className="pt-2 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
                         <label className="block text-[11px] font-semibold text-amber-950 mb-0.5">
                           المبلغ المستلم ({selectedCurrency}):

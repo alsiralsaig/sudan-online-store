@@ -961,6 +961,7 @@ export type NotificationKind =
   | 'store_request_reviewed'
   | 'new_order'
   | 'order_status'
+  | 'invoice_copy'
   | 'low_stock'
   | 'subscription'
   | 'system';

@@ -8,6 +8,7 @@ import {
 import { api } from '../../lib/api.ts';
 import { MARKET_RATES_ARTICLES_URL, MARKET_RATES_SOURCE_NAME } from '../../lib/marketRates.ts';
 import { RateSourceLine } from '../Common/RateSourceLine.tsx';
+import { OrderInvoiceModal } from './OrderInvoiceModal.tsx';
 import {
   buildOrderInvoice,
   orderHasInvoice,
@@ -339,6 +340,8 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
    * والهاتف والعنوان. تُستخدم في PDF والطباعة ونص واتساب.
    */
   const [myStore, setMyStore] = useState<any | null>(null);
+  /** الطلب الذي تُعرض فاتورته الآن (زر «إصدار الفاتورة» → نافذة كاملة) */
+  const [invoiceFor, setInvoiceFor] = useState<any | null>(null);
   useEffect(() => {
     let alive = true;
     api.merchantMe()
@@ -371,15 +374,65 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
     }
   };
 
-  const printOrderInvoice = (o: any) => {
-    const w = window.open('', '_blank');
-    if (!w) {
-      setError('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة ثم أعد المحاولة.');
+  /**
+   * الطباعة: نفتح نافذة الطباعة بالمستند ثم نغلق المعاينة تلقائياً.
+   * ملاحظة مهمة: على الجوال (أندرويد/كروم) غالباً يمنع المتصفح window.open
+   * من داخل معالج زر في نافذة أخرى. لذلك إن مُنع الفتح نُخبر المستخدم
+   * بالحل فوراً بدل زر «لا يعمل» بصمت — وكان هذا سبب شكوى «طباعة ما شغالة».
+   */
+  const [printBlocked, setPrintBlocked] = useState(false);
+  /** آخر طلب طُلب طباعته — يستخدمه بديل الطباعة داخل الصفحة */
+  const [pendingPrintOrder, setPendingPrintOrder] = useState<any | null>(null);
+  /**
+   * طباعة داخل الصفحة نفسها: نُدخل مستند الفاتورة في منطقة مخفية ثم نطبع
+   * الصفحة الحالية. الحل الوحيد الذي يعمل على متصفحات الجوال التي تمنع
+   * النوافذ المنبثقة (كان الزر يبدو «لا يعمل» عند المستخدم).
+   */
+  const printInlineFallback = () => {
+    const pending = invoiceFor || pendingPrintOrder;
+    if (!pending) {
+      setError('اختر «إصدار الفاتورة» أولاً ثم اطبع.');
       return;
     }
+    const html = orderInvoiceHtml(invoiceOf(pending));
+    const body = html.slice(html.indexOf('<body>') + 6, html.lastIndexOf('</body>'));
+    const styles = html.slice(html.indexOf('<style>'), html.indexOf('</style>') + 8);
+
+    /*
+     * العقدة تُضاف إلى <body> مباشرةً (لا داخل شجرة React) حتى يستطيع
+     * @media print أن يُخفي التطبيق كله ويُظهر الفاتورة وحدها.
+     */
+    document.getElementById('sanad-inline-print')?.remove();
+    const host = document.createElement('div');
+    host.id = 'sanad-inline-print';
+    host.innerHTML = styles + body.replace(/<script[\s\S]*?<\/script>/g, '');
+    document.body.appendChild(host);
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => host.remove(), 1200);
+    }, 150);
+  };
+
+  const printOrderInvoice = (o: any, closeAfter = false) => {
+    setPendingPrintOrder(o);
+    let html = '';
+    try {
+      html = orderInvoiceHtml(invoiceOf(o));
+    } catch (e) {
+      setError('تعذّر تجهيز نسخة الطباعة.');
+      return;
+    }
+    const w = window.open('', '_blank');
+    if (!w) {
+      setPrintBlocked(true);
+      setError('المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة، أو استخدم «PDF» ثم اطبع الملف.');
+      return;
+    }
+    setPrintBlocked(false);
     w.document.open();
-    w.document.write(orderInvoiceHtml(invoiceOf(o)));
+    w.document.write(html);
     w.document.close();
+    if (closeAfter) setTimeout(() => setInvoiceFor(null), 400);
   };
 
   const sendOrderInvoiceWhatsApp = (o: any) => {
@@ -499,10 +552,22 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
         </div>
       )}
       {error && (
-        <div className="rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11.5px] font-bold px-3 py-2 flex items-center gap-1.5">
-          <AlertTriangle className="w-3.5 h-3.5" /> {error}
+        <div className="rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11.5px] font-bold px-3 py-2 flex flex-col gap-1.5">
+          <span className="flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" /> {error}
+          </span>
+          {printBlocked && (
+            /* بديل فوري عندما يمنع الجوال فتح نافذة الطباعة */
+            <button
+              onClick={printInlineFallback}
+              className="self-start rounded-lg bg-rose-700 text-white px-2 py-1 text-[10.5px] font-black"
+            >
+              اطبع من هذه الصفحة بدلاً من ذلك
+            </button>
+          )}
         </div>
       )}
+
 
       {/* المتاجر المتاحة للربط */}
       <div className="rounded-2xl bg-white border border-slate-200 p-3 space-y-2">
@@ -1027,46 +1092,29 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                       {o.buyerPhone && o.side === 'in' && (
                         <a href={`tel:${o.buyerPhone}`} className="rounded-lg bg-slate-900 text-white px-2 py-1 text-[10.5px] font-black">اتصال</a>
                       )}
-                      {/* فاتورة الطلب: تُتاح بعد القبول/التسليم — طباعة أو إرسال للتاجر */}
-                      {orderHasInvoice(o) && (
-                        <>
-                          <button
-                            onClick={() => downloadInvoicePdf(o)}
-                            disabled={busy}
-                            className="rounded-lg bg-sky-700 text-white px-2 py-1 text-[10.5px] font-black flex items-center gap-1 disabled:opacity-60"
-                            title="تنزيل الفاتورة PDF مباشرة"
-                          >
-                            <FileText className="w-3 h-3" /> PDF
-                          </button>
-                          <button
-                            onClick={() => printOrderInvoice(o)}
-                            className="rounded-lg bg-white border border-sky-300 text-sky-800 px-2 py-1 text-[10.5px] font-black flex items-center gap-1"
-                            title="عرض/طباعة الفاتورة"
-                          >
-                            <Printer className="w-3 h-3" /> طباعة
-                          </button>
-                          {o.side === 'in' && (
-                            <>
-                              <button
-                                onClick={() => setMyInvoiceNumber(o)}
-                                className="rounded-lg bg-white border border-slate-300 text-slate-700 px-2 py-1 text-[10.5px] font-black flex items-center gap-1"
-                                title="حدّد رقم فاتورتك الذي يظهر للتاجر"
-                              >
-                                <FileText className="w-3 h-3" /> رقم فاتورتي
-                              </button>
-                              <button
-                                onClick={() => sendOrderInvoiceWhatsApp(o)}
-                                className="rounded-lg bg-emerald-600 text-white px-2 py-1 text-[10.5px] font-black flex items-center gap-1"
-                                title="إرسال الفاتورة للتاجر على واتساب"
-                              >
-                                <MessageCircle className="w-3 h-3" /> إرسال للمشتري
-                              </button>
-                            </>
-                          )}
-                        </>
-                      )}
                     </div>
                   </div>
+
+                  {/*
+                    * فاتورة الطلب — زر **واحد** كما طُلب.
+                    * كان على البطاقة خمسة أزرار (PDF/طباعة/رقم فاتورتي/إرسال
+                    * للمشتري/اتصال) تسحب الصفحة أفقياً على الجوال وتختلط على
+                    * المستخدم. الآن: زر «إصدار الفاتورة» يفتح الفاتورة الكاملة،
+                    * وكل الخيارات (طباعة · PDF · إرسال للمشتري · نسخة لصاحب
+                    * المتجر) تحت الفاتورة نفسها.
+                    */}
+                  {orderHasInvoice(o) && (
+                    <button
+                      onClick={() => setInvoiceFor(o)}
+                      className="w-full rounded-xl bg-sky-700 hover:bg-sky-800 text-white py-2 text-[11.5px] font-black flex items-center justify-center gap-1.5"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      {o.status === 'fulfilled' ? 'إصدار الفاتورة النهائية' : 'إصدار الفاتورة'}
+                      <span className="rounded bg-white/15 px-1 py-0.5 font-mono text-[9.5px]">
+                        {o.sellerInvoiceNumber || o.invoiceNumber || o.orderNumber}
+                      </span>
+                    </button>
+                  )}
                   <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 text-[10px]">
                     <span className="rounded-md bg-slate-100 text-slate-700 px-1.5 py-0.5 font-bold">
                       الدفع: {o.paymentMethod === 'cash' ? 'كاش' : o.paymentMethod === 'bankak' ? 'بنكك' : o.paymentMethod === 'bank_transfer' ? 'حوالة بنكية' : 'آجل'}
@@ -1099,6 +1147,25 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
           </div>
         )}
       </div>
+
+      {/* نافذة الفاتورة الكاملة — تُفتح بزر واحد «إصدار الفاتورة» */}
+      {invoiceFor && (
+        <OrderInvoiceModal
+          invoice={invoiceOf(invoiceFor)}
+          canSendToOwner={invoiceFor.side === 'in'}
+          onClose={() => setInvoiceFor(null)}
+          onPrint={() => printOrderInvoice(invoiceFor, true)}
+          onSendToBuyer={() => {
+            /* واتساب يُفتح من داخل النافذة؛ نحفظ الرقم على الطلب إن لم يكن */
+            if (!invoiceFor.buyerPhone) {
+              setNote('لا يوجد رقم للمشتري — اختر جهة الاتصال في واتساب وأرسل نص الفاتورة.');
+            }
+          }}
+          onSendToStoreOwner={async () => {
+            await api.sendInvoiceCopyToStoreOwner(invoiceFor.id, orderInvoiceText(invoiceOf(invoiceFor)));
+          }}
+        />
+      )}
 
       {/* نافذة تعديل السعر اليدوي */}
       {editPriceFor && (

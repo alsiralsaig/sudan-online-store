@@ -1624,11 +1624,82 @@ apiRouter.patch('/supply-orders/:id', merchantAuthMiddleware, (req, res) => {
     details: `الطلب ${order.orderNumber} أصبح: ${status}`,
   });
 
+  /*
+   * إبلاغ الطرف الآخر — كان تغيير الحالة صامتاً: المشتري لا يعرف أن طلبه
+   * قُبل، ولا المورد يعرف أن التاجر ألغى الطلب. الآن كل تغيير يصل كإشعار
+   * داخل التطبيق (+Push) لمن يهمه.
+   */
+  const otherTenantId = isSeller ? order.buyerTenantId : order.sellerTenantId;
+  const statusAr =
+    status === 'accepted' ? 'مقبول — جارٍ التحضير'
+      : status === 'rejected' ? 'مرفوض'
+      : status === 'fulfilled' ? 'تم التسليم'
+      : 'ملغي';
+  notifyUser({
+    app: 'merchant',
+    kind: 'order_status',
+    title: `الطلب ${order.orderNumber}: ${statusAr}`,
+    body: `${isSeller ? 'المورد' : 'المشتري'} حدّث حالة طلب التوريد بقيمة ${Number(order.totalSdg).toLocaleString('en-US')} ج.س${
+      order.invoiceNumber ? ` • الفاتورة ${order.invoiceNumber}` : ''
+    }`,
+    linkTab: 'links',
+    tenantId: otherTenantId,
+    dedupeKey: `supply_${order.id}_${status}`,
+  }).catch(() => {});
+
   res.json({
     success: true,
     order,
     invoice: order.invoiceNumber ? { invoiceNumber: order.invoiceNumber, purchaseId: order.purchaseId } : null,
   });
+});
+
+/**
+ * «نسخة لصاحب المتجر» — إرسال نسخة الفاتورة إلى صاحب متجر المورد.
+ * ------------------------------------------------------------------
+ * المورد يسلّم الفاتورة للتاجر، لكن صاحب المتجر/المحاسب يحتاج نسخة أيضاً.
+ * الإرسال هنا = إشعار فوري داخل التطبيق (+Push) لمالك المتجر، مع كل تفاصيل
+ * الفاتورة في نص الإشعار، حتى لا يعتمد على لقطة شاشة من المندوب.
+ */
+apiRouter.post('/supply-orders/:id/invoice-copy', merchantAuthMiddleware, (req, res) => {
+  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
+  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+  const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'الطلب غير موجود.' });
+  if (order.sellerTenantId !== me.id && order.buyerTenantId !== me.id) {
+    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'هذا الطلب لا يخصك.' });
+  }
+
+  const invoiceNumber = order.sellerInvoiceNumber || order.invoiceNumber || order.orderNumber;
+  const total = Number(order.totalSdg) || 0;
+  const currency = order.paymentCurrency || 'SDG';
+  const rate = Number(order.paymentExchangeRate) || 1;
+  const lines = (order.items || [])
+    .map((it) => `${it.productName} × ${it.quantity}`)
+    .join(' · ');
+
+  const body =
+    `فاتورة ${invoiceNumber} • طلب ${order.orderNumber} • ${total.toLocaleString('en-US')} ج.س` +
+    (currency !== 'SDG' && rate > 1
+      ? ` (${currency}: ${(total / rate).toLocaleString('en-US', { maximumFractionDigits: 2 })})`
+      : '') +
+    `\n${lines}` +
+    `\nالمشتري: ${order.buyerName}${order.buyerPhone ? ` — ${order.buyerPhone}` : ''}` +
+    (typeof req.body?.text === 'string' && req.body.text.trim()
+      ? `\n\n${String(req.body.text).slice(0, 1200)}`
+      : '');
+
+  notifyUser({
+    app: 'merchant',
+    kind: 'invoice_copy',
+    title: `نسخة فاتورة — ${invoiceNumber}`,
+    body,
+    linkTab: 'links',
+    tenantId: me.id,
+    dedupeKey: `invoicecopy_${order.id}_${Date.now()}`,
+  }).catch(() => {});
+
+  res.json({ success: true, invoiceNumber, notified: true });
 });
 
 /**
