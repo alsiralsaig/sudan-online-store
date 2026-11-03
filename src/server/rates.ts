@@ -433,6 +433,41 @@ export const parseMarkdownSellTable = (raw: string): Map<string, { buy?: number;
   return out;
 };
 
+/**
+ * سعر الشراء **المقترن** بسعر البيع نفسه داخل جملة واحدة.
+ * ------------------------------------------------------------------
+ * «سجل الدولار الأمريكي 10300 جنيه للشراء و10500 جنيه للبيع» ⇒ شراء 10300.
+ * مهم: نقبل الشراء فقط إذا كان سعر البيع المرافق مطابقاً لسعر البيع الذي
+ * سنعرضه (10500). بدونه كان يُؤخذ 10200 من جملة «رُصدت عروض أقل… تراجع
+ * سعر بيع الدولار إلى 10200» — رقم مختلف (Vercel، 3 نوفمبر).
+ */
+const pairedBuy = (text: string, sell: number, label?: RegExp): number | undefined => {
+  const NUM = '([0-9][0-9,]{2,}(?:\\.[0-9]+)?)';
+  const num = (x?: string) => toNumber(x);
+  const ok = (n: number | null): n is number => n !== null && n >= 100 && n < 1_500_000;
+  const pairs: Array<[RegExp, 1 | -1]> = [
+    /* «سعر شراء الريال السعودي 2745.64 جنيه، مقابل 2798.96 جنيه للبيع» */
+    ...(label
+      ? ([[new RegExp(`شراء\\s*${label.source}[^.]{0,80}?${NUM}[^.]{0,80}?${NUM}\\s*(?:جنيه[اً]?)?\\s*للبيع`, 'i'), 1]] as Array<[RegExp, 1 | -1]>)
+      : []),
+    [new RegExp(`${NUM}\\s*(?:جنيه[اً]?)?\\s*للشراء[^.]{0,80}?${NUM}\\s*(?:جنيه[اً]?)?\\s*للبيع`, 'i'), 1],
+    [new RegExp(`${NUM}\\s*(?:جنيه[اً]?)?\\s*للبيع[^.]{0,80}?${NUM}\\s*(?:جنيه[اً]?)?\\s*للشراء`, 'i'), -1],
+  ];
+  for (const [re, order] of pairs) {
+    const m = text.match(re);
+    if (!m) continue;
+    const a = num(m[1]);
+    const b = num(m[2]);
+    if (!ok(a) || !ok(b)) continue;
+    const buy = order === 1 ? a : b;
+    const matchedSell = order === 1 ? b : a;
+    /* تقارب 0.2% — المقال يقرّب (2798.96) بينما الجدول يعطي 2798.9551 */
+    const sameSell = Math.abs(matchedSell - sell) / sell <= 0.002;
+    if (sameSell && buy < sell) return buy;
+  }
+  return undefined;
+};
+
 export const parseSudanAkhbarArticle = (
   html: string
 ): { rates: LiveRate[]; publishedAt?: string; title?: string } => {
@@ -531,15 +566,9 @@ export const parseSudanAkhbarArticle = (
 
     if (fromTable?.sell) {
       const sell = fromTable.sell;
-      /* سعر الشراء من نفس الجملة فقط لو قريب من سعر البيع (نفس الجدول/اليوم) */
-      const near = (a?: number, b?: number) =>
-        a !== undefined && b !== undefined && b > 0 && a < b && (b - a) / b <= 0.12;
+      /* الشراء: من جدول صريح، أو من جملة تُقرن نفس سعر البيع (لا من جملة أخرى) */
       const buy =
-        fromTable.buy && fromTable.buy < sell
-          ? fromTable.buy
-          : near(bs?.buy, sell)
-            ? bs!.buy
-            : undefined;
+        fromTable.buy && fromTable.buy < sell ? fromTable.buy : pairedBuy(text, sell, re);
       rates.push({ code, official: null, parallel: sell, buy, sell });
       seen.add(code);
       continue;

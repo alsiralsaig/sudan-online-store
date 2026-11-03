@@ -4590,6 +4590,29 @@ var parseMarkdownSellTable = (raw) => {
   }
   return out;
 };
+var pairedBuy = (text2, sell, label) => {
+  const NUM = "([0-9][0-9,]{2,}(?:\\.[0-9]+)?)";
+  const num = (x) => toNumber(x);
+  const ok = (n) => n !== null && n >= 100 && n < 15e5;
+  const pairs = [
+    /* «سعر شراء الريال السعودي 2745.64 جنيه، مقابل 2798.96 جنيه للبيع» */
+    ...label ? [[new RegExp(`\u0634\u0631\u0627\u0621\\s*${label.source}[^.]{0,80}?${NUM}[^.]{0,80}?${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0628\u064A\u0639`, "i"), 1]] : [],
+    [new RegExp(`${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0634\u0631\u0627\u0621[^.]{0,80}?${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0628\u064A\u0639`, "i"), 1],
+    [new RegExp(`${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0628\u064A\u0639[^.]{0,80}?${NUM}\\s*(?:\u062C\u0646\u064A\u0647[\u0627\u064B]?)?\\s*\u0644\u0644\u0634\u0631\u0627\u0621`, "i"), -1]
+  ];
+  for (const [re, order] of pairs) {
+    const m = text2.match(re);
+    if (!m) continue;
+    const a = num(m[1]);
+    const b = num(m[2]);
+    if (!ok(a) || !ok(b)) continue;
+    const buy = order === 1 ? a : b;
+    const matchedSell = order === 1 ? b : a;
+    const sameSell = Math.abs(matchedSell - sell) / sell <= 2e-3;
+    if (sameSell && buy < sell) return buy;
+  }
+  return void 0;
+};
 var parseSudanAkhbarArticle = (html) => {
   const text2 = htmlToText(html);
   const title = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -4655,8 +4678,7 @@ var parseSudanAkhbarArticle = (html) => {
     const bs = buySellFor(currentOnly, re) || buySellFor(scope, re) || buySellFor(text2, re);
     if (fromTable?.sell) {
       const sell = fromTable.sell;
-      const near = (a, b) => a !== void 0 && b !== void 0 && b > 0 && a < b && (b - a) / b <= 0.12;
-      const buy = fromTable.buy && fromTable.buy < sell ? fromTable.buy : near(bs?.buy, sell) ? bs.buy : void 0;
+      const buy = fromTable.buy && fromTable.buy < sell ? fromTable.buy : pairedBuy(text2, sell, re);
       rates.push({ code, official: null, parallel: sell, buy, sell });
       seen.add(code);
       continue;
