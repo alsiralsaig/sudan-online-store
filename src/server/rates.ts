@@ -190,7 +190,11 @@ const buySellFor = (scope: string, label: RegExp): { buy: number; sell: number }
    * الأول فقط (سعر اليوم) بدل رمي الجملة كلها — وإلا ضاع سعر الدولار الحقيقي.
    */
   const trimComparison = (t: string) =>
-    t.split(/مقارنة|مقابل مستويات|التي بلغت|الأربعاء|السبت|أمس|سابق/)[0].trim();
+    t
+      .split(
+        /مقارنة|مقابل مستويات|التي بلغت|الأربعاء|السبت|أمس|سابق|عروض|أقل من|اقل من|تراجع|هبوط|انخفاض/
+      )[0]
+      .trim();
   const current = sentences.map(trimComparison).filter(Boolean);
   const pools = [current, sentences];
 
@@ -448,7 +452,21 @@ export const parseSudanAkhbarArticle = (
   const tableRates = parseMarkdownSellTable(html);
   const htmlTables = parseArticleTables(html);
   htmlTables.forEach((v, code) => {
-    if (!tableRates.get(code)?.sell) tableRates.set(code, v);
+    const current = tableRates.get(code);
+    if (!current?.sell) {
+      tableRates.set(code, v);
+      return;
+    }
+    /*
+     * جدول البيع لا يذكر الشراء؛ وجدول «… جنيه للشراء … جنيه للبيع» يذكره.
+     * نُكمل سعر الشراء من هناك بدل تركه للجُمل (التي تذكر «عروض أقل»).
+     */
+    if (!current.buy && v.buy && v.buy < current.sell) {
+      tableRates.set(code, { sell: current.sell, buy: v.buy });
+    }
+    if (!current.buy && v.sell && v.sell < current.sell) {
+      tableRates.set(code, { sell: current.sell, buy: v.sell });
+    }
   });
 
   const NUM = '([0-9][0-9,]{2,}(?:\\.[0-9]+)?)';
@@ -506,21 +524,28 @@ export const parseSudanAkhbarArticle = (
      */
     /* 1) جدول فيه «للشراء … للبيع» أو جدول المتوسط */
     const fromTable = tableRates.get(code);
+    /* الجمل تُحسب أولاً كي لا نُخرج سعر البيع بلا سعر الشراء المقابل له */
+    const sentences = text.split(/[!؟\n]+|\.\s+/).map((x) => x.trim()).filter(Boolean);
+    const currentOnly = sentences.filter((t) => re.test(t) && !isHistoricalSentence(t)).join('. ');
+    const bs = buySellFor(currentOnly, re) || buySellFor(scope, re) || buySellFor(text, re);
+
     if (fromTable?.sell) {
       const sell = fromTable.sell;
-      const buy = fromTable.buy && fromTable.buy <= sell ? fromTable.buy : undefined;
+      /* سعر الشراء من نفس الجملة فقط لو قريب من سعر البيع (نفس الجدول/اليوم) */
+      const near = (a?: number, b?: number) =>
+        a !== undefined && b !== undefined && b > 0 && a < b && (b - a) / b <= 0.12;
+      const buy =
+        fromTable.buy && fromTable.buy < sell
+          ? fromTable.buy
+          : near(bs?.buy, sell)
+            ? bs!.buy
+            : undefined;
       rates.push({ code, official: null, parallel: sell, buy, sell });
       seen.add(code);
       continue;
     }
 
     /* 2) الجُمل — بعد استبعاد الجُمل التاريخية */
-    const sentences = text.split(/[!؟\n]+|\.\s+/).map((x) => x.trim()).filter(Boolean);
-    const currentOnly = sentences.filter((t) => re.test(t) && !isHistoricalSentence(t)).join('. ');
-    const bs =
-      buySellFor(currentOnly, re) ||
-      buySellFor(scope, re) ||
-      buySellFor(text, re);
     if (bs) {
       rates.push({ code, official: null, parallel: bs.sell, buy: bs.buy, sell: bs.sell });
       seen.add(code);
