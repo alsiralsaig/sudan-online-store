@@ -404,8 +404,16 @@ class ApiClient {
     return this.request('/supply-orders', { method: 'POST', body: JSON.stringify(payload) });
   }
 
-  public async setSupplyOrderStatus(id: string, status: string, sellerNote?: string) {
-    return this.request(`/supply-orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status, sellerNote }) });
+  public async setSupplyOrderStatus(
+    id: string,
+    status: string,
+    sellerNote?: string,
+    sellerInvoiceNumber?: string,
+  ) {
+    return this.request(`/supply-orders/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, sellerNote, sellerInvoiceNumber }),
+    });
   }
 
   /** للطبقة الأعلى: من ربط بأصنافي وبأي هامش وسعر. */

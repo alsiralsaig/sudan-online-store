@@ -3,8 +3,15 @@ import {
   Link2, Search, Store, Percent, RefreshCw, Trash2, Pencil, CheckCircle2,
   AlertTriangle, Loader2, PackageSearch, ShieldCheck, ArrowRight, X, Sparkles,
   ShoppingCart, ClipboardList, Minus, Plus, Truck, Check, Ban,
+  FileText, Printer, MessageCircle,
 } from 'lucide-react';
 import { api } from '../../lib/api.ts';
+import {
+  buildOrderInvoice,
+  orderHasInvoice,
+  orderInvoiceHtml,
+  orderInvoiceWhatsAppUrl,
+} from '../../lib/orderInvoice.ts';
 
 /**
  * «الربط والموردون»
@@ -293,15 +300,54 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
     }
   };
 
-  const respondOrder = async (order: any, status: string) => {
+  const respondOrder = async (order: any, status: string, sellerInvoiceNumber?: string) => {
     setBusy(true);
     try {
-      await api.setSupplyOrderStatus(order.id, status);
+      await api.setSupplyOrderStatus(order.id, status, undefined, sellerInvoiceNumber);
       const ord = await api.getSupplyOrders().catch(() => null);
       if (ord) setOrders(ord as any);
       setNote(`تم تحديث الطلب ${order.orderNumber}.`);
     } catch (err: any) {
       setError(err.message || 'تعذّر تحديث الطلب');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * فاتورة الطلب: تُتاح بمجرد القبول (مبدئية) وبعد التسليم (نهائية).
+   * نفس النموذج يخدم الطباعة/PDF وواتساب — فلا تختلف الأرقام بين القناتين.
+   */
+  const invoiceOf = (o: any) => buildOrderInvoice(o, { sellerStoreName: o.sellerName });
+
+  const printOrderInvoice = (o: any) => {
+    const w = window.open('', '_blank');
+    if (!w) {
+      setError('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة ثم أعد المحاولة.');
+      return;
+    }
+    w.document.open();
+    w.document.write(orderInvoiceHtml(invoiceOf(o)));
+    w.document.close();
+  };
+
+  const sendOrderInvoiceWhatsApp = (o: any) => {
+    const w = window.open(orderInvoiceWhatsAppUrl(invoiceOf(o)), '_blank');
+    if (!w) setError('المتصفح منع فتح واتساب — اسمح بالنوافذ المنبثقة ثم أعد المحاولة.');
+  };
+
+  /** رقم فاتورة المورد — يُحفظ على الطلب ويظهر في الفاتورة المرسلة للتاجر */
+  const setMyInvoiceNumber = async (o: any) => {
+    const input = window.prompt('رقم فاتورتك لهذا الطلب (يظهر في الفاتورة التي تُرسل للتاجر):', o.sellerInvoiceNumber || '');
+    if (input === null) return;
+    setBusy(true);
+    try {
+      await api.setSupplyOrderStatus(o.id, o.status, o.sellerNote, input.trim());
+      const ord = await api.getSupplyOrders().catch(() => null);
+      if (ord) setOrders(ord as any);
+      setNote('تم حفظ رقم الفاتورة.');
+    } catch (err: any) {
+      setError(err.message || 'تعذّر حفظ رقم الفاتورة');
     } finally {
       setBusy(false);
     }
@@ -925,6 +971,36 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                       {o.buyerPhone && o.side === 'in' && (
                         <a href={`tel:${o.buyerPhone}`} className="rounded-lg bg-slate-900 text-white px-2 py-1 text-[10.5px] font-black">اتصال</a>
                       )}
+                      {/* فاتورة الطلب: تُتاح بعد القبول/التسليم — طباعة أو إرسال للتاجر */}
+                      {orderHasInvoice(o) && (
+                        <>
+                          <button
+                            onClick={() => printOrderInvoice(o)}
+                            className="rounded-lg bg-white border border-sky-300 text-sky-800 px-2 py-1 text-[10.5px] font-black flex items-center gap-1"
+                            title="عرض/طباعة الفاتورة (PDF)"
+                          >
+                            <Printer className="w-3 h-3" /> فاتورة
+                          </button>
+                          {o.side === 'in' && (
+                            <>
+                              <button
+                                onClick={() => setMyInvoiceNumber(o)}
+                                className="rounded-lg bg-white border border-slate-300 text-slate-700 px-2 py-1 text-[10.5px] font-black flex items-center gap-1"
+                                title="حدّد رقم فاتورتك الذي يظهر للتاجر"
+                              >
+                                <FileText className="w-3 h-3" /> رقم فاتورتي
+                              </button>
+                              <button
+                                onClick={() => sendOrderInvoiceWhatsApp(o)}
+                                className="rounded-lg bg-emerald-600 text-white px-2 py-1 text-[10.5px] font-black flex items-center gap-1"
+                                title="إرسال الفاتورة للتاجر على واتساب"
+                              >
+                                <MessageCircle className="w-3 h-3" /> إرسال للمشتري
+                              </button>
+                            </>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 text-[10px]">
@@ -941,7 +1017,12 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                     )}
                     {o.invoiceNumber && (
                       <span className="rounded-md bg-emerald-100 text-emerald-900 px-1.5 py-0.5 font-black">
-                        فاتورة مشتريات: {o.invoiceNumber}
+                        {o.side === 'in' ? 'فاتورة مشتريات' : 'فاتورة الطلب'}: {o.invoiceNumber}
+                      </span>
+                    )}
+                    {orderHasInvoice(o) && !o.invoiceNumber && (
+                      <span className="rounded-md bg-sky-100 text-sky-900 px-1.5 py-0.5 font-black inline-flex items-center gap-1">
+                        <FileText className="w-3 h-3" /> فاتورة مبدئية: {o.orderNumber}
                       </span>
                     )}
                     {o.status === 'fulfilled' && !o.invoiceNumber && o.side === 'in' && (
