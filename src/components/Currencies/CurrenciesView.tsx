@@ -156,6 +156,16 @@ export const CurrenciesView: React.FC<CurrenciesViewProps> = ({ currencies, onRe
                     <span className="font-mono">
                       {new Date(ratesMeta.snapshot.fetchedAt).toLocaleString('ar-SD')}
                     </span>
+                    {(ratesMeta.snapshot as any).sourceUpdatedAt && (
+                      <>
+                        {' '}· نُشر في المصدر:{' '}
+                        <span className="font-mono">
+                          {new Date(
+                            (ratesMeta.snapshot as any).sourceUpdatedAt
+                          ).toLocaleString('ar-SD')}
+                        </span>
+                      </>
+                    )}
                     {ratesMeta.sources?.primary?.url && (
                       <a
                         href={ratesMeta.snapshot.sourceUrl || ratesMeta.sources.primary.url}
