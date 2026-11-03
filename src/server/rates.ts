@@ -465,6 +465,13 @@ const BROWSER_HEADERS = {
  * a "السوق السوداء" table — same table shape, same parser.
  */
 const SUDANAKHBAR_HOME = 'https://www.sudanakhbar.com/business-news/currency-rates-prices';
+/**
+ * خلاصة القسم — تحتوي كل مقالات أسعار اليوم (السوق الموازي/السوداء).
+ * نقرأها كـRSS: خفيفة وسريعة وترجّع أحدث المقالات.
+ */
+const SUDANAKHBAR_FEED = 'https://www.sudanakhbar.com/business-news/currency-rates-prices/feed';
+/** أقدم من كذا = مقال قديم ليس سعر اليوم */
+const MAX_ARTICLE_AGE_MS = 36 * 60 * 60 * 1000;
 
 /**
  * Reads today's Sudan Akhbar parallel-market article.
@@ -479,6 +486,15 @@ const SUDANAKHBAR_HOME = 'https://www.sudanakhbar.com/business-news/currency-rat
  * plain reader proxy fetches the same public page from its own network, which
  * keeps the second source working without any paid service or API key.
  */
+/**
+ * رابط المقال المحدد الذي يزوّدنا بأسعار السوق الموازي.
+ * التاجر يقدر يثبّت رقم المقال من إعدادات المنصة (بيئة Vercel):
+ *   RATES_ARTICLE_URL=https://www.sudanakhbar.com/1867968
+ * لأن البحث (wp-json) قد يرجّع مقال «البنوك» أو مقال أمس، فيظهر رقم غير
+ * حقيقي. الرابط المباشر يضمن قراءة نفس الجدول الذي يراه التاجر بعينه.
+ */
+const RATES_ARTICLE_URL = (process.env.RATES_ARTICLE_URL || '').trim();
+
 const READER = (url: string) => `https://r.jina.ai/${url}`;
 
 const fetchViaReader = async (url: string, timeoutMs = 9000): Promise<string | null> => {
@@ -727,6 +743,103 @@ type ArticleResult = { rates: LiveRate[]; publishedAt?: string; title?: string; 
 const ARTICLE_TTL_MS = 5 * 60 * 1000;
 let articleCache: { at: number; value: ArticleResult | null } | null = null;
 
+/**
+ * أحدث مقالات أسعار اليوم من خلاصة القسم (RSS).
+ * -------------------------------------------------------------------
+ * سبب الإضافة: wp-json بطيء (10–15 ثانية) وكان يقع في مهلة Vercel فيبقى
+ * آخر رقم قديم (8200 يوم 2 نوفمبر) بينما المصدر نفسه يقول 10500 اليوم.
+ * الخلاصة ترجّع الروابط والتواريخ في طلب واحد صغير، فنقرأ أحدث مقال فقط.
+ */
+export const fetchSudanAkhbarFeed = async (
+  diag: SourceDiag[] = []
+): Promise<{ url: string; publishedAt?: string; title?: string }[]> => {
+  const read = async (feedUrl: string) => {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 6000);
+    try {
+      const res = await fetch(feedUrl, {
+        signal: c.signal,
+        headers: { ...BROWSER_HEADERS, Accept: 'application/rss+xml, application/xml, text/xml, */*' },
+      });
+      if (!res.ok) return null;
+      const xml = await res.text();
+      return xml.length > 200 ? xml : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(t);
+    }
+  };
+
+  let xml = await read(SUDANAKHBAR_FEED);
+  if (!xml) {
+    // عبر القارئ لو حجب الموقع مراكز البيانات
+    xml = await fetchViaReader(SUDANAKHBAR_FEED, 8000);
+  }
+  if (!xml) {
+    diag.push({ method: 'feed', ok: false, detail: 'unavailable' });
+    return [];
+  }
+
+  const items: { url: string; publishedAt?: string; title?: string }[] = [];
+  const itemRe = /<item[\s>][\s\S]*?<\/item>/gi;
+  const blocks = xml.match(itemRe) || [];
+  for (const block of blocks.slice(0, 8)) {
+    const link = (block.match(/<link>\s*([^<]+?)\s*<\/link>/i)?.[1] || '').trim();
+    const when = (block.match(/<pubDate>\s*([^<]+?)\s*<\/pubDate>/i)?.[1] || '').trim();
+    const title = (block.match(/<title>\s*(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?\s*<\/title>/i)?.[1] || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!/\/\d{6,}/.test(link)) continue;
+    const publishedAt = when ? new Date(when).toISOString() : undefined;
+    /* نستبعد مقالات «البنوك» — سعرها غير سعر السوق */
+    if (/بنوك|مصارف/.test(title) && !/الموازي|السوداء/.test(title)) continue;
+    items.push({ url: link, publishedAt, title });
+  }
+  items.sort((a, b) => Date.parse(b.publishedAt || '0') - Date.parse(a.publishedAt || '0'));
+  diag.push({ method: 'feed', ok: items.length > 0, detail: `${items.length} articles` });
+  return items;
+};
+
+/** يقرأ مقالاً محدداً بالرابط: مباشرةً ثم عبر القارئ (المقال عام لا يحتاج مفتاحاً) */
+export const fetchPinnedArticle = async (
+  url: string,
+  diag: SourceDiag[] = []
+): Promise<ArticleResult | null> => {
+  const key = `pinned:${url}`;
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 5000);
+    const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
+    clearTimeout(t);
+    if (res.ok) {
+      const html = await res.text();
+      const parsed = parseSudanAkhbarArticle(html);
+      if (parsed.rates.length >= 3) {
+        diag.push({ method: key, ok: true, detail: `${parsed.rates.length} rates` });
+        return { rates: parsed.rates, url, publishedAt: parsed.publishedAt, title: parsed.title };
+      }
+      diag.push({ method: key, ok: false, detail: 'no rate table in pinned article' });
+    } else {
+      diag.push({ method: key, ok: false, detail: `HTTP ${res.status}` });
+    }
+  } catch (err) {
+    diag.push({ method: key, ok: false, detail: (err as Error).name });
+  }
+
+  const raw = await fetchViaReader(url, 9000);
+  if (raw) {
+    const parsed = parseSudanAkhbarArticle(raw);
+    if (parsed.rates.length >= 3) {
+      diag.push({ method: `${key}:reader`, ok: true, detail: `${parsed.rates.length} rates` });
+      return { rates: parsed.rates, url, publishedAt: parsed.publishedAt, title: parsed.title };
+    }
+    diag.push({ method: `${key}:reader`, ok: false, detail: 'no rate table' });
+  }
+  return null;
+};
+
 export const fetchSudanAkhbarArticle = async (
   diag: SourceDiag[] = [],
   opts: { fast?: boolean } = {}
@@ -739,6 +852,40 @@ export const fetchSudanAkhbarArticle = async (
     articleCache = { at: Date.now(), value };
     return value;
   };
+
+  /*
+   * 0) الرابط المثبَّت من الإعدادات أولاً — أدق مصدر لأنه نفس جدول اليوم
+   *    الذي يراه التاجر (وليس نتيجة بحث قد تكون مقال البنوك).
+   */
+  if (RATES_ARTICLE_URL) {
+    const pinned = await fetchPinnedArticle(RATES_ARTICLE_URL, diag);
+    if (pinned?.rates.length) return store(pinned);
+  }
+
+  /*
+   * المسار السريع الحقيقي: الخلاصة (طلب واحد صغير) ← أحدث مقال ← جدول الأسعار.
+   * كنا نضيع 15 ثانية في wp-json فتقع الدالة في مهلة Vercel ويبقى رقم أمس.
+   */
+  const feed = await fetchSudanAkhbarFeed(diag);
+  if (feed.length) {
+    const freshest = feed.find((it) => {
+      if (!it.publishedAt) return true;
+      return Date.now() - Date.parse(it.publishedAt) <= MAX_ARTICLE_AGE_MS;
+    });
+    if (freshest) {
+      const article = await fetchPinnedArticle(freshest.url, diag);
+      if (article?.rates.length) {
+        return store({
+          ...article,
+          publishedAt: freshest.publishedAt || article.publishedAt,
+          title: article.title || freshest.title,
+          url: freshest.url,
+        });
+      }
+    } else {
+      diag.push({ method: 'feed:freshness', ok: false, detail: 'no article from today' });
+    }
+  }
 
   const viaApi = await fetchSudanAkhbarViaApi(diag, opts);
   if (viaApi) return store(viaApi);

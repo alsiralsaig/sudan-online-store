@@ -4626,6 +4626,9 @@ var BROWSER_HEADERS = {
   "Cache-Control": "no-cache"
 };
 var SUDANAKHBAR_HOME = "https://www.sudanakhbar.com/business-news/currency-rates-prices";
+var SUDANAKHBAR_FEED = "https://www.sudanakhbar.com/business-news/currency-rates-prices/feed";
+var MAX_ARTICLE_AGE_MS = 36 * 60 * 60 * 1e3;
+var RATES_ARTICLE_URL = (process.env.RATES_ARTICLE_URL || "").trim();
 var READER = (url) => `https://r.jina.ai/${url}`;
 var fetchViaReader = async (url, timeoutMs = 9e3) => {
   try {
@@ -4795,6 +4798,80 @@ var fetchSudanAkhbarViaApi = async (diag, opts = {}) => {
 };
 var ARTICLE_TTL_MS = 5 * 60 * 1e3;
 var articleCache = null;
+var fetchSudanAkhbarFeed = async (diag = []) => {
+  const read = async (feedUrl) => {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 6e3);
+    try {
+      const res = await fetch(feedUrl, {
+        signal: c.signal,
+        headers: { ...BROWSER_HEADERS, Accept: "application/rss+xml, application/xml, text/xml, */*" }
+      });
+      if (!res.ok) return null;
+      const xml2 = await res.text();
+      return xml2.length > 200 ? xml2 : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(t);
+    }
+  };
+  let xml = await read(SUDANAKHBAR_FEED);
+  if (!xml) {
+    xml = await fetchViaReader(SUDANAKHBAR_FEED, 8e3);
+  }
+  if (!xml) {
+    diag.push({ method: "feed", ok: false, detail: "unavailable" });
+    return [];
+  }
+  const items = [];
+  const itemRe = /<item[\s>][\s\S]*?<\/item>/gi;
+  const blocks = xml.match(itemRe) || [];
+  for (const block of blocks.slice(0, 8)) {
+    const link = (block.match(/<link>\s*([^<]+?)\s*<\/link>/i)?.[1] || "").trim();
+    const when = (block.match(/<pubDate>\s*([^<]+?)\s*<\/pubDate>/i)?.[1] || "").trim();
+    const title = (block.match(/<title>\s*(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?\s*<\/title>/i)?.[1] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (!/\/\d{6,}/.test(link)) continue;
+    const publishedAt = when ? new Date(when).toISOString() : void 0;
+    if (/بنوك|مصارف/.test(title) && !/الموازي|السوداء/.test(title)) continue;
+    items.push({ url: link, publishedAt, title });
+  }
+  items.sort((a, b) => Date.parse(b.publishedAt || "0") - Date.parse(a.publishedAt || "0"));
+  diag.push({ method: "feed", ok: items.length > 0, detail: `${items.length} articles` });
+  return items;
+};
+var fetchPinnedArticle = async (url, diag = []) => {
+  const key = `pinned:${url}`;
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 5e3);
+    const res = await fetch(url, { signal: c.signal, headers: BROWSER_HEADERS });
+    clearTimeout(t);
+    if (res.ok) {
+      const html = await res.text();
+      const parsed = parseSudanAkhbarArticle(html);
+      if (parsed.rates.length >= 3) {
+        diag.push({ method: key, ok: true, detail: `${parsed.rates.length} rates` });
+        return { rates: parsed.rates, url, publishedAt: parsed.publishedAt, title: parsed.title };
+      }
+      diag.push({ method: key, ok: false, detail: "no rate table in pinned article" });
+    } else {
+      diag.push({ method: key, ok: false, detail: `HTTP ${res.status}` });
+    }
+  } catch (err) {
+    diag.push({ method: key, ok: false, detail: err.name });
+  }
+  const raw = await fetchViaReader(url, 9e3);
+  if (raw) {
+    const parsed = parseSudanAkhbarArticle(raw);
+    if (parsed.rates.length >= 3) {
+      diag.push({ method: `${key}:reader`, ok: true, detail: `${parsed.rates.length} rates` });
+      return { rates: parsed.rates, url, publishedAt: parsed.publishedAt, title: parsed.title };
+    }
+    diag.push({ method: `${key}:reader`, ok: false, detail: "no rate table" });
+  }
+  return null;
+};
 var fetchSudanAkhbarArticle = async (diag = [], opts = {}) => {
   if (articleCache && Date.now() - articleCache.at < ARTICLE_TTL_MS) {
     if (articleCache.value) diag.push({ method: "cache", ok: true, detail: "article cached" });
@@ -4804,6 +4881,30 @@ var fetchSudanAkhbarArticle = async (diag = [], opts = {}) => {
     articleCache = { at: Date.now(), value };
     return value;
   };
+  if (RATES_ARTICLE_URL) {
+    const pinned = await fetchPinnedArticle(RATES_ARTICLE_URL, diag);
+    if (pinned?.rates.length) return store(pinned);
+  }
+  const feed = await fetchSudanAkhbarFeed(diag);
+  if (feed.length) {
+    const freshest = feed.find((it) => {
+      if (!it.publishedAt) return true;
+      return Date.now() - Date.parse(it.publishedAt) <= MAX_ARTICLE_AGE_MS;
+    });
+    if (freshest) {
+      const article = await fetchPinnedArticle(freshest.url, diag);
+      if (article?.rates.length) {
+        return store({
+          ...article,
+          publishedAt: freshest.publishedAt || article.publishedAt,
+          title: article.title || freshest.title,
+          url: freshest.url
+        });
+      }
+    } else {
+      diag.push({ method: "feed:freshness", ok: false, detail: "no article from today" });
+    }
+  }
   const viaApi = await fetchSudanAkhbarViaApi(diag, opts);
   if (viaApi) return store(viaApi);
   if (opts.fast) return store(await fetchSudanAkhbarViaReader(diag));
@@ -9141,7 +9242,13 @@ var needsRefresh = () => {
   const snap = db.getRatesSnapshot();
   if (!snap?.fetchedAt) return true;
   const hours = ageHours(snap.fetchedAt);
-  return hours === null || hours >= RATES_REFRESH_HOURS;
+  if (hours === null || hours >= RATES_REFRESH_HOURS) return true;
+  const articleAt = snap?.sourceUpdatedAt;
+  if (articleAt) {
+    const articleHours = (Date.now() - Date.parse(articleAt)) / 36e5;
+    if (Number.isFinite(articleHours) && articleHours >= 20) return true;
+  }
+  return false;
 };
 apiRouter.get("/currency/parallel-rates", async (_req, res) => {
   if (needsRefresh()) {

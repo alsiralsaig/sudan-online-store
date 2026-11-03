@@ -3322,11 +3322,26 @@ const withLiveRates = () => {
   return { currencies, snapshot };
 };
 
+/**
+ * هل نحتاج تحديثاً؟
+ * ------------------------------------------------------------------
+ * سبب إضافة الشرط الثاني: كان المعيار هو «مضى ساعة على آخر جلب»، فلو نجح
+ * الجلب لكن المصدر رجّع **مقال أمس** (كما حدث: 8200 بينما السوق 10500)
+ * نبقى نعرض رقماً قديماً ساعة كاملة. الآن: لو تاريخ نشر المقال أقدم من
+ * 20 ساعة ⇒ الرقم ليس سعر اليوم، فنحدّث فوراً.
+ */
 const needsRefresh = (): boolean => {
   const snap = db.getRatesSnapshot();
   if (!snap?.fetchedAt) return true;
   const hours = ageHours(snap.fetchedAt);
-  return hours === null || hours >= RATES_REFRESH_HOURS;
+  if (hours === null || hours >= RATES_REFRESH_HOURS) return true;
+
+  const articleAt = (snap as any)?.sourceUpdatedAt as string | undefined;
+  if (articleAt) {
+    const articleHours = (Date.now() - Date.parse(articleAt)) / 3_600_000;
+    if (Number.isFinite(articleHours) && articleHours >= 20) return true;
+  }
+  return false;
 };
 
 /** Yesterday's parallel prices — what the dashboard shows. */
