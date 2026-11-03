@@ -10,8 +10,10 @@ import {
   buildOrderInvoice,
   orderHasInvoice,
   orderInvoiceHtml,
+  orderInvoiceText,
   orderInvoiceWhatsAppUrl,
 } from '../../lib/orderInvoice.ts';
+import { downloadOrderInvoicePdf } from '../../lib/orderInvoicePdf.ts';
 
 /**
  * «الربط والموردون»
@@ -318,7 +320,43 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
    * فاتورة الطلب: تُتاح بمجرد القبول (مبدئية) وبعد التسليم (نهائية).
    * نفس النموذج يخدم الطباعة/PDF وواتساب — فلا تختلف الأرقام بين القناتين.
    */
-  const invoiceOf = (o: any) => buildOrderInvoice(o, { sellerStoreName: o.sellerName });
+  /**
+   * بيانات الختم/التوقيع تُقرأ من إعدادات متجري (أنا المورد عند الإرسال):
+   * receiptFooter هو السطر المخصص لأسفل الإيصالات، ونتجاوره باسم المتجر
+   * والهاتف والعنوان. تُستخدم في PDF والطباعة ونص واتساب.
+   */
+  const [myStore, setMyStore] = useState<any | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.merchantMe()
+      .then((r: any) => { if (alive) setMyStore(r?.tenant || null); })
+      .catch(() => { /* غير مسجّل — نكمل ببيانات الطلب */ });
+    return () => { alive = false; };
+  }, []);
+
+  const invoiceOf = (o: any) => {
+    const isSellerSide = o.side === 'in';
+    const stamp = isSellerSide ? myStore?.settings?.receiptFooter : undefined;
+    return buildOrderInvoice(o, {
+      sellerStoreName: isSellerSide ? (myStore?.tradeName || o.sellerName) : o.sellerName,
+      stampText: typeof stamp === 'string' ? stamp.trim() : undefined,
+      sellerPhone: isSellerSide ? myStore?.phone : undefined,
+      sellerAddress: isSellerSide ? myStore?.address : undefined,
+    });
+  };
+
+  /** تنزيل الفاتورة PDF مباشرة (بلا طباعة) + خيار إرسالها على واتساب */
+  const downloadInvoicePdf = async (o: any) => {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await downloadOrderInvoicePdf(invoiceOf(o));
+      if (!res.ok) setError(res.error || 'تعذّر توليد PDF');
+      else setNote(`تم تنزيل ${res.fileName} — جاهز للمشاركة على واتساب.`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const printOrderInvoice = (o: any) => {
     const w = window.open('', '_blank');
@@ -975,11 +1013,19 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                       {orderHasInvoice(o) && (
                         <>
                           <button
+                            onClick={() => downloadInvoicePdf(o)}
+                            disabled={busy}
+                            className="rounded-lg bg-sky-700 text-white px-2 py-1 text-[10.5px] font-black flex items-center gap-1 disabled:opacity-60"
+                            title="تنزيل الفاتورة PDF مباشرة"
+                          >
+                            <FileText className="w-3 h-3" /> PDF
+                          </button>
+                          <button
                             onClick={() => printOrderInvoice(o)}
                             className="rounded-lg bg-white border border-sky-300 text-sky-800 px-2 py-1 text-[10.5px] font-black flex items-center gap-1"
-                            title="عرض/طباعة الفاتورة (PDF)"
+                            title="عرض/طباعة الفاتورة"
                           >
-                            <Printer className="w-3 h-3" /> فاتورة
+                            <Printer className="w-3 h-3" /> طباعة
                           </button>
                           {o.side === 'in' && (
                             <>

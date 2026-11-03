@@ -43,6 +43,11 @@ export interface OrderInvoiceContext {
   sellerStoreName?: string;
   /** اسم فرع/عنوان المورد إن وجد */
   sellerBranch?: string;
+  /** سطر الختم/التوقيع المطبوع أسفل الفاتورة (من إعدادات المتجر) */
+  stampText?: string;
+  /** هاتف/عنوان المورد يظهر في التذييل */
+  sellerPhone?: string;
+  sellerAddress?: string;
 }
 
 export interface OrderInvoiceModel {
@@ -62,6 +67,10 @@ export interface OrderInvoiceModel {
   totalSdg: number;
   note?: string;
   sellerNote?: string;
+  /** ختم/توقيع المورد — يظهر في صندوق منفصل أسفل الفاتورة */
+  stampText?: string;
+  sellerPhone?: string;
+  sellerAddress?: string;
 }
 
 /** يبني نموذج الفاتورة من الطلب (كل المبالغ من بيانات الطلب) */
@@ -94,6 +103,9 @@ export function buildOrderInvoice(order: SupplyOrder, ctx: OrderInvoiceContext =
     totalSdg: Number(order.totalSdg) || subtotalSdg,
     note: order.note,
     sellerNote: order.sellerNote,
+    stampText: ctx.stampText,
+    sellerPhone: ctx.sellerPhone,
+    sellerAddress: ctx.sellerAddress,
   };
 }
 
@@ -126,8 +138,9 @@ export function orderInvoiceText(model: OrderInvoiceModel): string {
     `*الإجمالي: ${money(model.totalSdg)} ج.س*`,
     `الدفع: ${model.payment}${rateLine}`,
     model.note ? `ملاحظة: ${model.note}` : '',
+    model.stampText ? `الختم: ${model.stampText}` : '',
     '',
-    '— منصة سند',
+    model.sellerPhone ? `${model.seller} · ${model.sellerPhone}` : '— منصة سند',
   ]
     .filter((l) => l !== '')
     .join('\n');
@@ -177,7 +190,11 @@ export function orderInvoiceHtml(model: OrderInvoiceModel): string {
   .total{margin-top:10px;display:flex;justify-content:space-between;font-size:13px;font-weight:800;border-top:2px solid #0f172a;padding-top:6px}
   .badge{display:inline-block;background:#e0f2fe;color:#075985;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:800}
   .note{margin-top:8px;font-size:11px;color:#475569}
-  .foot{margin-top:14px;font-size:10px;color:#64748b;display:flex;justify-content:space-between}
+  .sign{display:flex;justify-content:space-between;gap:12px;margin-top:16px}
+  .sign .stampbox,.sign .signbox{flex:1;border:1px dashed #94a3b8;border-radius:8px;padding:10px;min-height:62px;font-size:11px;color:#334155}
+  .sign .lbl{font-size:10px;color:#64748b;margin-bottom:22px}
+  .stampbox b{color:#0369a1}
+  .foot{margin-top:12px;font-size:10px;color:#64748b;display:flex;justify-content:space-between}
   @media print{ body{margin:8mm} .noprint{display:none} }
 </style></head><body>
 <div class="head">
@@ -207,7 +224,21 @@ export function orderInvoiceHtml(model: OrderInvoiceModel): string {
 <div class="total"><span>الإجمالي</span><span>${money(model.totalSdg)} ج.س</span></div>
 ${model.note ? `<div class="note">ملاحظة الطالب: ${model.note}</div>` : ''}
 ${model.sellerNote ? `<div class="note">ملاحظة المورد: ${model.sellerNote}</div>` : ''}
-<div class="foot"><span>منصة سند — فاتورة طلب توريد</span><span>${model.lines.length} بند</span></div>
+
+<div class="sign">
+  <div class="stampbox">
+    <div class="lbl">ختم المورد</div>
+    ${model.stampText ? `<b>${model.stampText}</b>` : `<span class="muted">${model.seller}</span>`}
+  </div>
+  <div class="signbox">
+    <div class="lbl">توقيع المستلم</div>
+  </div>
+</div>
+
+<div class="foot">
+  <span>${model.sellerPhone || model.sellerAddress ? `${model.seller}${model.sellerPhone ? ` · ${model.sellerPhone}` : ''}${model.sellerAddress ? ` · ${model.sellerAddress}` : ''}` : 'منصة سند'}</span>
+  <span>${model.lines.length} بند · ${money(model.totalSdg)} ج.س</span>
+</div>
 <script>window.onload=function(){setTimeout(function(){window.print()},250)}</script>
 </body></html>`;
 }

@@ -7530,6 +7530,17 @@ function supplyOrderNumber() {
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   return `PO-${ymd}-${Math.floor(Math.random() * 9e3 + 1e3)}`;
 }
+function purchaseInvoiceNumber(tenantId) {
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const prefix = `PUR-${year}-`;
+  const existing = (db.getSchema().purchases || []).filter(
+    (p) => p.tenantId === tenantId && String(p.invoiceNumber || "").startsWith(prefix)
+  );
+  let next = existing.length + 1;
+  const used = new Set(existing.map((p) => p.invoiceNumber));
+  while (used.has(`${prefix}${String(next).padStart(5, "0")}`)) next += 1;
+  return `${prefix}${String(next).padStart(5, "0")}`;
+}
 apiRouter.get("/supply-orders", merchantAuthMiddleware, (req, res) => {
   const me = req.tenantId;
   const all = db.getSchema().supplyOrders || [];
@@ -7721,7 +7732,7 @@ apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, (req, res) => {
           actorName: "\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F"
         });
       }
-      const invoiceNumber = newCode("PO");
+      const invoiceNumber = order.sellerInvoiceNumber || purchaseInvoiceNumber(buyer.id);
       const purchase = {
         id: newId("purch"),
         tenantId: buyer.id,

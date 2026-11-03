@@ -1318,6 +1318,26 @@ function supplyOrderNumber(): string {
   return `PO-${ymd}-${Math.floor(Math.random() * 9000 + 1000)}`;
 }
 
+/**
+ * رقم فاتورة المشتريات عند التسليم — **يتولد تلقائياً وبتسلسل** لكل متجر:
+ *   PUR-<سنة>-<تسلسل 5 خانات>  مثال: PUR-2026-00007
+ * كان `newCode('PO')` يعطي كوداً عشوائياً لا يشبه أرقام فواتير النظام ولا
+ * يتسلسل، فيصعب على التاجر مطابقته مع المورد. التسلسل يُحسب من عدد فواتير
+ * المشتريات السابقة لنفس المتجر في السنة الحالية.
+ */
+function purchaseInvoiceNumber(tenantId: string): string {
+  const year = new Date().getFullYear();
+  const prefix = `PUR-${year}-`;
+  const existing = (db.getSchema().purchases || []).filter(
+    (p: any) => p.tenantId === tenantId && String(p.invoiceNumber || '').startsWith(prefix),
+  );
+  let next = existing.length + 1;
+  // ضمان عدم التكرار لو فيه أرقام محذوفة/مكررة
+  const used = new Set(existing.map((p: any) => p.invoiceNumber));
+  while (used.has(`${prefix}${String(next).padStart(5, '0')}`)) next += 1;
+  return `${prefix}${String(next).padStart(5, '0')}`;
+}
+
 /** قائمة طلباتي: الواردة (أنا البائع) والصادرة (أنا المشتري). */
 apiRouter.get('/supply-orders', merchantAuthMiddleware, (req, res) => {
   const me = (req as AuthenticatedRequest).tenantId;
@@ -1549,7 +1569,8 @@ apiRouter.patch('/supply-orders/:id', merchantAuthMiddleware, (req, res) => {
         });
       }
 
-      const invoiceNumber = newCode('PO');
+      // رقم فاتورة الشراء: تسلسلي تلقائي — أو رقم فاتورة المورد لو أدخله
+      const invoiceNumber = order.sellerInvoiceNumber || purchaseInvoiceNumber(buyer.id);
       const purchase = {
         id: newId('purch'),
         tenantId: buyer.id,
