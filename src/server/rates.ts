@@ -258,17 +258,35 @@ const buySellFor = (scope: string, label: RegExp): { buy: number; sell: number }
  */
 const parseArticleTables = (html: string): Map<string, { buy?: number; sell?: number }> => {
   const best = new Map<string, { buy?: number; sell?: number; score: number }>();
-  const tables = html.split(/<table/i).slice(1);
+  /* عنوان الجدول يأتي قبل وسم <table> مباشرةً — يحدد معنى أرقامه */
+  const parts = html.split(/<table/i);
+  const tables = parts.slice(1).map((t, idx) => {
+    const caption = (parts[idx] || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(-320);
+    return { table: t, caption };
+  });
   const num = (x?: string) => toNumber(x);
   const ok = (n: number | null): n is number => n !== null && n >= 100 && n < 1_500_000;
 
-  for (const table of tables) {
+  for (const { table, caption } of tables) {
     /* رأس الجدول يحدد قيمة صفوفه: جدول «متوسط/العملة» هو المعتمد */
     const headPlain = (table.split(/<\/thead>/i)[0] || '')
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     const isRateTable = /العملة|السعر|الصرف|متوسط/.test(headPlain) || /للبيع|للشراء/.test(table.slice(0, 4000));
+
+    /*
+     * جدول «مؤشرات الموقع» يعرض أرقاماً ليست سعر السوق المعتمد (الدولار فيه
+     * 10300 «مؤشر» بينما البيع 10500)، وجداول الخدمات ليست عملات. نستبعدها.
+     */
+    const captionOfTable = caption + ' ' + headPlain;
+    if (/مؤشرات|الخدمة\s*\/\s*التطبيق|بنكك|فودافون/.test(captionOfTable)) continue;
+    /* جدول «أسعار بيع العملات» هو المرجع الرسمي للبيع */
+    const isSellTable = /أسعار\s*بيع\s*العملات/.test(captionOfTable);
 
     for (const row of table.split(/<tr/i).slice(1)) {
       const plain = row
@@ -306,11 +324,21 @@ const parseArticleTables = (html: string): Map<string, { buy?: number; sell?: nu
       const single = after.match(/\s*([0-9][0-9,]{2,}(?:\.[0-9]+)?)/);
       if (!single) continue;
       const sell = num(single[1]);
-      if (!ok(sell) || sell < 500) continue; /* استثناء أرقام السنوات والهوامش */
+      /*
+       * الحد الأدنى للعملة الواحدة: 100 جنيه (الين الياباني وحده قد ينزل تحت
+       * 500). كان الحد 500 فكانت تُهمَل الليرة التركية والين — أما أسعار الذهب
+       * والاشتراكات فتُستبعد لأن صفوفها لا تبدأ باسم العملة أصلاً.
+       */
+      if (!ok(sell)) continue;
 
-      const score = isRateTable ? 2 : 1;
+      /*
+       * الأفضلية: صفٌّ يذكر الشراء والبيع صراحةً (3) ← جدول «أسعار بيع العملات»
+       * (2.5) ← أي جدول أسعار (2) ← نص عادي (1). وعند التساوي يفوز **الأول**
+       * في الصفحة، لأن جدول البيع يسبق جدول المؤشرات الذي كان يطمس الأسعار.
+       */
+      const score = isRateTable ? (isSellTable ? 2.5 : 2) : 1;
       const prev = best.get(hit.code);
-      if (!prev || score >= prev.score) {
+      if (!prev || score > prev.score) {
         best.set(hit.code, { buy: prev?.buy && prev.score >= score ? prev.buy : undefined, sell, score });
       }
     }
@@ -332,6 +360,75 @@ const isHistoricalSentence = (t: string): boolean => {
   );
 };
 
+/**
+ * جدول «أسعار بيع العملات» — من نسخة القارئ (نص/جدول Markdown) أو HTML.
+ * ------------------------------------------------------------------
+ * سبب الإضافة: نسخة القارئ (r.jina.ai) تُرجع الجداول كصفوف نصية بلا وسم
+ * <table>، فكان المحلّل يقرأ الفقرات فقط. وفقرات المقال تذكر «عروض أقل…
+ * تراجع سعر بيع الدولار إلى 10200» أو أسعار الأمس، فظهر 10200 بدل 10500.
+ * القاعدة الآن: الصف الذي **يبدأ** باسم العملة ويليه رقم مباشرةً هو السعر،
+ * ونأخذ أول ظهور داخل جدول «أسعار بيع العملات» ولا نستبدله بجدول آخر.
+ */
+export const parseMarkdownSellTable = (raw: string): Map<string, { buy?: number; sell?: number }> => {
+  const out = new Map<string, { buy?: number; sell?: number }>();
+  const clean = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ');
+
+  const plain = (x: string) =>
+    x
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;|&#160;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const isRow = (line: string) => {
+    const m = AR_LABEL_TO_CODE.map(({ re, code }) => ({ m: re.exec(line), code })).find(
+      (x) => x.m && x.m.index <= 2
+    );
+    if (!m?.m) return null;
+    const after = line.slice(m.m.index + m.m[0].length).replace(/^[\s|\t:]+/, '');
+    const numM = after.match(/^([0-9][0-9,]{2,}(?:\.[0-9]+)?)/);
+    if (!numM) return null;
+    const value = toNumber(numM[1]);
+    if (value === null || value < 100 || value >= 1_500_000) return null;
+    return { code: m.code, value };
+  };
+
+  /* (أ) صفوف HTML: كل <tr> يُقرأ كسطر واحد فلا ينفصل اسمُ العملة عن رقمها */
+  const htmlRows = clean
+    .split(/<tr[\s>]/i)
+    .slice(1)
+    .map((r) => plain(r.split(/<\/tr>/i)[0]))
+    .filter(Boolean);
+
+  /* (ب) أسطر نسخة القارئ (Markdown/نص) — الجدول يظهر كأسطر متتابعة */
+  const textLines = clean
+    .replace(/<[^>]+>/g, '\n')
+    .replace(/&nbsp;|&#160;/g, ' ')
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const htmlHits = htmlRows.filter((l) => isRow(l)).length;
+  let lines: string[];
+  if (htmlHits >= 3) {
+    lines = htmlRows;
+  } else {
+    const anchors = textLines
+      .map((l, i) => (/أسعار\s*بيع\s*العملات/.test(l) ? i : -1))
+      .filter((i) => i >= 0);
+    lines = anchors.length ? textLines.slice(anchors[0] + 1) : textLines;
+  }
+
+  for (const line of lines) {
+    const row = isRow(line);
+    if (!row) continue;
+    if (!out.has(row.code)) out.set(row.code, { sell: row.value }); // أول صف = جدول البيع
+  }
+  return out;
+};
+
 export const parseSudanAkhbarArticle = (
   html: string
 ): { rates: LiveRate[]; publishedAt?: string; title?: string } => {
@@ -347,8 +444,12 @@ export const parseSudanAkhbarArticle = (
 
   const rates: LiveRate[] = [];
   const seen = new Set<string>();
-  /* الجداول أولاً — أدق من الجُمل */
-  const tableRates = parseArticleTables(html);
+  /* الجداول أولاً — أدق من الجُمل (جدول البيع النصي ثم جداول HTML) */
+  const tableRates = parseMarkdownSellTable(html);
+  const htmlTables = parseArticleTables(html);
+  htmlTables.forEach((v, code) => {
+    if (!tableRates.get(code)?.sell) tableRates.set(code, v);
+  });
 
   const NUM = '([0-9][0-9,]{2,}(?:\\.[0-9]+)?)';
   /**

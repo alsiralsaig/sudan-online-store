@@ -4495,12 +4495,19 @@ var buySellFor = (scope, label) => {
 };
 var parseArticleTables = (html) => {
   const best = /* @__PURE__ */ new Map();
-  const tables = html.split(/<table/i).slice(1);
+  const parts = html.split(/<table/i);
+  const tables = parts.slice(1).map((t, idx) => {
+    const caption = (parts[idx] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(-320);
+    return { table: t, caption };
+  });
   const num = (x) => toNumber(x);
   const ok = (n) => n !== null && n >= 100 && n < 15e5;
-  for (const table of tables) {
+  for (const { table, caption } of tables) {
     const headPlain = (table.split(/<\/thead>/i)[0] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
     const isRateTable = /العملة|السعر|الصرف|متوسط/.test(headPlain) || /للبيع|للشراء/.test(table.slice(0, 4e3));
+    const captionOfTable = caption + " " + headPlain;
+    if (/مؤشرات|الخدمة\s*\/\s*التطبيق|بنكك|فودافون/.test(captionOfTable)) continue;
+    const isSellTable = /أسعار\s*بيع\s*العملات/.test(captionOfTable);
     for (const row of table.split(/<tr/i).slice(1)) {
       const plain = row.replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/\s+/g, " ").trim();
       if (!plain) continue;
@@ -4524,10 +4531,10 @@ var parseArticleTables = (html) => {
       const single = after.match(/\s*([0-9][0-9,]{2,}(?:\.[0-9]+)?)/);
       if (!single) continue;
       const sell = num(single[1]);
-      if (!ok(sell) || sell < 500) continue;
-      const score = isRateTable ? 2 : 1;
+      if (!ok(sell)) continue;
+      const score = isRateTable ? isSellTable ? 2.5 : 2 : 1;
       const prev = best.get(hit.code);
-      if (!prev || score >= prev.score) {
+      if (!prev || score > prev.score) {
         best.set(hit.code, { buy: prev?.buy && prev.score >= score ? prev.buy : void 0, sell, score });
       }
     }
@@ -4542,6 +4549,39 @@ var isHistoricalSentence = (t) => {
   );
   return monthRe.test(t) || /مقارنة|مقابل\s*[0-9]|الشهر\s*الماضي|بداية\s*الشهر|نهاية\s*الشهر/.test(t);
 };
+var parseMarkdownSellTable = (raw) => {
+  const out = /* @__PURE__ */ new Map();
+  const clean = raw.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+  const plain = (x) => x.replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/\s+/g, " ").trim();
+  const isRow = (line) => {
+    const m = AR_LABEL_TO_CODE.map(({ re, code }) => ({ m: re.exec(line), code })).find(
+      (x) => x.m && x.m.index <= 2
+    );
+    if (!m?.m) return null;
+    const after = line.slice(m.m.index + m.m[0].length).replace(/^[\s|\t:]+/, "");
+    const numM = after.match(/^([0-9][0-9,]{2,}(?:\.[0-9]+)?)/);
+    if (!numM) return null;
+    const value = toNumber(numM[1]);
+    if (value === null || value < 100 || value >= 15e5) return null;
+    return { code: m.code, value };
+  };
+  const htmlRows = clean.split(/<tr[\s>]/i).slice(1).map((r) => plain(r.split(/<\/tr>/i)[0])).filter(Boolean);
+  const textLines = clean.replace(/<[^>]+>/g, "\n").replace(/&nbsp;|&#160;/g, " ").split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const htmlHits = htmlRows.filter((l) => isRow(l)).length;
+  let lines;
+  if (htmlHits >= 3) {
+    lines = htmlRows;
+  } else {
+    const anchors = textLines.map((l, i) => /أسعار\s*بيع\s*العملات/.test(l) ? i : -1).filter((i) => i >= 0);
+    lines = anchors.length ? textLines.slice(anchors[0] + 1) : textLines;
+  }
+  for (const line of lines) {
+    const row = isRow(line);
+    if (!row) continue;
+    if (!out.has(row.code)) out.set(row.code, { sell: row.value });
+  }
+  return out;
+};
 var parseSudanAkhbarArticle = (html) => {
   const text2 = htmlToText(html);
   const title = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -4549,7 +4589,11 @@ var parseSudanAkhbarArticle = (html) => {
   const scope = blockStart >= 0 ? text2.slice(blockStart) : text2;
   const rates = [];
   const seen = /* @__PURE__ */ new Set();
-  const tableRates = parseArticleTables(html);
+  const tableRates = parseMarkdownSellTable(html);
+  const htmlTables = parseArticleTables(html);
+  htmlTables.forEach((v, code) => {
+    if (!tableRates.get(code)?.sell) tableRates.set(code, v);
+  });
   const NUM = "([0-9][0-9,]{2,}(?:\\.[0-9]+)?)";
   const patternsFor = (source) => [
     {
