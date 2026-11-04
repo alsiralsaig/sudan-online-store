@@ -10,7 +10,7 @@ import { isSanadAndroidShell, sanadAndroidBridge } from './nativeShell';
 export function orderInvoicePaperHtml(model: OrderInvoiceModel, mode: 'print' | 'pdf'): string {
   const page = mode === 'print'
     ? 'html,body{margin:0;padding:0;background:#fff!important;color:#0f172a!important}body{padding:8mm}@page{size:A4;margin:8mm}'
-    : 'html,body{margin:0;padding:0;background:#fff!important;color:#0f172a!important}.sanad-invoice-document{width:794px;padding:24px}';
+    : 'html,body{margin:0;padding:0;background:#fff!important;color:#0f172a!important}.sanad-invoice-document{box-sizing:border-box;width:794px;max-width:794px;padding:24px;margin:0}';
   return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${escapeHtml(model.title)} — ${escapeHtml(model.invoiceNumber)}</title>

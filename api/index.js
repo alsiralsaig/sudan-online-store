@@ -344,7 +344,7 @@ async function putInvoicePdf(orderId, data, fileName) {
     addRandomSuffix: true,
     cacheControlMaxAge: 60 * 60 * 24 * 7
   });
-  return result.url;
+  return result.downloadUrl || `${result.url}${result.url.includes("?") ? "&" : "?"}download=1`;
 }
 var EXTENSIONS;
 var init_storage = __esm({

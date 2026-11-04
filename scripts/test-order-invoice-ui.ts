@@ -234,7 +234,7 @@ try {
     for (let i = 0; i < d.length; i += 16) {
       samples++;
       const r = d[i], g = d[i + 1], b = d[i + 2];
-      // الأخضر الداكن לשון splash: القناة الخضراء هي المهيمنة (مثل #052e1a).
+      // الأخضر الداكن الخاص بشاشة الإقلاع: القناة الخضراء هي المهيمنة (مثل #052e1a).
       // حبر الفاتورة الكحلي #0f172a قناته الزرقاء أعلى — لا يُحسب.
       if (g < 110 && g > r + 12 && g > b + 8) darkGreen++;
     }
@@ -246,6 +246,9 @@ try {
   await androidDialog.getByRole('button', { name: 'PDF', exact: true }).click();
   await androidPage.waitForFunction(() => typeof (window as any).__openedUrl === 'string', { timeout: 30000 });
   ok('android: PDF opens HTTPS file instead of blob', await androidPage.evaluate(() => (window as any).__openedUrl.startsWith('https://')));
+  /* الرابط يجب أن يطلب التنزيل لا العرض في المتصفح. */
+  const openedPdfUrl = await androidPage.evaluate(() => (window as any).__openedUrl);
+  ok(`android: PDF URL forces download, not inline view (${openedPdfUrl})`, /[?&]download=1/.test(openedPdfUrl));
   const ownerHref = await androidDialog.getByRole('link', { name: 'نسخة لصاحب المتجر' }).getAttribute('href');
   ok('android: owner button is a WhatsApp link', !!ownerHref && (ownerHref.startsWith('https://wa.me/') || ownerHref.startsWith('whatsapp://send')));
   await androidContext.close();

@@ -192,7 +192,9 @@ export function escapeHtml(value: unknown): string {
 
 /** CSS محصور بالمستند حتى لا يغيّر تنسيق التطبيق عند الطباعة داخل الصفحة أو PDF. */
 export const ORDER_INVOICE_CSS = `
-  .sanad-invoice-document{font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#0f172a;background:#fff;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+  /* box-sizing على الجذر نفسه لا الأبناء فقط: بدونه يصير العرض 794+48=842px
+     فتُقصّ اللقطة عند 794 ويضيع يمين الفاتورة (العنوان وبيانات المورد). */
+  .sanad-invoice-document{box-sizing:border-box;font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#0f172a;background:#fff;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
   .sanad-invoice-document *{box-sizing:border-box}
   .sanad-invoice-document .invoice-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:2px solid #0ea5e9;padding-bottom:10px}
   .sanad-invoice-document h1{font-size:20px;margin:0;color:#0f172a}

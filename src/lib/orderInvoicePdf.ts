@@ -77,7 +77,13 @@ export async function downloadOrderInvoicePdf(model: OrderInvoiceModel, opts: { 
       if (!opts.orderId) throw new Error('معرّف الطلب غير متاح لحفظ PDF');
       const res = await api.uploadSupplyOrderInvoicePdf(opts.orderId, base64, fileName);
       if (!res?.url) throw new Error('لم يرجع السيرفر رابط PDF');
-      openExternalFromApp(res.url);
+      /* ?download=1 يجعل التخزين يرد بـContent-Disposition: attachment
+         فيحفظ النظام الملف بدل عرضه داخل تبويب المتصفح. نضمنه هنا أيضاً
+         فلا نعتمد على إصدار الخادم وحده. */
+      const downloadUrl = /[?&]download=1/.test(res.url)
+        ? res.url
+        : `${res.url}${res.url.includes('?') ? '&' : '?'}download=1`;
+      openExternalFromApp(downloadUrl);
       return { ok: true, fileName };
     }
     const url = URL.createObjectURL(blob);

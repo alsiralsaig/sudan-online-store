@@ -66,7 +66,12 @@ export async function putMedia(
   return result.url;
 }
 
-/** PDF فاتورة: رابط HTTPS عام عشوائي ليفتحه تطبيق أندرويد/عارض PDF. */
+/**
+ * PDF فاتورة: رابط HTTPS عام عشوائي **للتنزيل** لا للعرض.
+ * المتصفح كان يعرض ملف PDF داخل تبويب بدل حفظه، وكان المستخدم يفقد الملف.
+ * `downloadUrl` يضيف ?download=1 فيرد التخزين بـContent-Disposition: attachment
+ * ليحفظه النظام في الملفات مباشرة.
+ */
 export async function putInvoicePdf(orderId: string, data: Buffer, fileName: string): Promise<string> {
   const safe = String(fileName || 'invoice.pdf').replace(/[^\w.-]/g, '_').slice(0, 120);
   const path = `sanad/invoices/${orderId}/${safe}`;
@@ -76,5 +81,5 @@ export async function putInvoicePdf(orderId: string, data: Buffer, fileName: str
     addRandomSuffix: true,
     cacheControlMaxAge: 60 * 60 * 24 * 7,
   });
-  return result.url;
+  return result.downloadUrl || `${result.url}${result.url.includes('?') ? '&' : '?'}download=1`;
 }

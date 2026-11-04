@@ -36,7 +36,8 @@
     "test:order-invoice-ui": "tsx scripts/test-order-invoice-ui.ts",
     "preview:order-invoice": "tsx scripts/preview-order-invoice.ts",
     "test:pos-atomic": "tsx scripts/test-pos-atomic.ts",
-    "test:offline-queue": "tsx scripts/test-offline-queue.ts"
+    "test:offline-queue": "tsx scripts/test-offline-queue.ts",
+    "test:invoice-pdf": "tsx scripts/test-invoice-pdf.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
