@@ -12684,34 +12684,27 @@ function createApp() {
       return next();
     }
     const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-    withInstanceLock(async () => {
-      let releaseWriteLock = null;
-      if (isMutation) {
-        try {
-          releaseWriteLock = await acquireWriteLock();
-        } catch (err) {
+    if (isMutation) {
+      const originalJson = res.json.bind(res);
+      let flushed = false;
+      res.json = (body) => {
+        if (flushed) return originalJson(body);
+        flushed = true;
+        db.flush({ lock: false }).then(() => originalJson(body)).catch((err) => {
+          const message = err.message;
+          console.error("[DB] Flush failed:", message);
           recordDbError(err);
-          return res.status(503).json({ error: "DB_BUSY", message: "\u0627\u0644\u062E\u0627\u062F\u0645 \u0645\u0634\u063A\u0648\u0644 \u0628\u062D\u0641\u0638 \u0639\u0645\u0644\u064A\u0629 \u0623\u062E\u0631\u0649. \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629 \u0628\u0639\u062F \u0644\u062D\u0638\u0627\u062A." });
-        }
-        const originalJson = res.json.bind(res);
-        let flushed = false;
-        res.json = (body) => {
-          if (flushed) return originalJson(body);
-          flushed = true;
-          db.flush({ lock: false }).then(() => originalJson(body)).catch((err) => {
-            const message = err.message;
-            console.error("[DB] Flush failed:", message);
-            recordDbError(err);
-            res.status(/timeout/i.test(message) ? 503 : 500);
-            originalJson({
-              error: "DB_WRITE_FAILED",
-              message: "\u062A\u0639\u0630\u0631 \u062D\u0641\u0638 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A\u060C \u064A\u0631\u062C\u0649 \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
-              detail: message
-            });
+          res.status(/timeout/i.test(message) ? 503 : 500);
+          originalJson({
+            error: "DB_WRITE_FAILED",
+            message: "\u062A\u0639\u0630\u0631 \u062D\u0641\u0638 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A\u060C \u064A\u0631\u062C\u0649 \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
+            detail: message
           });
-          return res;
-        };
-      }
+        });
+        return res;
+      };
+    }
+    withInstanceLock(async () => {
       try {
         await db.init();
         await db.refresh();
@@ -12732,9 +12725,6 @@ function createApp() {
         res.on("finish", finish);
         res.on("close", finish);
         next();
-      }).finally(async () => {
-        if (releaseWriteLock) await releaseWriteLock().catch(() => {
-        });
       });
     }).catch((err) => {
       console.error("[API] Request failed:", err.message);

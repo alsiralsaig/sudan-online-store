@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { apiRouter } from './src/server/routes.ts';
 import { db } from './src/server/db.ts';
-import { isDbEnabled, dbTarget, lastDbError, recordDbError, acquireWriteLock } from './src/server/pg.ts';
+import { isDbEnabled, dbTarget, lastDbError, recordDbError } from './src/server/pg.ts';
 import { storageMode } from './src/server/storage.ts';
 import { channelsConfigured } from './src/server/alerts.ts';
 
@@ -59,48 +59,39 @@ export function createApp() {
 
     const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
 
+    if (isMutation) {
+      const originalJson = res.json.bind(res);
+      let flushed = false;
+
+      res.json = ((body: any) => {
+        if (flushed) return originalJson(body);
+        flushed = true;
+
+        db.flush({ lock: false })
+          .then(() => originalJson(body))
+          .catch((err) => {
+            // Never report success for a write that did not reach Postgres:
+            // the POS keeps unsynced sales in IndexedDB and will retry.
+            const message = (err as Error).message;
+            console.error('[DB] Flush failed:', message);
+            recordDbError(err);
+
+            res.status(/timeout/i.test(message) ? 503 : 500);
+            originalJson({
+              error: 'DB_WRITE_FAILED',
+              message: 'تعذر حفظ البيانات في قاعدة البيانات، يرجى إعادة المحاولة.',
+              detail: message,
+            });
+          });
+
+        return res;
+      }) as typeof res.json;
+    }
+
     // The critical section covers refresh → handler → flush → response.
     // Everything inside shares one in-memory snapshot, so it must not overlap
     // with another request in this process.
     withInstanceLock(async () => {
-      // Mutations must hold the cross-instance lock BEFORE reading the snapshot.
-      // Taking it only at flush time lets two lambdas both see "accepted" and
-      // both receive the same delivery. The lock is released after the response.
-      let releaseWriteLock: (() => Promise<void>) | null = null;
-      if (isMutation) {
-        try {
-          releaseWriteLock = await acquireWriteLock();
-        } catch (err) {
-          recordDbError(err);
-          // Do not flush here: we never acquired the cross-instance lock.
-          return res.status(503).json({ error: 'DB_BUSY', message: 'الخادم مشغول بحفظ عملية أخرى. أعد المحاولة بعد لحظات.' });
-        }
-
-        // Install the flush-on-response wrapper only after the lock is held.
-        const originalJson = res.json.bind(res);
-        let flushed = false;
-        res.json = ((body: any) => {
-          if (flushed) return originalJson(body);
-          flushed = true;
-
-          db.flush({ lock: false })
-            .then(() => originalJson(body))
-            .catch((err) => {
-              // Never report success for a write that did not reach Postgres.
-              const message = (err as Error).message;
-              console.error('[DB] Flush failed:', message);
-              recordDbError(err);
-              res.status(/timeout/i.test(message) ? 503 : 500);
-              originalJson({
-                error: 'DB_WRITE_FAILED',
-                message: 'تعذر حفظ البيانات في قاعدة البيانات، يرجى إعادة المحاولة.',
-                detail: message,
-              });
-            });
-
-          return res;
-        }) as typeof res.json;
-      }
       try {
         await db.init();
         await db.refresh();
@@ -125,8 +116,6 @@ export function createApp() {
         res.on('close', finish);
 
         next();
-      }).finally(async () => {
-        if (releaseWriteLock) await releaseWriteLock().catch(() => {});
       });
     }).catch((err) => {
       console.error('[API] Request failed:', (err as Error).message);
