@@ -420,6 +420,14 @@ class ApiClient {
     return this.request(`/supply-orders/${encodeURIComponent(orderId)}/invoice-copy`, { method: 'POST', body: '{}' });
   }
 
+  /** داخل تطبيق أندرويد: يرفع PDF المولّد في المتصفح ويرجع رابط HTTPS يفتحه النظام. */
+  public async uploadSupplyOrderInvoicePdf(orderId: string, pdfBase64: string, fileName: string): Promise<{ success: boolean; url: string; fileName: string }> {
+    return this.request(`/supply-orders/${encodeURIComponent(orderId)}/invoice-pdf`, {
+      method: 'POST',
+      body: JSON.stringify({ pdfBase64, fileName }),
+    });
+  }
+
   /** للطبقة الأعلى: من ربط بأصنافي وبأي هامش وسعر. */
   public async getIncomingLinks(): Promise<{ buyers: any[]; totals: { buyers: number; links: number; itemsLinked: number } }> {
     return this.request('/links/incoming');

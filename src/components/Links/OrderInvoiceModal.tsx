@@ -4,12 +4,15 @@ import {
 } from 'lucide-react';
 import type { OrderInvoiceModel } from '../../lib/orderInvoice.ts';
 import {
-  orderInvoiceText, orderInvoiceWhatsAppUrl, money, invoiceForeignTotal, invoiceCurrencyLabel,
+  orderInvoiceText, orderInvoiceWhatsAppUrl, orderInvoiceWhatsAppShareUrl, money, invoiceForeignTotal, invoiceCurrencyLabel,
 } from '../../lib/orderInvoice.ts';
 import { downloadOrderInvoicePdf } from '../../lib/orderInvoicePdf.ts';
+import { isSanadAndroidShell } from '../../lib/nativeShell.ts';
 
 interface Props {
   invoice: OrderInvoiceModel;
+  orderId: string;
+  ownerPhone?: string;
   onClose: () => void;
   onSendToStoreOwner: () => Promise<void> | void;
   onSendToBuyer: () => void;
@@ -19,7 +22,7 @@ interface Props {
 
 /** نافذة واحدة: المستند أولاً، ثم إجراءاته. لا تغلق نفسها عند الطباعة. */
 export const OrderInvoiceModal: React.FC<Props> = ({
-  invoice, onClose, onPrint, onSendToBuyer, onSendToStoreOwner, canSendToOwner,
+  invoice, orderId, ownerPhone, onClose, onPrint, onSendToBuyer, onSendToStoreOwner, canSendToOwner,
 }) => {
   const [busy, setBusy] = useState<'pdf' | 'owner' | 'print' | null>(null);
   const [done, setDone] = useState('');
@@ -33,7 +36,7 @@ export const OrderInvoiceModal: React.FC<Props> = ({
   busyRef.current = busy;
   onCloseRef.current = onClose;
   const waUrl = useMemo(() => orderInvoiceWhatsAppUrl(invoice), [invoice]);
-  const ownerWaUrl = useMemo(() => orderInvoiceWhatsAppUrl(invoice, invoice.sellerPhone), [invoice]);
+  const ownerWaUrl = useMemo(() => orderInvoiceWhatsAppShareUrl(invoice, ownerPhone ?? invoice.sellerPhone, isSanadAndroidShell()), [invoice, ownerPhone]);
   const text = useMemo(() => orderInvoiceText(invoice), [invoice]);
   const foreign = invoiceForeignTotal(invoice);
 
@@ -92,7 +95,7 @@ export const OrderInvoiceModal: React.FC<Props> = ({
   const doPdf = async () => {
     setBusy('pdf'); setErr(''); setDone('');
     try {
-      const res = await downloadOrderInvoicePdf(invoice);
+      const res = await downloadOrderInvoicePdf(invoice, { orderId });
       if (!res.ok) setErr(res.error || 'تعذّر توليد PDF');
       else setDone(`تم تنزيل ${res.fileName}`);
     } catch {
@@ -107,7 +110,7 @@ export const OrderInvoiceModal: React.FC<Props> = ({
     const copy = navigator.clipboard?.writeText(text).catch(() => { setManualCopy(true); });
     try {
       await Promise.all([copy, Promise.resolve(onSendToStoreOwner())]);
-      setDone(invoice.sellerPhone
+      setDone((ownerPhone ?? invoice.sellerPhone)
         ? 'تم نسخ النص وحفظ نسخة في الإشعارات، وفتح واتساب صاحب المتجر لإرسالها.'
         : 'تم نسخ النص وحفظ نسخة في الإشعارات. اختر جهة اتصال صاحب المتجر في واتساب ثم أرسل النص.');
     } catch (e: unknown) {

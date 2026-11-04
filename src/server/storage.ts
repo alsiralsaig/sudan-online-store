@@ -65,3 +65,16 @@ export async function putMedia(
   });
   return result.url;
 }
+
+/** PDF فاتورة: رابط HTTPS عام عشوائي ليفتحه تطبيق أندرويد/عارض PDF. */
+export async function putInvoicePdf(orderId: string, data: Buffer, fileName: string): Promise<string> {
+  const safe = String(fileName || 'invoice.pdf').replace(/[^\w.-]/g, '_').slice(0, 120);
+  const path = `sanad/invoices/${orderId}/${safe}`;
+  const result = await put(path, data, {
+    access: 'public',
+    contentType: 'application/pdf',
+    addRandomSuffix: true,
+    cacheControlMaxAge: 60 * 60 * 24 * 7,
+  });
+  return result.url;
+}

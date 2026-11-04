@@ -5,6 +5,7 @@
  * never leak into the paper output.
  */
 import { ORDER_INVOICE_CSS, escapeHtml, orderInvoiceMarkup, type OrderInvoiceModel } from './orderInvoice';
+import { isSanadAndroidShell, sanadAndroidBridge } from './nativeShell';
 
 export function orderInvoicePaperHtml(model: OrderInvoiceModel, mode: 'print' | 'pdf'): string {
   const page = mode === 'print'
@@ -56,7 +57,9 @@ export async function mountInvoiceFrame(model: OrderInvoiceModel, mode: 'print' 
 }
 
 /** One print button: isolated iframe first, same-page A4 fallback second. */
-export async function printOrderInvoiceDocument(model: OrderInvoiceModel): Promise<{ ok: boolean; method: 'iframe' | 'inline'; error?: string }> {
+export async function printOrderInvoiceDocument(model: OrderInvoiceModel): Promise<{ ok: boolean; method: 'iframe' | 'inline' | 'android'; error?: string }> {
+  // غلاف أندرويد لا يطبع iframe؛ الطباعة الحقيقية عبر PrintManager في الصفحة نفسها.
+  if (isSanadAndroidShell()) return printAndroidInvoiceDocument(model);
   let frame: InvoiceFrame | null = null;
   try {
     frame = await mountInvoiceFrame(model, 'print');
@@ -71,6 +74,34 @@ export async function printOrderInvoiceDocument(model: OrderInvoiceModel): Promi
   } catch (err) {
     frame?.remove();
     return printInlineInvoiceDocument(model, err);
+  }
+}
+
+function printAndroidInvoiceDocument(model: OrderInvoiceModel): { ok: boolean; method: 'android'; error?: string } {
+  document.getElementById('sanad-inline-print')?.remove();
+  const host = document.createElement('div');
+  host.id = 'sanad-inline-print';
+  const style = document.createElement('style');
+  style.textContent = ORDER_INVOICE_CSS;
+  const content = document.createElement('div');
+  content.innerHTML = orderInvoiceMarkup(model);
+  host.append(style, content);
+  document.body.appendChild(host);
+  document.body.classList.add('sanad-invoice-printing');
+  const cleanup = () => {
+    host.remove();
+    document.body.classList.remove('sanad-invoice-printing');
+  };
+  window.addEventListener('afterprint', cleanup, { once: true });
+  try {
+    const bridge = sanadAndroidBridge();
+    if (bridge?.print) bridge.print();
+    else window.print();
+    setTimeout(cleanup, 60_000);
+    return { ok: true, method: 'android' };
+  } catch (err) {
+    cleanup();
+    return { ok: false, method: 'android', error: 'تعذّر فتح طباعة أندرويد. حدّث تطبيق سند أو جرّب PDF.' };
   }
 }
 

@@ -1078,7 +1078,9 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
       {invoiceFor && (
         <OrderInvoiceModal
           invoice={invoiceOf(invoiceFor)}
-          canSendToOwner={invoiceFor.side === 'in'}
+          orderId={invoiceFor.id}
+          ownerPhone={myStore?.phone || (invoiceFor.side === 'in' ? invoiceFor.sellerPhone : invoiceFor.buyerPhone)}
+          canSendToOwner={true}
           onClose={() => setInvoiceOrderId(null)}
           onPrint={() => printOrderInvoice(invoiceFor)}
           onSendToBuyer={() => {

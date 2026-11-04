@@ -184,6 +184,41 @@ try {
     return !!host && document.body.classList.contains('sanad-invoice-printing') && host.innerText.includes('PUR-2026-');
   }));
   await context.close();
+  // Android wrapper/TWA: print uses AndroidApp.print, PDF uses HTTPS open, owner uses WhatsApp.
+  const androidContext = await browser.newContext({
+    viewport: { width: 360, height: 800 },
+    userAgent: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/130 Mobile Safari/537.36 SanadMerchant/1.0.8',
+  });
+  await androidContext.route('**/api/supply-orders/*/invoice-pdf', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, url: 'https://files.example/sanad-invoice.pdf', fileName: 'Sanad-PUR.pdf' }),
+  }));
+  const androidPage = await androidContext.newPage();
+  await androidPage.addInitScript({ content: `
+    localStorage.setItem('sanad_merchant_token', ${JSON.stringify(token)});
+    localStorage.setItem('sanad_tenant_id', ${JSON.stringify(sellerId)});
+    localStorage.setItem('sanad.pushHint.hidden.v1', '1');
+    window.AndroidApp = {
+      print: function () { window.__androidPrinted = true; },
+      openUrl: function (url) { window.__openedUrl = url; }
+    };
+  ` });
+  await androidPage.goto(base + '/?app=merchant&tab=links', { waitUntil: 'domcontentloaded' });
+  await androidPage.getByRole('button', { name: /إصدار الفاتورة/ }).click();
+  const androidDialog = androidPage.getByRole('dialog');
+  await androidDialog.waitFor();
+  await androidDialog.getByRole('button', { name: 'طباعة', exact: true }).click();
+  await androidPage.waitForFunction(() => (window as any).__androidPrinted === true, { timeout: 15000 });
+  ok('android: print button calls AndroidApp.print with visible A4 invoice', await androidPage.evaluate(() => {
+    const host = document.getElementById('sanad-inline-print');
+    return !!host && document.body.classList.contains('sanad-invoice-printing') && host.innerText.includes('PUR-2026-');
+  }));
+  await androidDialog.getByRole('button', { name: 'PDF', exact: true }).click();
+  await androidPage.waitForFunction(() => typeof (window as any).__openedUrl === 'string', { timeout: 30000 });
+  ok('android: PDF opens HTTPS file instead of blob', await androidPage.evaluate(() => (window as any).__openedUrl.startsWith('https://')));
+  const ownerHref = await androidDialog.getByRole('link', { name: 'نسخة لصاحب المتجر' }).getAttribute('href');
+  ok('android: owner button is a WhatsApp link', !!ownerHref && (ownerHref.startsWith('https://wa.me/') || ownerHref.startsWith('whatsapp://send')));
+  await androidContext.close();
+
   console.log(`\nPASS: ${passed} browser invoice checks`);
 } finally {
   await browser.close(); server.close(); await pglite.close();

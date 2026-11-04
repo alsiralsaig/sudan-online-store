@@ -1,6 +1,8 @@
 /** PDF عربي A4 من نفس مستند المعاينة/الطباعة، مع تقسيم عند حدود الصفوف. */
 import type { OrderInvoiceModel } from './orderInvoice';
 import { assertInvoiceCanvasReadable, mountInvoiceFrame, type InvoiceFrame } from './orderInvoiceDocument';
+import { isSanadAndroidShell, openExternalFromApp, sanadAndroidBridge } from './nativeShell';
+import { api } from './api';
 
 export interface PdfResult {
   ok: boolean;
@@ -8,7 +10,7 @@ export interface PdfResult {
   error?: string;
 }
 
-export async function downloadOrderInvoicePdf(model: OrderInvoiceModel): Promise<PdfResult> {
+export async function downloadOrderInvoicePdf(model: OrderInvoiceModel, opts: { orderId?: string } = {}): Promise<PdfResult> {
   if (typeof document === 'undefined') return { ok: false, error: 'التوليد متاح في المتصفح فقط.' };
   let frame: InvoiceFrame | null = null;
   try {
@@ -63,7 +65,22 @@ export async function downloadOrderInvoicePdf(model: OrderInvoiceModel): Promise
     const fileName = `Sanad-${safe}.pdf`;
     // Explicit anchored blob download with an ASCII filename: some mobile
     // WebViews drop non-ASCII download names and save the file as "download".
-    const url = URL.createObjectURL(pdf.output('blob'));
+    const blob = pdf.output('blob');
+    // غلاف أندرويد لا يفتح blob: لذلك نرفع PDF إلى رابط HTTPS عام ثم نفتحه في النظام.
+    if (isSanadAndroidShell()) {
+      const bridge = sanadAndroidBridge();
+      const base64 = await blobToBase64(blob);
+      if (bridge?.savePdf) {
+        bridge.savePdf(base64, fileName);
+        return { ok: true, fileName };
+      }
+      if (!opts.orderId) throw new Error('معرّف الطلب غير متاح لحفظ PDF');
+      const res = await api.uploadSupplyOrderInvoicePdf(opts.orderId, base64, fileName);
+      if (!res?.url) throw new Error('لم يرجع السيرفر رابط PDF');
+      openExternalFromApp(res.url);
+      return { ok: true, fileName };
+    }
+    const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = fileName;
@@ -79,4 +96,16 @@ export async function downloadOrderInvoicePdf(model: OrderInvoiceModel): Promise
   } finally {
     frame?.remove();
   }
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',')[1] : result);
+    };
+    reader.onerror = () => reject(new Error('تعذّر قراءة PDF'));
+    reader.readAsDataURL(blob);
+  });
 }

@@ -41,7 +41,7 @@ import {
   saveMedia, getMedia, deleteMedia, buildMediaResponse, prepareForStreaming, HttpError, MAX_RAW_BYTES,
   MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
 } from './media.ts';
-import { storageMode } from './storage.ts';
+import { storageMode, blobEnabled, putInvoicePdf } from './storage.ts';
 import { runWatchdog } from './watchdog.ts';
 import { notifyAll, anyChannelConfigured, channelsConfigured } from './alerts.ts';
 import { runBackup } from './backup.ts';
@@ -1658,6 +1658,28 @@ apiRouter.post('/supply-orders/:id/invoice-copy', merchantAuthMiddleware, async 
   });
   db.commit();
   res.json({ success: true, invoiceNumber: invoice.invoiceNumber, notified: true, notificationId: notification.id });
+});
+
+/** PDF فاتورة داخل تطبيق أندرويد: يستقبل PDF المولّد في المتصفح ويرجع رابط HTTPS. */
+apiRouter.post('/supply-orders/:id/invoice-pdf', merchantAuthMiddleware, async (req, res) => {
+  const me = (req as AuthenticatedRequest).tenantId;
+  const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'الطلب غير موجود.' });
+  if (order.sellerTenantId !== me && order.buyerTenantId !== me) {
+    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'هذا الطلب لا يخصك.' });
+  }
+  if (!orderHasInvoice(order)) return res.status(409).json({ error: 'INVOICE_NOT_AVAILABLE', message: 'تتاح الفاتورة بعد قبول الطلب أو تسليمه.' });
+  if (!blobEnabled()) return res.status(503).json({ error: 'PDF_STORAGE_UNAVAILABLE', message: 'تخزين PDF غير مفعّل على السيرفر.' });
+  const pdfBase64 = String(req.body?.pdfBase64 || '');
+  const fileName = String(req.body?.fileName || 'invoice.pdf');
+  if (!pdfBase64 || pdfBase64.length > 14_000_000) return res.status(400).json({ error: 'INVALID_PDF', message: 'ملف PDF غير صالح أو كبير جداً.' });
+  let buf: Buffer;
+  try { buf = Buffer.from(pdfBase64, 'base64'); } catch { return res.status(400).json({ error: 'INVALID_PDF', message: 'ملف PDF غير صالح.' }); }
+  if (buf.length < 100 || buf.subarray(0, 5).toString('ascii') !== '%PDF-') return res.status(400).json({ error: 'INVALID_PDF', message: 'الملف ليس PDF.' });
+  await ensureSupplyInvoiceNumber(order);
+  const url = await putInvoicePdf(order.id, buf, fileName);
+  db.commit();
+  res.json({ success: true, url, fileName });
 });
 
 /**

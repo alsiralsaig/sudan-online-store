@@ -163,8 +163,19 @@ export function orderInvoiceText(model: OrderInvoiceModel): string {
 }
 
 export function orderInvoiceWhatsAppUrl(model: OrderInvoiceModel, recipientPhone?: string): string {
-  const digits = normalizeWhatsAppPhone(recipientPhone ?? model.buyerPhone);
+  // إذا مُرّر مستلم صراحةً (صاحب المتجر) لا نسقط إلى رقم المشتري عند غيابه.
+  const phone = recipientPhone === undefined ? model.buyerPhone : recipientPhone;
+  const digits = normalizeWhatsAppPhone(phone);
   return `https://wa.me/${digits || ''}?text=${encodeURIComponent(orderInvoiceText(model))}`;
+}
+
+/** داخل غلاف أندرويد: إذا لا يوجد رقم، نفتح واتساب نفسه عبر scheme مباشر. */
+export function orderInvoiceWhatsAppShareUrl(model: OrderInvoiceModel, recipientPhone?: string, androidShell = false): string {
+  const phone = recipientPhone === undefined ? model.buyerPhone : recipientPhone;
+  const digits = normalizeWhatsAppPhone(phone);
+  const text = encodeURIComponent(orderInvoiceText(model));
+  if (!digits && androidShell) return `whatsapp://send?text=${text}`;
+  return `https://wa.me/${digits || ''}?text=${text}`;
 }
 
 /** يمنع حقول المتجر/الأصناف من أن تتحول إلى HTML أو سكربت في مستند الطباعة. */

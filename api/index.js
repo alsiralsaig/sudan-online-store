@@ -335,6 +335,17 @@ async function putMedia(id, data, mime, kind) {
   });
   return result.url;
 }
+async function putInvoicePdf(orderId, data, fileName) {
+  const safe = String(fileName || "invoice.pdf").replace(/[^\w.-]/g, "_").slice(0, 120);
+  const path2 = `sanad/invoices/${orderId}/${safe}`;
+  const result = await put(path2, data, {
+    access: "public",
+    contentType: "application/pdf",
+    addRandomSuffix: true,
+    cacheControlMaxAge: 60 * 60 * 24 * 7
+  });
+  return result.url;
+}
 var EXTENSIONS;
 var init_storage = __esm({
   "src/server/storage.ts"() {
@@ -8201,6 +8212,30 @@ apiRouter.post("/supply-orders/:id/invoice-copy", merchantAuthMiddleware, async 
   });
   db.commit();
   res.json({ success: true, invoiceNumber: invoice.invoiceNumber, notified: true, notificationId: notification.id });
+});
+apiRouter.post("/supply-orders/:id/invoice-pdf", merchantAuthMiddleware, async (req, res) => {
+  const me = req.tenantId;
+  const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (order.sellerTenantId !== me && order.buyerTenantId !== me) {
+    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0644\u0627 \u064A\u062E\u0635\u0643." });
+  }
+  if (!orderHasInvoice(order)) return res.status(409).json({ error: "INVOICE_NOT_AVAILABLE", message: "\u062A\u062A\u0627\u062D \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0639\u062F \u0642\u0628\u0648\u0644 \u0627\u0644\u0637\u0644\u0628 \u0623\u0648 \u062A\u0633\u0644\u064A\u0645\u0647." });
+  if (!blobEnabled()) return res.status(503).json({ error: "PDF_STORAGE_UNAVAILABLE", message: "\u062A\u062E\u0632\u064A\u0646 PDF \u063A\u064A\u0631 \u0645\u0641\u0639\u0651\u0644 \u0639\u0644\u0649 \u0627\u0644\u0633\u064A\u0631\u0641\u0631." });
+  const pdfBase64 = String(req.body?.pdfBase64 || "");
+  const fileName = String(req.body?.fileName || "invoice.pdf");
+  if (!pdfBase64 || pdfBase64.length > 14e6) return res.status(400).json({ error: "INVALID_PDF", message: "\u0645\u0644\u0641 PDF \u063A\u064A\u0631 \u0635\u0627\u0644\u062D \u0623\u0648 \u0643\u0628\u064A\u0631 \u062C\u062F\u0627\u064B." });
+  let buf;
+  try {
+    buf = Buffer.from(pdfBase64, "base64");
+  } catch {
+    return res.status(400).json({ error: "INVALID_PDF", message: "\u0645\u0644\u0641 PDF \u063A\u064A\u0631 \u0635\u0627\u0644\u062D." });
+  }
+  if (buf.length < 100 || buf.subarray(0, 5).toString("ascii") !== "%PDF-") return res.status(400).json({ error: "INVALID_PDF", message: "\u0627\u0644\u0645\u0644\u0641 \u0644\u064A\u0633 PDF." });
+  await ensureSupplyInvoiceNumber(order);
+  const url = await putInvoicePdf(order.id, buf, fileName);
+  db.commit();
+  res.json({ success: true, url, fileName });
 });
 apiRouter.get("/links/incoming", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);
