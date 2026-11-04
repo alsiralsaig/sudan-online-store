@@ -5442,7 +5442,14 @@ function getPublicKey() {
 async function notify(input) {
   if (input.dedupeKey) {
     const existing = db.getNotificationByDedupeKey(input.dedupeKey);
-    if (existing) return existing;
+    if (existing) {
+      if (input.pushOnDuplicate) {
+        await sendPush(input, existing).catch((err) => {
+          console.warn("[push] duplicate re-send failed:", err?.message || err);
+        });
+      }
+      return existing;
+    }
   }
   const notification = db.createNotification({
     dedupeKey: input.dedupeKey,
@@ -8187,6 +8194,7 @@ apiRouter.post("/supply-orders/:id/invoice-copy", merchantAuthMiddleware, async 
     linkTab: "links",
     tenantId: me,
     dedupeKey: `invoicecopy_${order.id}_${invoice.invoiceNumber}_${me}_${order.status}`,
+    pushOnDuplicate: true,
     pushData: { orderId: order.id, invoiceNumber: invoice.invoiceNumber },
     telegram: false,
     ntfy: false

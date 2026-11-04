@@ -3,8 +3,10 @@
  *   npm run build && npm run test:order-invoice-ui
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { chromium } from '@playwright/test';
 import { PGlite } from '@electric-sql/pglite';
+import jpeg from 'jpeg-js';
 import { setSqlClient } from '../src/server/pg.ts';
 
 process.env.SANAD_AUTH_SECRET = 'order-invoice-ui-test-secret-not-for-production';
@@ -46,13 +48,47 @@ const { token } = await login.json() as any;
 const browser = await chromium.launch({ headless: true });
 let passed = 0;
 const ok = (name: string, c: unknown) => { assert.ok(c, name); passed++; console.log(`  ✅ ${name}`); };
+
+/** يفك أول صورة JPEG مضمّنة في PDF ويتأكد أنها ورقة بيضاء عليها حبر، لا صفحة سوداء. */
+function assertPdfHasVisibleInvoice(pdfPath: string) {
+  const buf = fs.readFileSync(pdfPath);
+  assert.ok(buf.subarray(0, 5).toString() === '%PDF-', 'PDF header');
+  const start = buf.indexOf(Buffer.from([0xff, 0xd8, 0xff]));
+  const end = buf.indexOf(Buffer.from([0xff, 0xd9]), start);
+  assert.ok(start >= 0 && end > start, 'PDF contains a JPEG page image');
+  const img = jpeg.decode(buf.subarray(start, end + 2), { useTArray: true, maxMemoryUsageInMB: 512 });
+  assert.ok(img.width > 500 && img.height > 500, 'PDF page image is A4-sized');
+  let dark = 0, ink = 0, white = 0, samples = 0;
+  for (let y = 0; y < img.height; y += 6) {
+    for (let x = 0; x < img.width; x += 6) {
+      const i = (y * img.width + x) * 4;
+      const luma = 0.2126 * img.data[i] + 0.7152 * img.data[i + 1] + 0.0722 * img.data[i + 2];
+      samples++;
+      if (luma < 80) dark++;
+      if (luma < 245) ink++;
+      if (luma > 245) white++;
+    }
+  }
+  assert.ok(white / samples > 0.55, `PDF page is mostly white (white=${(white / samples).toFixed(2)})`);
+  assert.ok(dark / samples < 0.35, `PDF page is not black (dark=${(dark / samples).toFixed(2)})`);
+  assert.ok(ink / samples > 0.01, `PDF page has invoice ink (ink=${(ink / samples).toFixed(2)})`);
+}
+
 try {
   for (const width of [360, 1280]) {
-    const page = await browser.newPage({ viewport: { width, height: 800 }, acceptDownloads: true });
+    const context = await browser.newContext({ viewport: { width, height: 800 }, acceptDownloads: true, permissions: ['clipboard-read', 'clipboard-write'] });
+    await context.route('https://wa.me/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>WhatsApp</title>' }));
+    const page = await context.newPage();
     await page.addInitScript(([t, tenant]) => {
       localStorage.setItem('sanad_merchant_token', t as string);
       localStorage.setItem('sanad_tenant_id', tenant as string);
       localStorage.setItem('sanad.pushHint.hidden.v1', '1');
+      localStorage.setItem('sanad_theme', 'dark');
+      // سجّل استدعاء الطباعة في كل إطار (الرئيسي ومستند الفاتورة المعزول).
+      (window as any).print = () => {
+        (window as any).__printed = true;
+        (window.top as any).__invoicePrinted = ((window.top as any).__invoicePrinted || 0) + 1;
+      };
     }, [token, sellerId]);
     await page.goto(base + '/?app=merchant&tab=links', { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: /إصدار الفاتورة/ }).waitFor({ timeout: 30000 });
@@ -74,21 +110,40 @@ try {
       return footer.getBoundingClientRect().top >= body.getBoundingClientRect().bottom - 1;
     }));
     ok(`${width}px: no prompt`, await page.evaluate(() => !document.body.innerText.includes('رقم فاتورتي')));
+    ok(`${width}px: exactly one print button`, await dialog.getByRole('button', { name: /طباعة/ }).count() === 1);
+    ok(`${width}px: no second inline-print button`, await dialog.getByRole('button', { name: 'اطبع من هذه الصفحة' }).count() === 0);
+
     const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
     await dialog.getByRole('button', { name: 'PDF', exact: true }).click();
     const download = await downloadPromise;
-    console.log('PDF filename:', download.suggestedFilename(), 'url:', download.url());
     ok(`${width}px: PDF downloads`, download.suggestedFilename().toLowerCase().endsWith('.pdf'));
-    await download.saveAs(`/tmp/sanad-invoice-${width}.pdf`);
-    await page.evaluate(() => { (window as any).open = () => null; (window as any).print = () => { (window as any).__printed = true; }; });
+    const pdfPath = `/tmp/sanad-invoice-${width}.pdf`;
+    await download.saveAs(pdfPath);
+    assertPdfHasVisibleInvoice(pdfPath);
+    ok(`${width}px: PDF pixels are a white invoice, not a black page`, true);
+
     await dialog.getByRole('button', { name: 'طباعة', exact: true }).click();
-    ok(`${width}px: blocked popup keeps modal`, await dialog.isVisible());
-    await dialog.getByRole('button', { name: 'اطبع من هذه الصفحة' }).click();
-    await page.waitForFunction(() => (window as any).__printed === true);
-    ok(`${width}px: inline print fallback`, await page.locator('#sanad-inline-print').count() === 1);
-    await dialog.getByRole('button', { name: 'نسخة لصاحب المتجر' }).click();
-    await dialog.getByRole('status').filter({ hasText: 'تم حفظ نسخة كاملة' }).waitFor();
-    ok(`${width}px: owner copy feedback`, true);
+    await page.waitForFunction(() => (window as any).__invoicePrinted >= 1, { timeout: 15000 });
+    ok(`${width}px: single print button opens isolated A4 print document`, await page.evaluate(() => {
+      const f = document.querySelector('iframe[data-testid="invoice-print-frame"]') as HTMLIFrameElement;
+      const doc = f.contentDocument!;
+      const bg = getComputedStyle(doc.body).backgroundColor;
+      return doc.body.innerText.includes('PUR-2026-') && (bg === 'rgb(255, 255, 255)' || bg === 'rgba(0, 0, 0, 0)');
+    }));
+    ok(`${width}px: print keeps modal open`, await dialog.isVisible());
+
+    const popupPromise = page.waitForEvent('popup', { timeout: 15000 });
+    await dialog.getByRole('link', { name: 'نسخة لصاحب المتجر' }).click();
+    const popup = await popupPromise;
+    await popup.waitForURL('https://wa.me/**', { timeout: 15000 }).catch(() => {});
+    ok(`${width}px: owner copy opens WhatsApp send`, popup.url().startsWith('https://wa.me/'));
+    await popup.close().catch(() => {});
+    await dialog.getByRole('status').filter({ hasText: 'تم نسخ النص وحفظ نسخة' }).waitFor({ timeout: 15000 });
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    ok(`${width}px: owner copy copies full invoice text`, copied.includes('PUR-2026-') && copied.includes('625,000'));
+    const feed = await fetch(base + '/api/notifications?app=merchant', { headers: { authorization: `Bearer ${token}` } }).then((r) => r.json()) as any;
+    ok(`${width}px: owner copy saved in server notifications`, (feed.notifications || feed || []).some((n: any) => n.kind === 'invoice_copy' && n.body.includes('PUR-2026-')));
+
     ok(`${width}px: alert banner does not cover the invoice`, await page.evaluate(() => {
       const btn = document.querySelector('[aria-label="إغلاق الفاتورة"]') as HTMLElement;
       const r = btn.getBoundingClientRect();
@@ -96,10 +151,39 @@ try {
       return !!el && (btn === el || btn.contains(el));
     }));
     await page.screenshot({ path: `/tmp/sanad-invoice-${width}.png`, fullPage: false });
+    await page.waitForFunction(() => {
+      const close = document.querySelector('[aria-label="إغلاق الفاتورة"]') as HTMLButtonElement | null;
+      return !!close && !close.disabled;
+    }, { timeout: 15000 });
+    await page.bringToFront();
     await page.keyboard.press('Escape');
     ok(`${width}px: Escape closes dialog`, await page.getByRole('dialog').count() === 0);
-    await page.close();
+    await context.close();
   }
+
+  // Forced fallback: iframe print unavailable -> same-page A4 print, still one button.
+  const context = await browser.newContext({ viewport: { width: 360, height: 800 } });
+  const page = await context.newPage();
+  await page.addInitScript(([t, tenant]) => {
+    localStorage.setItem('sanad_merchant_token', t as string);
+    localStorage.setItem('sanad_tenant_id', tenant as string);
+    localStorage.setItem('sanad.pushHint.hidden.v1', '1');
+    (window as any).print = () => {
+      if (window !== window.top) throw new Error('iframe print blocked');
+      (window as any).__printed = true;
+    };
+  }, [token, sellerId]);
+  await page.goto(base + '/?app=merchant&tab=links', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: /إصدار الفاتورة/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.waitFor();
+  await dialog.getByRole('button', { name: 'طباعة', exact: true }).click();
+  await page.waitForFunction(() => (window as any).__printed === true, { timeout: 15000 });
+  ok('fallback: one button still prints via same-page A4 host', await page.evaluate(() => {
+    const host = document.getElementById('sanad-inline-print');
+    return !!host && document.body.classList.contains('sanad-invoice-printing') && host.innerText.includes('PUR-2026-');
+  }));
+  await context.close();
   console.log(`\nPASS: ${passed} browser invoice checks`);
 } finally {
   await browser.close(); server.close(); await pglite.close();

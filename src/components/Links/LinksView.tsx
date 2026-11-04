@@ -9,12 +9,10 @@ import { api } from '../../lib/api.ts';
 import { MARKET_RATES_ARTICLES_URL, MARKET_RATES_SOURCE_NAME } from '../../lib/marketRates.ts';
 import { RateSourceLine } from '../Common/RateSourceLine.tsx';
 import { OrderInvoiceModal } from './OrderInvoiceModal.tsx';
+import { printOrderInvoiceDocument } from '../../lib/orderInvoiceDocument.ts';
 import {
   buildOrderInvoice,
   orderHasInvoice,
-  orderInvoiceHtml,
-  orderInvoiceMarkup,
-  ORDER_INVOICE_CSS,
 } from '../../lib/orderInvoice.ts';
 
 /**
@@ -362,7 +360,6 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
         outgoing: prev.outgoing.map((x) => x.id === updated.id ? updated : x),
       }));
       setInvoiceOrderId(o.id);
-      setPrintBlocked(false);
     } catch (err: any) {
       setError(err.message || 'تعذّر إصدار الفاتورة من السيرفر.');
     } finally {
@@ -388,50 +385,10 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
     });
   };
 
-  /** الطباعة لا تغلق المعاينة؛ يظل بديل الطباعة ظاهراً إذا منع المتصفح النافذة. */
-  const [printBlocked, setPrintBlocked] = useState(false);
-
-  const printInlineFallback = () => {
-    if (!invoiceFor) return;
+  /** زر طباعة واحد: مستند A4 معزول، ثم بديل داخل الصفحة تلقائياً عند الحاجة. */
+  const printOrderInvoice = async (o: any) => {
     setError('');
-    document.getElementById('sanad-inline-print')?.remove();
-    const host = document.createElement('div');
-    host.id = 'sanad-inline-print';
-    const style = document.createElement('style');
-    style.textContent = ORDER_INVOICE_CSS;
-    const content = document.createElement('div');
-    content.innerHTML = orderInvoiceMarkup(invoiceOf(invoiceFor));
-    host.append(style, content);
-    document.body.appendChild(host);
-    const cleanup = () => host.remove();
-    window.addEventListener('afterprint', cleanup, { once: true });
-    setTimeout(() => {
-      try {
-        window.print();
-        setPrintBlocked(false);
-      } catch {
-        setError('تعذّر فتح الطباعة. استخدم PDF ثم اطبع الملف من تطبيق الملفات.');
-      }
-      setTimeout(cleanup, 60_000);
-    }, 150);
-  };
-
-  const printOrderInvoice = (o: any) => {
-    setPrintBlocked(false);
-    setError('');
-    let w: Window | null = null;
-    try {
-      w = window.open('', '_blank');
-      if (!w) throw new Error('blocked');
-      const html = orderInvoiceHtml(invoiceOf(o));
-      w.document.open();
-      w.document.write(html.replace('</body>', '<script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script></body>'));
-      w.document.close();
-    } catch {
-      w?.close();
-      setPrintBlocked(true);
-      setError('المتصفح منع نافذة الطباعة. استخدم «اطبع من هذه الصفحة» داخل الفاتورة، أو نزّل PDF.');
-    }
+    return printOrderInvoiceDocument(invoiceOf(o));
   };
 
   const statusLabel = (st: string) =>
@@ -1124,8 +1081,6 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
           canSendToOwner={invoiceFor.side === 'in'}
           onClose={() => setInvoiceOrderId(null)}
           onPrint={() => printOrderInvoice(invoiceFor)}
-          printBlocked={printBlocked}
-          onPrintInline={printInlineFallback}
           onSendToBuyer={() => {
             if (!invoiceFor.buyerPhone) setNote('لا يوجد رقم للمشتري — اختر جهة الاتصال في واتساب وأرسل نص الفاتورة.');
           }}

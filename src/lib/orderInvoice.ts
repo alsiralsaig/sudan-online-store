@@ -162,8 +162,8 @@ export function orderInvoiceText(model: OrderInvoiceModel): string {
   ].filter((l) => l !== '').join('\n');
 }
 
-export function orderInvoiceWhatsAppUrl(model: OrderInvoiceModel): string {
-  const digits = normalizeWhatsAppPhone(model.buyerPhone);
+export function orderInvoiceWhatsAppUrl(model: OrderInvoiceModel, recipientPhone?: string): string {
+  const digits = normalizeWhatsAppPhone(recipientPhone ?? model.buyerPhone);
   return `https://wa.me/${digits || ''}?text=${encodeURIComponent(orderInvoiceText(model))}`;
 }
 

@@ -1652,6 +1652,7 @@ apiRouter.post('/supply-orders/:id/invoice-copy', merchantAuthMiddleware, async 
     pushBody: `نسخة فاتورة ${invoice.invoiceNumber} • طلب ${order.orderNumber} • ${Number(order.totalSdg).toLocaleString('en-US')} ج.س. افتح سند لقراءة البنود كاملة.`,
     linkTab: 'links', tenantId: me,
     dedupeKey: `invoicecopy_${order.id}_${invoice.invoiceNumber}_${me}_${order.status}`,
+    pushOnDuplicate: true,
     pushData: { orderId: order.id, invoiceNumber: invoice.invoiceNumber },
     telegram: false, ntfy: false,
   });

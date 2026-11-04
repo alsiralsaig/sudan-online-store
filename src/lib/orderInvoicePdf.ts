@@ -1,5 +1,6 @@
 /** PDF عربي A4 من نفس مستند المعاينة/الطباعة، مع تقسيم عند حدود الصفوف. */
-import { ORDER_INVOICE_CSS, orderInvoiceMarkup, type OrderInvoiceModel } from './orderInvoice';
+import type { OrderInvoiceModel } from './orderInvoice';
+import { assertInvoiceCanvasReadable, mountInvoiceFrame, type InvoiceFrame } from './orderInvoiceDocument';
 
 export interface PdfResult {
   ok: boolean;
@@ -7,40 +8,23 @@ export interface PdfResult {
   error?: string;
 }
 
-function mountInvoice(model: OrderInvoiceModel): { wrapper: HTMLDivElement; target: HTMLElement } {
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'position:fixed;top:-10000px;left:0;width:794px;background:#fff;z-index:-1;pointer-events:none';
-  wrapper.setAttribute('aria-hidden', 'true');
-  const target = document.createElement('div');
-  target.dir = 'rtl';
-  target.lang = 'ar';
-  target.style.cssText = 'width:794px;padding:24px;background:#fff;color:#0f172a';
-  // الإصلاح: المستند القديم كان ينسخ body وحده، فتضيع كل أنماط head في PDF.
-  const style = document.createElement('style');
-  style.textContent = ORDER_INVOICE_CSS;
-  const content = document.createElement('div');
-  content.innerHTML = orderInvoiceMarkup(model);
-  target.append(style, content);
-  wrapper.appendChild(target);
-  document.body.appendChild(wrapper);
-  return { wrapper, target };
-}
-
 export async function downloadOrderInvoicePdf(model: OrderInvoiceModel): Promise<PdfResult> {
   if (typeof document === 'undefined') return { ok: false, error: 'التوليد متاح في المتصفح فقط.' };
-  let wrapper: HTMLDivElement | null = null;
+  let frame: InvoiceFrame | null = null;
   try {
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
       import('html2canvas'),
       import('jspdf'),
     ]);
-    const mounted = mountInvoice(model);
-    wrapper = mounted.wrapper;
-    if (document.fonts?.ready) await document.fonts.ready;
-    const canvas = await html2canvas(mounted.target, {
+    // المستند يُركّب في iframe أبيض معزول: لا يرث الوضع الداكن ولا قواعد
+    // طباعة الإيصال الحراري التي كانت تُنتج صفحة سوداء/فارغة على الجوال.
+    frame = await mountInvoiceFrame(model, 'pdf');
+    const target = frame.target;
+    const canvas = await html2canvas(target, {
       backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false,
-      windowWidth: 1000, width: 794, scrollX: 0, scrollY: 0,
+      windowWidth: 794, width: 794, scrollX: 0, scrollY: 0,
     });
+    assertInvoiceCanvasReadable(canvas);
     const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
     pdf.setProperties({ title: `${model.title} ${model.invoiceNumber}`, subject: model.orderNumber, creator: 'Sanad' });
     const margin = 8;
@@ -49,10 +33,10 @@ export async function downloadOrderInvoicePdf(model: OrderInvoiceModel): Promise
     const imgW = pageW - margin * 2;
     const pxPerMm = canvas.width / imgW;
     const pagePx = Math.floor((pageH - margin * 2) * pxPerMm);
-    const targetTop = mounted.target.getBoundingClientRect().top;
-    const scaleY = canvas.height / mounted.target.getBoundingClientRect().height;
+    const targetTop = target.getBoundingClientRect().top;
+    const scaleY = canvas.height / target.getBoundingClientRect().height;
     // لا نقطع صف بند أو مربع توقيع بين صفحتين عندما تتوفر مساحة كافية في الصفحة التالية.
-    const breaks = Array.from(mounted.target.querySelectorAll('tbody tr,.totals,.sign,.note,.foot'))
+    const breaks = Array.from(target.querySelectorAll('tbody tr,.totals,.sign,.note,.foot'))
       .map((el) => Math.ceil((el.getBoundingClientRect().bottom - targetTop) * scaleY))
       .filter((n) => n > 0 && n < canvas.height)
       .sort((a, b) => a - b);
@@ -75,7 +59,7 @@ export async function downloadOrderInvoicePdf(model: OrderInvoiceModel): Promise
       offset = end;
       page += 1;
     }
-    const safe = String(model.invoiceNumber || model.orderNumber || 'invoice').replace(/[^\w\u0600-\u06FF-]/g, '_');
+    const safe = String(model.invoiceNumber || model.orderNumber || 'invoice').replace(/[^\w-]/g, '_');
     const fileName = `Sanad-${safe}.pdf`;
     // Explicit anchored blob download with an ASCII filename: some mobile
     // WebViews drop non-ASCII download names and save the file as "download".
@@ -91,8 +75,8 @@ export async function downloadOrderInvoicePdf(model: OrderInvoiceModel): Promise
     return { ok: true, fileName };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : '';
-    return { ok: false, error: message ? `تعذّر توليد PDF: ${message}` : 'تعذّر توليد PDF. جرّب الطباعة من الصفحة.' };
+    return { ok: false, error: message ? `تعذّر توليد PDF: ${message}` : 'تعذّر توليد PDF. جرّب زر الطباعة.' };
   } finally {
-    wrapper?.remove();
+    frame?.remove();
   }
 }

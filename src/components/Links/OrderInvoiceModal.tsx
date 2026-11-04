@@ -13,17 +13,15 @@ interface Props {
   onClose: () => void;
   onSendToStoreOwner: () => Promise<void> | void;
   onSendToBuyer: () => void;
-  onPrint: () => void;
-  onPrintInline: () => void;
-  printBlocked: boolean;
+  onPrint: () => Promise<{ ok: boolean; error?: string }>;
   canSendToOwner: boolean;
 }
 
 /** نافذة واحدة: المستند أولاً، ثم إجراءاته. لا تغلق نفسها عند الطباعة. */
 export const OrderInvoiceModal: React.FC<Props> = ({
-  invoice, onClose, onPrint, onPrintInline, printBlocked, onSendToBuyer, onSendToStoreOwner, canSendToOwner,
+  invoice, onClose, onPrint, onSendToBuyer, onSendToStoreOwner, canSendToOwner,
 }) => {
-  const [busy, setBusy] = useState<'pdf' | 'owner' | null>(null);
+  const [busy, setBusy] = useState<'pdf' | 'owner' | 'print' | null>(null);
   const [done, setDone] = useState('');
   const [err, setErr] = useState('');
   const [manualCopy, setManualCopy] = useState(false);
@@ -35,6 +33,7 @@ export const OrderInvoiceModal: React.FC<Props> = ({
   busyRef.current = busy;
   onCloseRef.current = onClose;
   const waUrl = useMemo(() => orderInvoiceWhatsAppUrl(invoice), [invoice]);
+  const ownerWaUrl = useMemo(() => orderInvoiceWhatsAppUrl(invoice, invoice.sellerPhone), [invoice]);
   const text = useMemo(() => orderInvoiceText(invoice), [invoice]);
   const foreign = invoiceForeignTotal(invoice);
 
@@ -80,6 +79,16 @@ export const OrderInvoiceModal: React.FC<Props> = ({
     }
   };
 
+  const doPrint = async () => {
+    setBusy('print'); setErr(''); setDone('');
+    try {
+      const res = await onPrint();
+      if (!res.ok) setErr(res.error || 'تعذّر فتح الطباعة. نزّل PDF ثم اطبعه من تطبيق الملفات.');
+    } catch {
+      setErr('تعذّر فتح الطباعة. نزّل PDF ثم اطبعه من تطبيق الملفات.');
+    } finally { setBusy(null); }
+  };
+
   const doPdf = async () => {
     setBusy('pdf'); setErr(''); setDone('');
     try {
@@ -87,17 +96,22 @@ export const OrderInvoiceModal: React.FC<Props> = ({
       if (!res.ok) setErr(res.error || 'تعذّر توليد PDF');
       else setDone(`تم تنزيل ${res.fileName}`);
     } catch {
-      setErr('تعذّر توليد PDF. جرّب «اطبع من هذه الصفحة».');
+      setErr('تعذّر توليد PDF. جرّب زر الطباعة.');
     } finally { setBusy(null); }
   };
 
+  /** نسخة المالك: نسخ النص + حفظ إشعار كامل + فتح واتساب المالك فعلياً. */
   const doOwner = async () => {
     setBusy('owner'); setErr(''); setDone('');
+    // لا نمنع انتقال الرابط: واتساب يفتح مباشرة بينما يكتمل النسخ/الحفظ في الخلفية.
+    const copy = navigator.clipboard?.writeText(text).catch(() => { setManualCopy(true); });
     try {
-      await onSendToStoreOwner();
-      setDone('تم حفظ نسخة كاملة في إشعارات صاحب المتجر، ومحاولة إرسال تنبيه للهاتف.');
+      await Promise.all([copy, Promise.resolve(onSendToStoreOwner())]);
+      setDone(invoice.sellerPhone
+        ? 'تم نسخ النص وحفظ نسخة في الإشعارات، وفتح واتساب صاحب المتجر لإرسالها.'
+        : 'تم نسخ النص وحفظ نسخة في الإشعارات. اختر جهة اتصال صاحب المتجر في واتساب ثم أرسل النص.');
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'تعذّر إرسال النسخة لصاحب المتجر');
+      setErr(e instanceof Error ? e.message : 'تعذّر حفظ نسخة صاحب المتجر');
     } finally { setBusy(null); }
   };
 
@@ -198,17 +212,13 @@ export const OrderInvoiceModal: React.FC<Props> = ({
         </div>
 
         <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-2 space-y-1.5 max-h-[45dvh] overflow-y-auto">
-          {printBlocked && <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">المتصفح منع نافذة الطباعة. استخدم «اطبع من هذه الصفحة» أدناه.</p>}
           <div className="grid grid-cols-2 gap-1.5">
-            <button onClick={() => { setDone(''); setErr(''); onPrint(); }} className={`${action} bg-white border border-slate-300 text-slate-800`}><Printer className="w-4 h-4" /> طباعة</button>
+            <button onClick={doPrint} disabled={!!busy} className={`${action} bg-white border border-slate-300 text-slate-800`}>{busy === 'print' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} طباعة</button>
             <button onClick={doPdf} disabled={!!busy} className={`${action} bg-sky-700 text-white`}>{busy === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} PDF</button>
             <a href={waUrl} target="_blank" rel="noopener noreferrer" onClick={() => { setDone(''); setErr(''); onSendToBuyer(); if (!invoice.buyerPhone) setDone('لا يوجد رقم للمشتري — اختر جهة الاتصال في واتساب ثم أرسل النص.'); }} className={`${action} bg-emerald-600 text-white`}><MessageCircle className="w-4 h-4" /> إرسال للمشتري</a>
-            <button onClick={doOwner} disabled={!canSendToOwner || !!busy} title={canSendToOwner ? 'حفظ نسخة كاملة في إشعارات صاحب المتجر وتنبيه هاتفه' : 'متاح للمورد فقط'} className={`${action} bg-slate-900 text-white`}>{busy === 'owner' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Store className="w-4 h-4" />} نسخة لصاحب المتجر</button>
+            <a href={canSendToOwner ? ownerWaUrl : undefined} target={canSendToOwner ? '_blank' : undefined} rel="noopener noreferrer" onClick={canSendToOwner ? () => { void doOwner(); } : (e) => e.preventDefault()} aria-disabled={!canSendToOwner} title={canSendToOwner ? 'نسخ نص الفاتورة وحفظ نسخة في الإشعارات وفتح واتساب صاحب المتجر' : 'متاح للمورد فقط'} className={`${action} bg-slate-900 text-white ${!canSendToOwner ? 'opacity-50 pointer-events-none' : ''}`}>{busy === 'owner' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Store className="w-4 h-4" />} نسخة لصاحب المتجر</a>
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            <button onClick={onPrintInline} className={`${action} bg-white border border-slate-300 text-slate-700`}><Printer className="w-3.5 h-3.5" /> اطبع من هذه الصفحة</button>
-            <button onClick={copyText} className={`${action} bg-white border border-slate-300 text-slate-700`}><Copy className="w-3.5 h-3.5" /> نسخ نص الفاتورة</button>
-          </div>
+          <button onClick={copyText} className={`${action} w-full bg-white border border-slate-300 text-slate-700`}><Copy className="w-3.5 h-3.5" /> نسخ نص الفاتورة</button>
           <p className="text-center text-[9.5px] text-slate-500 leading-relaxed">كل الخيارات تستخدم نفس المستند: <span dir="ltr">{invoice.invoiceNumber}</span> · {money(invoice.totalSdg)} ج.س</p>
         </div>
       </div>

@@ -404,15 +404,22 @@ textarea::placeholder {
    مستند الفاتورة وحده بلا واجهة التطبيق حوله.
    ========================================================================== */
 @media print {
-  body > *:not(#sanad-inline-print) { display: none !important; }
-  #sanad-inline-print {
+  /* وضع فاتورة A4: يلغي قواعد الإيصال الحراري (80mm + إخفاء كل شيء). */
+  body.sanad-invoice-printing > *:not(#sanad-inline-print) { display: none !important; }
+  body.sanad-invoice-printing #sanad-inline-print,
+  body.sanad-invoice-printing #sanad-inline-print * { visibility: visible !important; }
+  body.sanad-invoice-printing #sanad-inline-print {
     display: block !important;
-    position: static !important;
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
     background: #fff !important;
-    color: #000 !important;
+    color: #0f172a !important;
     padding: 0 !important;
     margin: 0 !important;
+    z-index: 2147483647 !important;
   }
+  body.sanad-invoice-printing { background: #fff !important; }
   #sanad-inline-print table { width: 100% !important; border-collapse: collapse !important; }
   #sanad-inline-print th,
   #sanad-inline-print td { border: 1px solid #cbd5e1 !important; padding: 4px 5px !important; }

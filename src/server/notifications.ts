@@ -68,6 +68,8 @@ interface NotifyInput {
   pushData?: Record<string, any>;
   /** Skip creating a duplicate when this key was already used. */
   dedupeKey?: string;
+  /** Re-attempt phone push even when the in-app notification already exists. */
+  pushOnDuplicate?: boolean;
   /** Set false when the caller delivers to Telegram itself (avoids doubles). */
   telegram?: boolean;
   /**
@@ -81,7 +83,14 @@ interface NotifyInput {
 export async function notify(input: NotifyInput): Promise<AppNotification> {
   if (input.dedupeKey) {
     const existing = db.getNotificationByDedupeKey(input.dedupeKey);
-    if (existing) return existing;
+    if (existing) {
+      if (input.pushOnDuplicate) {
+        await sendPush(input, existing).catch((err) => {
+          console.warn('[push] duplicate re-send failed:', err?.message || err);
+        });
+      }
+      return existing;
+    }
   }
   const notification = db.createNotification({
     dedupeKey: input.dedupeKey,
