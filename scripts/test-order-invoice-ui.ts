@@ -212,6 +212,37 @@ try {
     const host = document.getElementById('sanad-inline-print');
     return !!host && document.body.classList.contains('sanad-invoice-printing') && host.innerText.includes('PUR-2026-');
   }));
+  // انحدار البقعة الخضراء: خلفية html القادمة من شاشة الإقلاع (#052e1a) كانت
+  // تُطبع في النصف الفارغ من ورقة A4. نفحص البكسلات فعلياً في وضع الطباعة.
+  await androidPage.emulateMedia({ media: 'print' });
+  const printState = await androidPage.evaluate(() => ({
+    htmlBg: getComputedStyle(document.documentElement).backgroundColor,
+    bodyBg: getComputedStyle(document.body).backgroundColor,
+    bootHidden: !document.getElementById('sanad-boot') || getComputedStyle(document.getElementById('sanad-boot')!).display === 'none',
+    invoiceVisible: getComputedStyle(document.querySelector('#sanad-inline-print .sanad-invoice-document')!).visibility === 'visible',
+  }));
+  ok('android: print canvas background is white (not the dark-green splash)', printState.htmlBg === 'rgb(255, 255, 255)' && printState.bodyBg === 'rgb(255, 255, 255)');
+  ok('android: splash hidden and invoice visible in print', printState.bootHidden && printState.invoiceVisible);
+  const printShot = await androidPage.screenshot({ fullPage: true });
+  const shotStats = await androidPage.evaluate(async (b64: string) => {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = () => reject(new Error('img')); img.src = 'data:image/png;base64,' + b64; });
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const ctx = c.getContext('2d')!; ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let darkGreen = 0, samples = 0;
+    for (let i = 0; i < d.length; i += 16) {
+      samples++;
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      // الأخضر الداكن לשון splash: القناة الخضراء هي المهيمنة (مثل #052e1a).
+      // حبر الفاتورة الكحلي #0f172a قناته الزرقاء أعلى — لا يُحسب.
+      if (g < 110 && g > r + 12 && g > b + 8) darkGreen++;
+    }
+    return darkGreen / samples;
+  }, printShot.toString('base64'));
+  fs.writeFileSync('/tmp/sanad-android-print-preview.png', printShot);
+  ok('android: printed page has no dark-green area (pixel check)', shotStats < 0.005);
+  await androidPage.emulateMedia({ media: 'screen' });
   await androidDialog.getByRole('button', { name: 'PDF', exact: true }).click();
   await androidPage.waitForFunction(() => typeof (window as any).__openedUrl === 'string', { timeout: 30000 });
   ok('android: PDF opens HTTPS file instead of blob', await androidPage.evaluate(() => (window as any).__openedUrl.startsWith('https://')));

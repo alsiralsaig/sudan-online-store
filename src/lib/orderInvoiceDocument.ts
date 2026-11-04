@@ -88,9 +88,13 @@ function printAndroidInvoiceDocument(model: OrderInvoiceModel): { ok: boolean; m
   host.append(style, content);
   document.body.appendChild(host);
   document.body.classList.add('sanad-invoice-printing');
+  // تبييض خلفية html نفسها (الخضراء الداكنة من شاشة الإقلاع) وإلا طُبعت
+  // بقية ورقة A4 فارغةً باللون الأخضر الداكن.
+  document.documentElement.classList.add('sanad-invoice-printing');
   const cleanup = () => {
     host.remove();
     document.body.classList.remove('sanad-invoice-printing');
+    document.documentElement.classList.remove('sanad-invoice-printing');
   };
   window.addEventListener('afterprint', cleanup, { once: true });
   try {
@@ -116,9 +120,11 @@ function printInlineInvoiceDocument(model: OrderInvoiceModel, cause: unknown): {
   host.append(style, content);
   document.body.appendChild(host);
   document.body.classList.add('sanad-invoice-printing');
+  document.documentElement.classList.add('sanad-invoice-printing');
   const cleanup = () => {
     host.remove();
     document.body.classList.remove('sanad-invoice-printing');
+    document.documentElement.classList.remove('sanad-invoice-printing');
   };
   window.addEventListener('afterprint', cleanup, { once: true });
   try {

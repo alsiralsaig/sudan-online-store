@@ -405,6 +405,15 @@ textarea::placeholder {
    ========================================================================== */
 @media print {
   /* وضع فاتورة A4: يلغي قواعد الإيصال الحراري (80mm + إخفاء كل شيء). */
+  /* خلفية الصفحة نفسها (html) خضراء داكنة من شاشة الإقلاع في index.html؛
+     بدون تبييضها يظهر النصف الفارغ من ورقة A4 أخضر/أسود في الطباعة وPDF. */
+  html.sanad-invoice-printing,
+  html.sanad-invoice-printing body {
+    background: #fff !important;
+    background-image: none !important;
+    color-scheme: light !important;
+  }
+  html.sanad-invoice-printing #sanad-boot { display: none !important; }
   body.sanad-invoice-printing > *:not(#sanad-inline-print) { display: none !important; }
   body.sanad-invoice-printing #sanad-inline-print,
   body.sanad-invoice-printing #sanad-inline-print * { visibility: visible !important; }
