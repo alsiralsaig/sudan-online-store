@@ -36,6 +36,7 @@ import { discoverChats, sendTelegram, telegramStatus, telegramConfigured } from 
 import { ntfyStatus, sendNtfy } from './ntfy.ts';
 import { newId, newCode } from './ids.ts';
 import type { SupplyOrder, SupplyOrderItem } from '../types/index.ts';
+import { buildOrderInvoice, orderInvoiceText, orderHasInvoice } from '../lib/orderInvoice.ts';
 import {
   saveMedia, getMedia, deleteMedia, buildMediaResponse, prepareForStreaming, HttpError, MAX_RAW_BYTES,
   MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
@@ -1319,23 +1320,38 @@ function supplyOrderNumber(): string {
 }
 
 /**
- * رقم فاتورة المشتريات عند التسليم — **يتولد تلقائياً وبتسلسل** لكل متجر:
- *   PUR-<سنة>-<تسلسل 5 خانات>  مثال: PUR-2026-00007
- * كان `newCode('PO')` يعطي كوداً عشوائياً لا يشبه أرقام فواتير النظام ولا
- * يتسلسل، فيصعب على التاجر مطابقته مع المورد. التسلسل يُحسب من عدد فواتير
- * المشتريات السابقة لنفس المتجر في السنة الحالية.
+ * رقم سند موحّد لفاتورة التوريد والمشتريات. يُحجز مرة واحدة لكل طلب، ولا يتغير
+ * بين القبول والتسليم. العداد ذرّي في Postgres حتى مع تعدد نسخ Vercel.
  */
-function purchaseInvoiceNumber(tenantId: string): string {
+async function reservePurchaseInvoiceNumber(tenantId: string): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `PUR-${year}-`;
-  const existing = (db.getSchema().purchases || []).filter(
-    (p: any) => p.tenantId === tenantId && String(p.invoiceNumber || '').startsWith(prefix),
-  );
-  let next = existing.length + 1;
-  // ضمان عدم التكرار لو فيه أرقام محذوفة/مكررة
-  const used = new Set(existing.map((p: any) => p.invoiceNumber));
-  while (used.has(`${prefix}${String(next).padStart(5, '0')}`)) next += 1;
+  const used = [
+    ...(db.getSchema().purchases || []).filter((p: any) => p.tenantId === tenantId).map((p: any) => p.invoiceNumber),
+    ...(db.getSchema().supplyOrders || []).filter((o) => o.buyerTenantId === tenantId).map((o) => o.invoiceNumber),
+  ];
+  const max = used.reduce((n, value) => {
+    const m = String(value || '').match(new RegExp(`^${prefix}(\\d+)$`));
+    return m ? Math.max(n, Number(m[1])) : n;
+  }, 0);
+  const next = await db.nextDocumentSequence(`purchase:${tenantId}:${year}`, max + 1);
   return `${prefix}${String(next).padStart(5, '0')}`;
+}
+
+async function ensureSupplyInvoiceNumber(order: SupplyOrder): Promise<void> {
+  if (order.invoiceNumber) return;
+  order.invoiceNumber = await reservePurchaseInvoiceNumber(order.buyerTenantId);
+  order.invoiceIssuedAt = new Date().toISOString();
+}
+
+function supplyInvoiceContext(order: SupplyOrder) {
+  const seller = db.getTenant(order.sellerTenantId);
+  return {
+    sellerStoreName: seller?.tradeName || seller?.name || order.sellerName,
+    sellerPhone: seller?.phone || order.sellerPhone,
+    sellerAddress: seller?.address || order.sellerAddress,
+    stampText: typeof seller?.settings?.receiptFooter === 'string' ? seller.settings.receiptFooter.trim() : undefined,
+  };
 }
 
 /** قائمة طلباتي: الواردة (أنا البائع) والصادرة (أنا المشتري). */
@@ -1463,6 +1479,8 @@ apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
     buyerPhone: me.phone,
     sellerTenantId: seller.id,
     sellerName: seller.tradeName || seller.name,
+    sellerPhone: seller.phone,
+    sellerAddress: seller.address,
     sellerSegment: ((seller as any).accountSegment || 'retailer') as any,
     items: clean,
     totalSdg: clean.reduce((sum, it) => sum + it.totalSdg, 0),
@@ -1498,208 +1516,147 @@ apiRouter.post('/supply-orders', merchantAuthMiddleware, (req, res) => {
   res.json({ success: true, order, message: `تم إرسال الطلب ${order.orderNumber} إلى ${order.sellerName}.` });
 });
 
-/** رد المورد: قبول / رفض / تسليم (مع ملاحظة). */
-apiRouter.patch('/supply-orders/:id', merchantAuthMiddleware, (req, res) => {
+/** رد المورد: قبول / رفض / تسليم. الانتقالات النهائية لا تُعكس ولا تكرر المخزون. */
+apiRouter.patch('/supply-orders/:id', merchantAuthMiddleware, async (req, res) => {
   const me = (req as AuthenticatedRequest).tenantId;
   const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'الطلب غير موجود.' });
+  const isSeller = order.sellerTenantId === me;
+  const isBuyer = order.buyerTenantId === me;
+  if (!isSeller && !isBuyer) return res.status(403).json({ error: 'NOT_ALLOWED', message: 'هذا الطلب لا يخصك.' });
 
   const status = String(req.body?.status || '');
   const allowed = ['accepted', 'rejected', 'fulfilled', 'cancelled'];
-  if (!allowed.includes(status)) {
-    return res.status(400).json({ error: 'BAD_STATUS', message: 'حالة غير معروفة.' });
-  }
-  /* البائع يقرر القبول/الرفض/التسليم، والمشتري يقدر يلغي طلبه فقط */
-  const isSeller = order.sellerTenantId === me;
-  const isBuyer = order.buyerTenantId === me;
-  if (!isSeller && !isBuyer) {
-    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'هذا الطلب لا يخصك.' });
-  }
+  if (!allowed.includes(status)) return res.status(400).json({ error: 'BAD_STATUS', message: 'حالة غير معروفة.' });
   if (isBuyer && !isSeller && status !== 'cancelled') {
     return res.status(403).json({ error: 'NOT_ALLOWED', message: 'المشتري يقدر يلغي الطلب فقط.' });
   }
+  if (status === order.status) return res.json({ success: true, order, unchanged: true });
+  const transitions: Record<SupplyOrder['status'], string[]> = {
+    pending: ['accepted', 'rejected', 'cancelled'],
+    accepted: ['fulfilled', 'cancelled'],
+    fulfilled: [], rejected: [], cancelled: [],
+  };
+  if (!transitions[order.status].includes(status)) {
+    return res.status(409).json({ error: 'INVALID_TRANSITION', message: 'لا يمكن تغيير حالة الطلب بعد اكتماله أو إلغائه.' });
+  }
+  if (isBuyer && !isSeller && !['pending', 'accepted'].includes(order.status)) {
+    return res.status(409).json({ error: 'INVALID_TRANSITION', message: 'لا يمكن إلغاء الطلب في حالته الحالية.' });
+  }
+  if (typeof req.body?.sellerNote === 'string' && isSeller) order.sellerNote = req.body.sellerNote.slice(0, 400);
+  // لا نقبل رقم فاتورة يكتبه العميل؛ الرقم يصدره السيرفر فقط.
 
-  order.status = status as SupplyOrder['status'];
-  if (typeof req.body?.sellerNote === 'string') order.sellerNote = req.body.sellerNote.slice(0, 400);
-  if (typeof req.body?.sellerInvoiceNumber === 'string') order.sellerInvoiceNumber = req.body.sellerInvoiceNumber.slice(0, 60);
-  order.updatedAt = new Date().toISOString();
-
-  /**
-   * عند التسليم: تُنشأ فاتورة مشتريات عند المشتري + تدخل الكميات مخزونه تلقائياً.
-   * بلا هذا كان «تم التسليم» مجرد كلمة بلا أثر محاسبي أو مخزني.
-   */
-  if (status === 'fulfilled' && !order.purchaseId) {
+  if (status === 'fulfilled') {
     const buyer = db.getTenant(order.buyerTenantId);
     const branch = db.getSchema().branches.find((b) => b.tenantId === order.buyerTenantId && b.isActive);
-    if (buyer && branch) {
+    if (!buyer || !branch) {
+      return res.status(409).json({ error: 'BUYER_BRANCH_REQUIRED', message: 'لا يوجد فرع نشط للمشتري. فعّل فرعاً قبل تأكيد التسليم حتى يُسجّل المخزون والفاتورة.' });
+    }
+    await ensureSupplyInvoiceNumber(order);
+    if (!order.purchaseId) {
       const rate = Number(order.paymentExchangeRate) || 1;
-
-      /* الأصناف عند المشتري: ربط موجود أو إنشاء صنف جديد بنفس الاسم */
       for (const line of order.items) {
         let myProduct = db.getSchema().products.find(
           (p) => p.tenantId === buyer.id && (p.id === line.productId || p.name === line.productName),
         );
         if (!myProduct) {
           myProduct = {
-            id: newId('prod'),
-            tenantId: buyer.id,
-            name: line.productName,
-            sku: newCode('SKU'),
-            barcode: newCode('BC'),
-            category: 'موردون',
-            unit: line.unit || 'حبة',
-            costPriceSdg: line.unitPriceSdg,
-            sellingPriceSdg: Math.round(line.unitPriceSdg * 1.15),
-            currentStock: 0,
-            minStockLevel: 0,
-            isActive: true,
-            createdAt: new Date().toISOString(),
+            id: newId('prod'), tenantId: buyer.id, name: line.productName,
+            sku: newCode('SKU'), barcode: newCode('BC'), category: 'موردون',
+            unit: line.unit || 'حبة', costPriceSdg: line.unitPriceSdg,
+            sellingPriceSdg: Math.round(line.unitPriceSdg * 1.15), currentStock: 0,
+            minStockLevel: 0, isActive: true, createdAt: new Date().toISOString(),
           } as any;
           db.getSchema().products.push(myProduct);
         }
-
         db.adjustStock({
-          tenantId: buyer.id,
-          branchId: branch.id,
-          productId: myProduct.id,
-          delta: line.quantity,
-          type: 'purchase_receive',
-          reason: `توريد ${order.orderNumber} من ${order.sellerName}`,
-          actorName: 'طلب توريد',
+          tenantId: buyer.id, branchId: branch.id, productId: myProduct.id,
+          delta: line.quantity, type: 'purchase_receive',
+          reason: `توريد ${order.orderNumber} من ${order.sellerName}`, actorName: 'طلب توريد',
         });
       }
-
-      // رقم فاتورة الشراء: تسلسلي تلقائي — أو رقم فاتورة المورد لو أدخله
-      const invoiceNumber = order.sellerInvoiceNumber || purchaseInvoiceNumber(buyer.id);
       const purchase = {
-        id: newId('purch'),
-        tenantId: buyer.id,
-        branchId: branch.id,
-        branchName: branch.name,
-        supplierName: order.sellerName,
-        invoiceNumber: order.sellerInvoiceNumber || invoiceNumber,
-        currency: order.paymentCurrency || 'SDG',
-        exchangeRate: rate,
+        id: newId('purch'), tenantId: buyer.id, branchId: branch.id, branchName: branch.name,
+        supplierName: order.sellerName, invoiceNumber: order.invoiceNumber,
+        supplyOrderId: order.id, supplyOrderNumber: order.orderNumber,
+        currency: order.paymentCurrency || 'SDG', exchangeRate: rate,
         items: order.items.map((it) => ({
-          productId: it.productId,
-          productName: it.productName,
-          quantity: it.quantity,
-          costInCurrency: rate > 1 ? it.unitPriceSdg / rate : it.unitPriceSdg,
-          currency: order.paymentCurrency || 'SDG',
-          exchangeRate: rate,
-          costSdg: it.unitPriceSdg,
+          productId: it.productId, productName: it.productName, quantity: it.quantity,
+          costInCurrency: rate > 0 ? it.unitPriceSdg / rate : it.unitPriceSdg,
+          currency: order.paymentCurrency || 'SDG', exchangeRate: rate, costSdg: it.unitPriceSdg,
         })),
         totalCostSdg: order.totalSdg,
-        paymentStatus:
-          order.paymentMethod === 'credit' ? 'credit'
-            : order.paymentMethod === 'cash' || order.paymentMethod === 'bankak' || order.paymentMethod === 'bank_transfer'
-              ? 'paid'
-              : 'credit',
-        notes: `طلب توريد ${order.orderNumber} — الدفع: ${
-          order.paymentMethod === 'cash' ? 'كاش'
-            : order.paymentMethod === 'bankak' ? 'بنكك'
-            : order.paymentMethod === 'bank_transfer' ? 'حوالة بنكية'
-            : 'آجل'
-        }${order.note ? ` • ملاحظة: ${order.note}` : ''}`,
-        createdBy: 'طلب توريد',
-        createdAt: new Date().toISOString(),
+        paymentStatus: order.paymentMethod === 'credit' ? 'credit' : 'paid',
+        notes: `طلب توريد ${order.orderNumber}${order.sellerInvoiceNumber ? ` • مرجع المورد ${order.sellerInvoiceNumber}` : ''}${order.note ? ` • ملاحظة: ${order.note}` : ''}`,
+        createdBy: 'طلب توريد', createdAt: new Date().toISOString(),
       } as any;
-
       db.getSchema().purchases.unshift(purchase);
       order.purchaseId = purchase.id;
-      order.invoiceNumber = purchase.invoiceNumber;
       order.deliveredAt = new Date().toISOString();
     }
   }
-
+  order.status = status as SupplyOrder['status'];
+  order.updatedAt = new Date().toISOString();
   db.commit();
-
   db.logAudit({
-    tenantId: me,
-    actorId: 'merchant',
-    actorName: me,
-    action: 'SUPPLY_ORDER_STATUS',
-    entity: 'SupplyOrder',
-    entityId: order.id,
+    tenantId: me, actorId: (req as AuthenticatedRequest).actorId,
+    actorName: (req as AuthenticatedRequest).actorName,
+    action: 'SUPPLY_ORDER_STATUS', entity: 'SupplyOrder', entityId: order.id,
     details: `الطلب ${order.orderNumber} أصبح: ${status}`,
   });
 
-  /*
-   * إبلاغ الطرف الآخر — كان تغيير الحالة صامتاً: المشتري لا يعرف أن طلبه
-   * قُبل، ولا المورد يعرف أن التاجر ألغى الطلب. الآن كل تغيير يصل كإشعار
-   * داخل التطبيق (+Push) لمن يهمه.
-   */
   const otherTenantId = isSeller ? order.buyerTenantId : order.sellerTenantId;
-  const statusAr =
-    status === 'accepted' ? 'مقبول — جارٍ التحضير'
-      : status === 'rejected' ? 'مرفوض'
-      : status === 'fulfilled' ? 'تم التسليم'
-      : 'ملغي';
-  notifyUser({
-    app: 'merchant',
-    kind: 'order_status',
+  const statusAr = status === 'accepted' ? 'مقبول — جارٍ التحضير' : status === 'rejected' ? 'مرفوض' : status === 'fulfilled' ? 'تم التسليم' : 'ملغي';
+  // الانتظار مقصود: على Vercel يجب حفظ الإشعار ومحاولة Push قبل تجميد الدالة.
+  await notifyUser({
+    app: 'merchant', kind: 'order_status',
     title: `الطلب ${order.orderNumber}: ${statusAr}`,
-    body: `${isSeller ? 'المورد' : 'المشتري'} حدّث حالة طلب التوريد بقيمة ${Number(order.totalSdg).toLocaleString('en-US')} ج.س${
-      order.invoiceNumber ? ` • الفاتورة ${order.invoiceNumber}` : ''
-    }`,
-    linkTab: 'links',
-    tenantId: otherTenantId,
-    dedupeKey: `supply_${order.id}_${status}`,
-  }).catch(() => {});
-
-  res.json({
-    success: true,
-    order,
-    invoice: order.invoiceNumber ? { invoiceNumber: order.invoiceNumber, purchaseId: order.purchaseId } : null,
+    body: `${isSeller ? 'المورد' : 'المشتري'} حدّث حالة طلب التوريد بقيمة ${Number(order.totalSdg).toLocaleString('en-US')} ج.س${order.invoiceNumber ? ` • الفاتورة ${order.invoiceNumber}` : ''}`,
+    linkTab: 'links', tenantId: otherTenantId,
+    dedupeKey: `supply_${order.id}_${status}_${order.updatedAt}`,
+    telegram: false, ntfy: false,
   });
+  res.json({ success: true, order, invoice: order.invoiceNumber ? { invoiceNumber: order.invoiceNumber, purchaseId: order.purchaseId } : null });
 });
 
-/**
- * «نسخة لصاحب المتجر» — إرسال نسخة الفاتورة إلى صاحب متجر المورد.
- * ------------------------------------------------------------------
- * المورد يسلّم الفاتورة للتاجر، لكن صاحب المتجر/المحاسب يحتاج نسخة أيضاً.
- * الإرسال هنا = إشعار فوري داخل التطبيق (+Push) لمالك المتجر، مع كل تفاصيل
- * الفاتورة في نص الإشعار، حتى لا يعتمد على لقطة شاشة من المندوب.
- */
-apiRouter.post('/supply-orders/:id/invoice-copy', merchantAuthMiddleware, (req, res) => {
-  const me = db.getTenant((req as AuthenticatedRequest).tenantId);
-  if (!me) return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'المتجر غير موجود.' });
+/** إصدار/فتح فاتورة الطلب: عملية idempotent تعيد نفس الرقم ولا تنشئ مخزوناً. */
+apiRouter.post('/supply-orders/:id/invoice', merchantAuthMiddleware, async (req, res) => {
+  const me = (req as AuthenticatedRequest).tenantId;
   const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'الطلب غير موجود.' });
-  if (order.sellerTenantId !== me.id && order.buyerTenantId !== me.id) {
+  if (order.sellerTenantId !== me && order.buyerTenantId !== me) {
     return res.status(403).json({ error: 'NOT_ALLOWED', message: 'هذا الطلب لا يخصك.' });
   }
+  if (!orderHasInvoice(order)) return res.status(409).json({ error: 'INVOICE_NOT_AVAILABLE', message: 'تتاح الفاتورة بعد قبول الطلب أو تسليمه.' });
+  const existed = !!order.invoiceNumber;
+  await ensureSupplyInvoiceNumber(order);
+  db.commit();
+  res.json({ success: true, order, invoiceNumber: order.invoiceNumber, alreadyIssued: existed });
+});
 
-  const invoiceNumber = order.sellerInvoiceNumber || order.invoiceNumber || order.orderNumber;
-  const total = Number(order.totalSdg) || 0;
-  const currency = order.paymentCurrency || 'SDG';
-  const rate = Number(order.paymentExchangeRate) || 1;
-  const lines = (order.items || [])
-    .map((it) => `${it.productName} × ${it.quantity}`)
-    .join(' · ');
-
-  const body =
-    `فاتورة ${invoiceNumber} • طلب ${order.orderNumber} • ${total.toLocaleString('en-US')} ج.س` +
-    (currency !== 'SDG' && rate > 1
-      ? ` (${currency}: ${(total / rate).toLocaleString('en-US', { maximumFractionDigits: 2 })})`
-      : '') +
-    `\n${lines}` +
-    `\nالمشتري: ${order.buyerName}${order.buyerPhone ? ` — ${order.buyerPhone}` : ''}` +
-    (typeof req.body?.text === 'string' && req.body.text.trim()
-      ? `\n\n${String(req.body.text).slice(0, 1200)}`
-      : '');
-
-  notifyUser({
-    app: 'merchant',
-    kind: 'invoice_copy',
-    title: `نسخة فاتورة — ${invoiceNumber}`,
-    body,
-    linkTab: 'links',
-    tenantId: me.id,
-    dedupeKey: `invoicecopy_${order.id}_${Date.now()}`,
-  }).catch(() => {});
-
-  res.json({ success: true, invoiceNumber, notified: true });
+/** نسخة كاملة لصاحب المتجر الحالي، يولّدها السيرفر من الطلب ولا يثق بنص العميل. */
+apiRouter.post('/supply-orders/:id/invoice-copy', merchantAuthMiddleware, async (req, res) => {
+  const me = (req as AuthenticatedRequest).tenantId;
+  const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'الطلب غير موجود.' });
+  if (order.sellerTenantId !== me && order.buyerTenantId !== me) {
+    return res.status(403).json({ error: 'NOT_ALLOWED', message: 'هذا الطلب لا يخصك.' });
+  }
+  if (!orderHasInvoice(order)) return res.status(409).json({ error: 'INVOICE_NOT_AVAILABLE', message: 'تتاح الفاتورة بعد قبول الطلب أو تسليمه.' });
+  await ensureSupplyInvoiceNumber(order);
+  const invoice = buildOrderInvoice(order, supplyInvoiceContext(order));
+  const notification = await notifyUser({
+    app: 'merchant', kind: 'invoice_copy',
+    title: `نسخة فاتورة — ${invoice.invoiceNumber}`,
+    body: orderInvoiceText(invoice),
+    pushBody: `نسخة فاتورة ${invoice.invoiceNumber} • طلب ${order.orderNumber} • ${Number(order.totalSdg).toLocaleString('en-US')} ج.س. افتح سند لقراءة البنود كاملة.`,
+    linkTab: 'links', tenantId: me,
+    dedupeKey: `invoicecopy_${order.id}_${invoice.invoiceNumber}_${me}_${order.status}`,
+    pushData: { orderId: order.id, invoiceNumber: invoice.invoiceNumber },
+    telegram: false, ntfy: false,
+  });
+  db.commit();
+  res.json({ success: true, invoiceNumber: invoice.invoiceNumber, notified: true, notificationId: notification.id });
 });
 
 /**
@@ -7120,33 +7077,35 @@ apiRouter.get('/push/public-key', (_req, res) => {
   });
 });
 
-apiRouter.get('/notifications', (req, res) => {
+apiRouter.get('/notifications', (req, res, next) => {
   const app = notificationAppOf(req.query.app);
-  const ownerToken = (req.headers['x-owner-token'] as string) || undefined;
-  const limit = Math.min(Number(req.query.limit) || 50, 200);
-  /*
-   * كل متجر يرى إشعاراته فقط.
-   * ------------------------------------------------------------------
-   * إشعارات نقص المخزون تُنشأ لكل متجر على حدة (tenantId على الإشعار)،
-   * لكن الواجهة كانت تطلب القائمة بدون هوية، فيعود كل شيء لكل متجر
-   * (متجر ملابس يرى «بن حبشي» و«سكر»). الآن: للتاجر نقيّد بالمتجر،
-   * وللإدارة نظل نعرض الكل حتى تبقى على اطلاع.
-   */
-  const headerTenant = String(req.headers['x-tenant-id'] || '').trim();
-  const tenantFilter =
-    app === 'merchant'
-      ? String(req.query.tenantId || headerTenant || '').trim() || undefined
-      : undefined;
-
-  const rows = db.getNotifications({ app, ownerToken, tenantId: tenantFilter, limit });
-  const unread = db
-    .getNotifications({ app, ownerToken, tenantId: tenantFilter })
-    .filter((n) => !n.read).length;
-
-  res.json({ notifications: rows, unreadCount: unread, app });
+  const load = () => {
+    const ownerToken = (req.headers['x-owner-token'] as string) || undefined;
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    // هوية المتجر من الجلسة الموقعة؛ query/header لا يمنحان صلاحية قراءة متجر آخر.
+    const tenantFilter = app === 'merchant' ? (req as AuthenticatedRequest).tenantId : undefined;
+    const rows = db.getNotifications({ app, ownerToken, tenantId: tenantFilter, limit });
+    const unread = db.getNotifications({ app, ownerToken, tenantId: tenantFilter }).filter((n) => !n.read).length;
+    res.json({ notifications: rows, unreadCount: unread, app });
+  };
+  if (app === 'merchant') return merchantAuthMiddleware(req, res, () => load());
+  load();
 });
 
-apiRouter.post('/notifications/:id/read', (req, res) => {
+/** يحمي إشعار التاجر بصلاحيات المتجر، مع إبقاء مسارات الجمهور/الإدارة كما هي. */
+function notificationAccess(req: Request, res: Response, next: NextFunction) {
+  const notification = db.getNotification(req.params.id);
+  if (!notification) return res.status(404).json({ error: 'NOT_FOUND', message: 'الإشعار غير موجود.' });
+  if (notification.app !== 'merchant') return next();
+  merchantAuthMiddleware(req, res, () => {
+    if (notification.tenantId !== (req as AuthenticatedRequest).tenantId) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'الإشعار غير موجود.' });
+    }
+    next();
+  });
+}
+
+apiRouter.post('/notifications/:id/read', notificationAccess, (req, res) => {
   const ok = db.markNotificationRead(req.params.id);
   if (!ok) return res.status(404).json({ error: 'NOT_FOUND', message: 'الإشعار غير موجود.' });
   res.json({ success: true });
@@ -7155,61 +7114,67 @@ apiRouter.post('/notifications/:id/read', (req, res) => {
 apiRouter.post('/notifications/read-all', (req, res) => {
   const app = notificationAppOf(req.body?.app);
   const ownerToken = (req.headers['x-owner-token'] as string) || undefined;
-  const changed = db.markAllNotificationsRead({ app, ownerToken });
-  res.json({ success: true, changed });
+  const mark = () => {
+    const tenantId = app === 'merchant' ? (req as AuthenticatedRequest).tenantId : undefined;
+    const changed = db.markAllNotificationsRead({ app, ownerToken, tenantId });
+    res.json({ success: true, changed });
+  };
+  if (app === 'merchant') return merchantAuthMiddleware(req, res, mark);
+  mark();
 });
 
-apiRouter.delete('/notifications/:id', (req, res) => {
+apiRouter.delete('/notifications/:id', notificationAccess, (req, res) => {
   const ok = db.deleteNotification(req.params.id);
   if (!ok) return res.status(404).json({ error: 'NOT_FOUND', message: 'الإشعار غير موجود.' });
   res.json({ success: true });
 });
 
-/** Register a device for phone notifications. */
+/** Register a device for phone notifications. Merchant identity is taken from the session. */
 apiRouter.post('/push/subscribe', (req, res) => {
-  const { subscription, app, ownerToken } = req.body || {};
-  const endpoint = subscription?.endpoint;
-  const p256dh = subscription?.keys?.p256dh;
-  const auth = subscription?.keys?.auth;
-
-  if (!endpoint || !p256dh || !auth) {
-    return res.status(400).json({ error: 'BAD_SUBSCRIPTION', message: 'بيانات الاشتراك غير مكتملة.' });
-  }
-
-  const saved = db.savePushSubscription({
-    endpoint,
-    app: notificationAppOf(app),
-    ownerToken: ownerToken || undefined,
-    keys: { p256dh, auth },
-  });
-
-  res.json({ success: true, id: saved.id });
+  const app = notificationAppOf(req.body?.app);
+  const save = () => {
+    const { subscription, ownerToken } = req.body || {};
+    const endpoint = subscription?.endpoint;
+    const p256dh = subscription?.keys?.p256dh;
+    const auth = subscription?.keys?.auth;
+    if (!endpoint || !p256dh || !auth) {
+      return res.status(400).json({ error: 'BAD_SUBSCRIPTION', message: 'بيانات الاشتراك غير مكتملة.' });
+    }
+    const saved = db.savePushSubscription({
+      endpoint, app,
+      tenantId: app === 'merchant' ? (req as AuthenticatedRequest).tenantId : undefined,
+      ownerToken: ownerToken || undefined,
+      keys: { p256dh, auth },
+    });
+    res.json({ success: true, id: saved.id });
+  };
+  if (app === 'merchant') return merchantAuthMiddleware(req, res, save);
+  save();
 });
 
 apiRouter.post('/push/unsubscribe', (req, res) => {
   const endpoint = req.body?.endpoint;
-  if (!endpoint) {
-    return res.status(400).json({ error: 'ENDPOINT_REQUIRED', message: 'الرابط مطلوب.' });
-  }
+  if (!endpoint) return res.status(400).json({ error: 'ENDPOINT_REQUIRED', message: 'الرابط مطلوب.' });
   db.deletePushSubscription(endpoint);
   res.json({ success: true });
 });
 
 /** Send yourself a test notification — used by the bell panel. */
-apiRouter.post('/push/test', async (req, res) => {
+apiRouter.post('/push/test', (req, res) => {
   const app = notificationAppOf(req.body?.app);
   const ownerToken = (req.headers['x-owner-token'] as string) || undefined;
-
-  const notification = await notifyUser({
-    app,
-    kind: 'system',
-    title: 'إشعار تجريبي من سند',
-    body: 'إن وصلتك هذه الرسالة فإشعارات الهاتف تعمل بنجاح ✅',
-    linkTab: undefined,
-    recipientToken: ownerToken,
-  });
-
-  res.json({ success: true, notification });
+  const send = async () => {
+    const notification = await notifyUser({
+      app, kind: 'system', title: 'إشعار تجريبي من سند',
+      body: 'إن وصلتك هذه الرسالة فإشعارات الهاتف تعمل بنجاح ✅',
+      recipientToken: ownerToken,
+      tenantId: app === 'merchant' ? (req as AuthenticatedRequest).tenantId : undefined,
+      telegram: false, ntfy: false,
+    });
+    res.json({ success: true, notification });
+  };
+  if (app === 'merchant') return merchantAuthMiddleware(req, res, () => { void send(); });
+  void send();
 });
 
 /**

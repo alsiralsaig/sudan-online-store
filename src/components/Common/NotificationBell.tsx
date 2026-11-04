@@ -51,6 +51,7 @@ const KIND_ICON: Record<string, React.FC<{ className?: string }>> = {
   low_stock: ShieldAlert,
   subscription: ShieldAlert,
   system: Sparkles,
+  invoice_copy: Store,
 };
 
 /** Human friendly relative time in Arabic. */
@@ -98,6 +99,8 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   }, [app, ownerToken]);
 
   useEffect(() => {
+    setItems([]);
+    setUnread(0);
     // Refresh automatic alerts (low stock, expiring subscriptions) then load.
     api
       .lazyScanNotifications()
@@ -168,9 +171,14 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
       const reg = await navigator.serviceWorker.getRegistration();
       const sub = await reg?.pushManager.getSubscription();
       setPushState(sub ? 'on' : 'off');
+      // Re-bind an existing device after login/store switch. The server derives
+      // tenantId from the signed session; old unbound devices get no store push.
+      if (sub && app === 'merchant' && Notification.permission === 'granted') {
+        await api.subscribePush(sub.toJSON(), app, ownerToken);
+      }
     };
     check().catch(() => setPushState('unsupported'));
-  }, []);
+  }, [app, ownerToken]);
 
   const urlBase64ToUint8Array = (base64String: string) => {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);

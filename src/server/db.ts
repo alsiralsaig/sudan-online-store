@@ -1540,6 +1540,8 @@ class Database {
   private tableDefs: TableDef[] = [];
   private ready: Promise<void> | null = null;
   private dirty = false;
+  /** Fallback counters only when no persistent database is configured. */
+  private documentSequences = new Map<string, number>();
   /** Row-level snapshot of what Postgres already holds. */
   private baseline: Baseline = new Map();
 
@@ -1663,6 +1665,28 @@ class Database {
     } finally {
       await release();
     }
+  }
+
+  /**
+   * Atomic document counter. The advisory lock around the whole snapshot flush
+   * is not enough for numbering: two instances can read the same max before
+   * either flushes. This counter is incremented inside Postgres itself.
+   */
+  public async nextDocumentSequence(key: string, atLeast: number): Promise<number> {
+    if (!isDbEnabled()) {
+      const current = Number((this.documentSequences.get(key) || 0));
+      const next = Math.max(current + 1, atLeast);
+      this.documentSequences.set(key, next);
+      return next;
+    }
+    await query('CREATE TABLE IF NOT EXISTS sanad_document_sequences (key text PRIMARY KEY, value double precision NOT NULL)');
+    const { rows } = await query(
+      `INSERT INTO sanad_document_sequences AS seq (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = GREATEST(seq.value + 1, EXCLUDED.value)
+       RETURNING value`,
+      [key, atLeast],
+    );
+    return Number(rows[0].value);
   }
 
   public async shutdown(): Promise<void> {
@@ -1989,9 +2013,21 @@ class Database {
     return (this.data.notifications || []).some((n) => n.dedupeKey === key);
   }
 
+  public getNotification(id: string): AppNotification | undefined {
+    return (this.data.notifications || []).find((n) => n.id === id);
+  }
+
+  public getNotificationByDedupeKey(key: string): AppNotification | undefined {
+    return (this.data.notifications || []).find((n) => n.dedupeKey === key);
+  }
+
   public createNotification(
     input: Omit<AppNotification, 'id' | 'createdAt' | 'read'>
   ): AppNotification {
+    if (input.dedupeKey) {
+      const existing = (this.data.notifications || []).find((n) => n.dedupeKey === input.dedupeKey);
+      if (existing) return existing;
+    }
     const notification: AppNotification = {
       ...input,
       id: newId('ntf'),
@@ -2016,11 +2052,13 @@ class Database {
   public markAllNotificationsRead(filter: {
     app: 'client' | 'merchant' | 'admin';
     ownerToken?: string;
+    tenantId?: string;
   }): number {
     let changed = 0;
     for (const n of this.data.notifications || []) {
       if (n.app !== filter.app || n.read) continue;
       if (n.recipientToken && n.recipientToken !== filter.ownerToken) continue;
+      if (filter.tenantId && n.tenantId !== filter.tenantId) continue;
       n.read = true;
       changed++;
     }
@@ -2046,6 +2084,7 @@ class Database {
     if (existing) {
       existing.keys = input.keys;
       existing.ownerToken = input.ownerToken;
+      existing.tenantId = input.tenantId;
       existing.lastSeenAt = new Date().toISOString();
       this.save();
       return existing;
@@ -2061,10 +2100,11 @@ class Database {
     return record;
   }
 
-  public getPushSubscriptions(filter: { app?: string; ownerToken?: string }): PushSubscriptionRecord[] {
+  public getPushSubscriptions(filter: { app?: string; ownerToken?: string; tenantId?: string }): PushSubscriptionRecord[] {
     return (this.data.pushSubscriptions || []).filter((s) => {
       if (filter.app && s.app !== filter.app) return false;
       if (filter.ownerToken && s.ownerToken !== filter.ownerToken) return false;
+      if (filter.tenantId && s.tenantId !== filter.tenantId) return false;
       return true;
     });
   }

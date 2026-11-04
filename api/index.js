@@ -673,10 +673,10 @@ async function queryCatalog(catalog, barcode) {
   const productName = text(p.product_name_ar) || text(p.product_name) || text(p.product_name_en);
   if (!productName) return null;
   const brand = text(p.brands).split(",")[0].trim();
-  const quantity = text(p.quantity);
+  const quantity2 = text(p.quantity);
   const nameParts = [productName];
   if (brand && !productName.toLocaleLowerCase().includes(brand.toLocaleLowerCase())) nameParts.push(brand);
-  if (quantity && !productName.toLocaleLowerCase().includes(quantity.toLocaleLowerCase())) nameParts.push(quantity);
+  if (quantity2 && !productName.toLocaleLowerCase().includes(quantity2.toLocaleLowerCase())) nameParts.push(quantity2);
   return { name: nameParts.join(" - "), source: catalog.name, sourceUrl: `${catalog.base}/product/${barcode}` };
 }
 async function barcodeLookupHandler(req, res) {
@@ -2475,6 +2475,8 @@ var Database = class {
     this.tableDefs = [];
     this.ready = null;
     this.dirty = false;
+    /** Fallback counters only when no persistent database is configured. */
+    this.documentSequences = /* @__PURE__ */ new Map();
     /** Row-level snapshot of what Postgres already holds. */
     this.baseline = /* @__PURE__ */ new Map();
     this.data = this.getInitialSeedData();
@@ -2572,6 +2574,27 @@ var Database = class {
     } finally {
       await release();
     }
+  }
+  /**
+   * Atomic document counter. The advisory lock around the whole snapshot flush
+   * is not enough for numbering: two instances can read the same max before
+   * either flushes. This counter is incremented inside Postgres itself.
+   */
+  async nextDocumentSequence(key, atLeast) {
+    if (!isDbEnabled()) {
+      const current = Number(this.documentSequences.get(key) || 0);
+      const next = Math.max(current + 1, atLeast);
+      this.documentSequences.set(key, next);
+      return next;
+    }
+    await query("CREATE TABLE IF NOT EXISTS sanad_document_sequences (key text PRIMARY KEY, value double precision NOT NULL)");
+    const { rows } = await query(
+      `INSERT INTO sanad_document_sequences AS seq (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = GREATEST(seq.value + 1, EXCLUDED.value)
+       RETURNING value`,
+      [key, atLeast]
+    );
+    return Number(rows[0].value);
   }
   async shutdown() {
     await closePool();
@@ -2795,7 +2818,17 @@ var Database = class {
   hasNotificationKey(key) {
     return (this.data.notifications || []).some((n) => n.dedupeKey === key);
   }
+  getNotification(id) {
+    return (this.data.notifications || []).find((n) => n.id === id);
+  }
+  getNotificationByDedupeKey(key) {
+    return (this.data.notifications || []).find((n) => n.dedupeKey === key);
+  }
   createNotification(input) {
+    if (input.dedupeKey) {
+      const existing = (this.data.notifications || []).find((n) => n.dedupeKey === input.dedupeKey);
+      if (existing) return existing;
+    }
     const notification = {
       ...input,
       id: newId("ntf"),
@@ -2818,6 +2851,7 @@ var Database = class {
     for (const n of this.data.notifications || []) {
       if (n.app !== filter.app || n.read) continue;
       if (n.recipientToken && n.recipientToken !== filter.ownerToken) continue;
+      if (filter.tenantId && n.tenantId !== filter.tenantId) continue;
       n.read = true;
       changed++;
     }
@@ -2838,6 +2872,7 @@ var Database = class {
     if (existing) {
       existing.keys = input.keys;
       existing.ownerToken = input.ownerToken;
+      existing.tenantId = input.tenantId;
       existing.lastSeenAt = (/* @__PURE__ */ new Date()).toISOString();
       this.save();
       return existing;
@@ -2855,6 +2890,7 @@ var Database = class {
     return (this.data.pushSubscriptions || []).filter((s) => {
       if (filter.app && s.app !== filter.app) return false;
       if (filter.ownerToken && s.ownerToken !== filter.ownerToken) return false;
+      if (filter.tenantId && s.tenantId !== filter.tenantId) return false;
       return true;
     });
   }
@@ -4102,13 +4138,13 @@ function resolveProductBaseUnit(productUnit) {
   if (found) return found;
   return SUDANESE_UNITS.find((u) => u.id === "piece");
 }
-function priceForUnit(basePrice, productUnit, targetUnitId, quantity = 1) {
+function priceForUnit(basePrice, productUnit, targetUnitId, quantity2 = 1) {
   const base = resolveProductBaseUnit(productUnit);
   const target = SUDANESE_UNITS.find((u) => u.id === targetUnitId) || base;
   if (base.baseUnitId !== target.baseUnitId) {
     return {
       unitPrice: basePrice,
-      quantityInBaseUnits: quantity,
+      quantityInBaseUnits: quantity2,
       baseUnit: base,
       ok: false,
       explanation: `\u0627\u0644\u0648\u062D\u062F\u0629 \xAB${target.nameAr}\xBB \u0644\u0627 \u062A\u064F\u0642\u0627\u0633 \u0628\u0646\u0641\u0633 \u0648\u062D\u062F\u0629 \u0627\u0644\u0635\u0646\u0641 \xAB${base.nameAr}\xBB \u2014 \u064A\u062D\u062A\u0627\u062C \u0633\u0639\u0631\u0627\u064B \u0645\u062E\u0635\u0635\u0627\u064B.`
@@ -4119,10 +4155,10 @@ function priceForUnit(basePrice, productUnit, targetUnitId, quantity = 1) {
   const unitPrice = raw >= 100 ? Math.round(raw) : Math.round(raw * 100) / 100;
   return {
     unitPrice,
-    quantityInBaseUnits: Math.round(target.toBase * quantity * 1e3) / 1e3,
+    quantityInBaseUnits: Math.round(target.toBase * quantity2 * 1e3) / 1e3,
     baseUnit: base,
     ok: true,
-    explanation: target.id === base.id ? `${quantity} ${target.symbolAr} \xD7 ${unitPrice.toLocaleString()} \u062C.\u0633` : `${quantity} ${target.symbolAr} = ${Math.round(target.toBase * quantity * 1e3) / 1e3} ${base.symbolAr} \xD7 \u0627\u0644\u0633\u0639\u0631 \u27F9 ${unitPrice.toLocaleString()} \u062C.\u0633 \u0644\u0644\u0640${target.symbolAr}`
+    explanation: target.id === base.id ? `${quantity2} ${target.symbolAr} \xD7 ${unitPrice.toLocaleString()} \u062C.\u0633` : `${quantity2} ${target.symbolAr} = ${Math.round(target.toBase * quantity2 * 1e3) / 1e3} ${base.symbolAr} \xD7 \u0627\u0644\u0633\u0639\u0631 \u27F9 ${unitPrice.toLocaleString()} \u062C.\u0633 \u0644\u0644\u0640${target.symbolAr}`
   };
 }
 
@@ -4297,11 +4333,11 @@ function parseSudaneseSale(text2, products) {
       }
       continue;
     }
-    const { quantity } = parseQuantity(cleaned);
+    const { quantity: quantity2 } = parseQuantity(cleaned);
     const spokenUnit = findUnitInText(cleaned);
     const baseUnit = resolveProductBaseUnit(product.unit);
     const unit = spokenUnit || baseUnit;
-    const priced = priceForUnit(product.sellingPriceSdg, product.unit, unit.id, quantity);
+    const priced = priceForUnit(product.sellingPriceSdg, product.unit, unit.id, quantity2);
     if (!priced.ok) {
       clarifications.push({
         phrase: clause,
@@ -4313,7 +4349,7 @@ function parseSudaneseSale(text2, products) {
     lines.push({
       product,
       spokenName: cleaned,
-      quantity,
+      quantity: quantity2,
       unitId: unit.id,
       unitName: unit.symbolAr,
       unitPrice: priced.unitPrice,
@@ -5238,8 +5274,8 @@ var describeAgeAr = (iso, now = Date.now()) => {
   return `\u0642\u0628\u0644 ${d(days)} \u0623\u064A\u0627\u0645`;
 };
 var isCalcQuery = (msg) => {
-  const money2 = /(دولار|ريال|درهم|يورو|جنيه|عملة|عملات)/i.test(msg);
-  if (!money2) return false;
+  const money3 = /(دولار|ريال|درهم|يورو|جنيه|عملة|عملات)/i.test(msg);
+  if (!money3) return false;
   const explicitRate = /(كم\s*سعر|سعر\s*(اليوم|الآن|هسي|السوق)|أسعار\s*(اليوم|العملات)|جدول\s*(الأسعار|العملات)|قائمة\s*الأسعار)/i.test(
     msg
   );
@@ -5404,6 +5440,10 @@ function getPublicKey() {
   return keys ? keys.publicKey : null;
 }
 async function notify(input) {
+  if (input.dedupeKey) {
+    const existing = db.getNotificationByDedupeKey(input.dedupeKey);
+    if (existing) return existing;
+  }
   const notification = db.createNotification({
     dedupeKey: input.dedupeKey,
     app: input.app,
@@ -5433,14 +5473,19 @@ ${input.body}`).catch((err) => {
 }
 async function sendPush(input, notification) {
   if (!configured && !initPush()) return;
-  const subscriptions = db.getPushSubscriptions({ app: input.app }).filter((s) => {
+  if (notification.app === "merchant" && !notification.tenantId) return;
+  const subscriptions = db.getPushSubscriptions({
+    app: input.app,
+    tenantId: notification.app === "merchant" ? notification.tenantId : void 0
+  }).filter((s) => {
+    if (notification.app === "merchant" && notification.tenantId && s.tenantId !== notification.tenantId) return false;
     if (notification.recipientToken) return s.ownerToken === notification.recipientToken;
     return true;
   });
   if (subscriptions.length === 0) return;
   const payload = JSON.stringify({
     title: input.title,
-    body: input.body,
+    body: input.pushBody ?? input.body,
     icon: "/icons/sanad-icon-192.png",
     badge: "/icons/sanad-favicon-96.png",
     url: buildUrl(input.app, input.linkTab, input.pushData),
@@ -5453,7 +5498,8 @@ async function sendPush(input, notification) {
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: sub.keys },
-          payload
+          payload,
+          { TTL: 3600, timeout: 5e3 }
         );
       } catch (err) {
         if (err?.statusCode === 404 || err?.statusCode === 410) {
@@ -5769,6 +5815,100 @@ var whatsappProviderHost = () => {
 // src/server/routes.ts
 init_telegram();
 init_ntfy();
+
+// src/lib/orderInvoice.ts
+var money2 = (n) => Number(Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
+var quantity = (n) => Number(Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
+var paymentLabel = (m) => m === "cash" ? "\u0643\u0627\u0634" : m === "bankak" ? "\u0628\u0646\u0643\u0643" : m === "bank_transfer" ? "\u062D\u0648\u0627\u0644\u0629 \u0628\u0646\u0643\u064A\u0629" : m === "credit" ? "\u0622\u062C\u0644 (\u0639\u0644\u0649 \u0627\u0644\u062D\u0633\u0627\u0628)" : "\u063A\u064A\u0631 \u0645\u062D\u062F\u062F";
+var statusLabel = (s) => s === "pending" ? "\u0628\u0627\u0646\u062A\u0638\u0627\u0631 \u0627\u0644\u0631\u062F" : s === "accepted" ? "\u0645\u0642\u0628\u0648\u0644 \u2014 \u062C\u0627\u0631\u064D \u0627\u0644\u062A\u062D\u0636\u064A\u0631" : s === "rejected" ? "\u0645\u0631\u0641\u0648\u0636" : s === "fulfilled" ? "\u062A\u0645 \u0627\u0644\u062A\u0633\u0644\u064A\u0645" : "\u0645\u0644\u063A\u064A";
+var fmtDate = (iso) => {
+  const d = iso ? new Date(iso) : /* @__PURE__ */ new Date();
+  if (isNaN(d.getTime())) return "\u2014";
+  return d.toLocaleString("ar-EG-u-nu-latn", { dateStyle: "short", timeStyle: "short" });
+};
+function orderHasInvoice(order) {
+  return order.status === "accepted" || order.status === "fulfilled";
+}
+function invoiceExchangeRate(model) {
+  if (model.currency === "SDG") return 1;
+  const rate = Number(model.exchangeRate);
+  return Number.isFinite(rate) && rate > 0 ? rate : 0;
+}
+function invoiceForeignTotal(model) {
+  const rate = invoiceExchangeRate(model);
+  return model.currency !== "SDG" && rate > 0 ? Number(model.totalSdg) / rate : null;
+}
+function invoiceCurrencyLabel(model) {
+  const rate = invoiceExchangeRate(model);
+  if (model.currency === "SDG") return "SDG (\u0639\u0645\u0644\u0629 \u0623\u0633\u0627\u0633\u064A\u0629)";
+  return rate > 0 ? `${model.currency} (1 = ${money2(rate)} \u062C.\u0633)` : `${model.currency} (\u0633\u0639\u0631 \u0627\u0644\u0635\u0631\u0641 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D)`;
+}
+function buildOrderInvoice(order, ctx = {}) {
+  const currency = String(order.paymentCurrency || "SDG").trim().toUpperCase() || "SDG";
+  const lines = (order.items || []).map((it) => ({
+    name: it.productName,
+    unit: it.unit || "\u062D\u0628\u0629",
+    quantity: Number(it.quantity) || 0,
+    unitPriceSdg: Number(it.unitPriceSdg) || 0,
+    totalSdg: Number(it.totalSdg) || (Number(it.unitPriceSdg) || 0) * (Number(it.quantity) || 0)
+  }));
+  const subtotalSdg = lines.reduce((s, l) => s + l.totalSdg, 0);
+  const totalSdg = Number(order.totalSdg) || subtotalSdg;
+  const purchaseNumber = order.invoiceNumber || void 0;
+  return {
+    title: order.status === "fulfilled" ? "\u0641\u0627\u062A\u0648\u0631\u0629 \u062A\u0648\u0631\u064A\u062F" : "\u0641\u0627\u062A\u0648\u0631\u0629 \u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F (\u0645\u0628\u062F\u0626\u064A\u0629)",
+    orderNumber: order.orderNumber,
+    // الرقم المصدر من السيرفر؛ رقم المورد القديم مرجع فقط ولا يستبدل رقم سند.
+    invoiceNumber: purchaseNumber || order.orderNumber,
+    issuedAt: fmtDate(order.invoiceIssuedAt || order.createdAt),
+    status: statusLabel(order.status),
+    seller: ctx.sellerStoreName || order.sellerName,
+    buyer: order.buyerName,
+    buyerPhone: order.buyerPhone,
+    payment: paymentLabel(order.paymentMethod),
+    currency,
+    exchangeRate: currency === "SDG" ? 1 : Number(order.paymentExchangeRate) || 0,
+    lines,
+    subtotalSdg,
+    totalSdg,
+    note: order.note,
+    sellerNote: order.sellerNote,
+    stampText: ctx.stampText,
+    sellerPhone: ctx.sellerPhone || order.sellerPhone,
+    sellerAddress: ctx.sellerAddress || order.sellerAddress,
+    purchaseNumber: order.status === "fulfilled" ? purchaseNumber : void 0,
+    sellerReference: order.sellerInvoiceNumber
+  };
+}
+function orderInvoiceText(model) {
+  const lines = model.lines.map((l, i) => `${i + 1}) ${l.name} \u2014 ${quantity(l.quantity)} ${l.unit} \xD7 ${money2(l.unitPriceSdg)} = ${money2(l.totalSdg)} \u062C.\u0633`).join("\n");
+  const foreign = invoiceForeignTotal(model);
+  return [
+    `*${model.title}*`,
+    `\u0631\u0642\u0645 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629: ${model.invoiceNumber}`,
+    `\u0631\u0642\u0645 \u0627\u0644\u0637\u0644\u0628: ${model.orderNumber}`,
+    `\u0645\u0646: ${model.seller}`,
+    `\u0625\u0644\u0649: ${model.buyer}${model.buyerPhone ? ` \u2014 ${model.buyerPhone}` : ""}`,
+    `\u0627\u0644\u062A\u0627\u0631\u064A\u062E: ${model.issuedAt}`,
+    `\u0627\u0644\u062D\u0627\u0644\u0629: ${model.status}`,
+    "",
+    "*\u0627\u0644\u0628\u0646\u0648\u062F:*",
+    lines || "\u2014",
+    "",
+    ...model.subtotalSdg !== model.totalSdg ? [`\u0645\u062C\u0645\u0648\u0639 \u0627\u0644\u0628\u0646\u0648\u062F: ${money2(model.subtotalSdg)} \u062C.\u0633`] : [],
+    `*\u0627\u0644\u0625\u062C\u0645\u0627\u0644\u064A \u0627\u0644\u0645\u0639\u062A\u0645\u062F: ${money2(model.totalSdg)} \u062C.\u0633*`,
+    `\u0627\u0644\u062F\u0641\u0639: ${model.payment}`,
+    `\u0627\u0644\u0639\u0645\u0644\u0629: ${invoiceCurrencyLabel(model)}`,
+    ...foreign !== null ? [`*\u0627\u0644\u0645\u0637\u0644\u0648\u0628 \u0628\u0640 ${model.currency}: ${money2(foreign)} ${model.currency}*`] : [],
+    model.sellerReference ? `\u0645\u0631\u062C\u0639 \u0627\u0644\u0645\u0648\u0631\u062F: ${model.sellerReference}` : "",
+    model.note ? `\u0645\u0644\u0627\u062D\u0638\u0629 \u0627\u0644\u0637\u0627\u0644\u0628: ${model.note}` : "",
+    model.sellerNote ? `\u0645\u0644\u0627\u062D\u0638\u0629 \u0627\u0644\u0645\u0648\u0631\u062F: ${model.sellerNote}` : "",
+    `\u0627\u0644\u062E\u062A\u0645: ${model.stampText || model.seller}`,
+    "\u062A\u0648\u0642\u064A\u0639 \u0627\u0644\u0645\u0633\u062A\u0644\u0645: ____________________",
+    "",
+    [model.seller, model.sellerPhone, model.sellerAddress].filter(Boolean).join(" \xB7 ") || "\u0645\u0646\u0635\u0629 \u0633\u0646\u062F"
+  ].filter((l) => l !== "").join("\n");
+}
 
 // src/server/media.ts
 init_pg();
@@ -7725,16 +7865,33 @@ function supplyOrderNumber() {
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   return `PO-${ymd}-${Math.floor(Math.random() * 9e3 + 1e3)}`;
 }
-function purchaseInvoiceNumber(tenantId) {
+async function reservePurchaseInvoiceNumber(tenantId) {
   const year = (/* @__PURE__ */ new Date()).getFullYear();
   const prefix = `PUR-${year}-`;
-  const existing = (db.getSchema().purchases || []).filter(
-    (p) => p.tenantId === tenantId && String(p.invoiceNumber || "").startsWith(prefix)
-  );
-  let next = existing.length + 1;
-  const used = new Set(existing.map((p) => p.invoiceNumber));
-  while (used.has(`${prefix}${String(next).padStart(5, "0")}`)) next += 1;
+  const used = [
+    ...(db.getSchema().purchases || []).filter((p) => p.tenantId === tenantId).map((p) => p.invoiceNumber),
+    ...(db.getSchema().supplyOrders || []).filter((o) => o.buyerTenantId === tenantId).map((o) => o.invoiceNumber)
+  ];
+  const max = used.reduce((n, value) => {
+    const m = String(value || "").match(new RegExp(`^${prefix}(\\d+)$`));
+    return m ? Math.max(n, Number(m[1])) : n;
+  }, 0);
+  const next = await db.nextDocumentSequence(`purchase:${tenantId}:${year}`, max + 1);
   return `${prefix}${String(next).padStart(5, "0")}`;
+}
+async function ensureSupplyInvoiceNumber(order) {
+  if (order.invoiceNumber) return;
+  order.invoiceNumber = await reservePurchaseInvoiceNumber(order.buyerTenantId);
+  order.invoiceIssuedAt = (/* @__PURE__ */ new Date()).toISOString();
+}
+function supplyInvoiceContext(order) {
+  const seller = db.getTenant(order.sellerTenantId);
+  return {
+    sellerStoreName: seller?.tradeName || seller?.name || order.sellerName,
+    sellerPhone: seller?.phone || order.sellerPhone,
+    sellerAddress: seller?.address || order.sellerAddress,
+    stampText: typeof seller?.settings?.receiptFooter === "string" ? seller.settings.receiptFooter.trim() : void 0
+  };
 }
 apiRouter.get("/supply-orders", merchantAuthMiddleware, (req, res) => {
   const me = req.tenantId;
@@ -7790,12 +7947,12 @@ apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
     if (!product || product.tenantId !== seller.id) {
       return res.status(400).json({ error: "BAD_ITEM", message: "\u0623\u062D\u062F \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0644\u0627 \u064A\u062E\u0635 \u0647\u0630\u0627 \u0627\u0644\u0645\u0648\u0631\u062F." });
     }
-    const quantity = Math.max(1, Math.round(Number(row?.quantity) || 0));
+    const quantity2 = Math.max(1, Math.round(Number(row?.quantity) || 0));
     const productMin = Number(product.minOrderQty) || 0;
-    if (productMin > 0 && quantity < productMin) {
+    if (productMin > 0 && quantity2 < productMin) {
       return res.status(400).json({
         error: "BELOW_MIN_ITEM_QTY",
-        message: `\u0623\u0642\u0644 \u0643\u0645\u064A\u0629 \u0644\u0635\u0646\u0641 \xAB${product.name}\xBB \u0647\u064A ${productMin} ${product.unit || "\u0648\u062D\u062F\u0629"} \u2014 \u0637\u0644\u0628\u062A ${quantity}.`,
+        message: `\u0623\u0642\u0644 \u0643\u0645\u064A\u0629 \u0644\u0635\u0646\u0641 \xAB${product.name}\xBB \u0647\u064A ${productMin} ${product.unit || "\u0648\u062D\u062F\u0629"} \u2014 \u0637\u0644\u0628\u062A ${quantity2}.`,
         productId: product.id,
         minOrderQty: productMin
       });
@@ -7805,9 +7962,9 @@ apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
       productId: product.id,
       productName: product.name,
       unit: product.unit,
-      quantity,
+      quantity: quantity2,
       unitPriceSdg,
-      totalSdg: unitPriceSdg * quantity
+      totalSdg: unitPriceSdg * quantity2
     });
   }
   const minValue = Number(seller.settings?.minOrderValueSdg) || 0;
@@ -7839,6 +7996,8 @@ apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
     buyerPhone: me.phone,
     sellerTenantId: seller.id,
     sellerName: seller.tradeName || seller.name,
+    sellerPhone: seller.phone,
+    sellerAddress: seller.address,
     sellerSegment: seller.accountSegment || "retailer",
     items: clean,
     totalSdg: clean.reduce((sum, it) => sum + it.totalSdg, 0),
@@ -7869,31 +8028,42 @@ apiRouter.post("/supply-orders", merchantAuthMiddleware, (req, res) => {
   });
   res.json({ success: true, order, message: `\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0637\u0644\u0628 ${order.orderNumber} \u0625\u0644\u0649 ${order.sellerName}.` });
 });
-apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, (req, res) => {
+apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, async (req, res) => {
   const me = req.tenantId;
   const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
-  const status = String(req.body?.status || "");
-  const allowed = ["accepted", "rejected", "fulfilled", "cancelled"];
-  if (!allowed.includes(status)) {
-    return res.status(400).json({ error: "BAD_STATUS", message: "\u062D\u0627\u0644\u0629 \u063A\u064A\u0631 \u0645\u0639\u0631\u0648\u0641\u0629." });
-  }
   const isSeller = order.sellerTenantId === me;
   const isBuyer = order.buyerTenantId === me;
-  if (!isSeller && !isBuyer) {
-    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0644\u0627 \u064A\u062E\u0635\u0643." });
-  }
+  if (!isSeller && !isBuyer) return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0644\u0627 \u064A\u062E\u0635\u0643." });
+  const status = String(req.body?.status || "");
+  const allowed = ["accepted", "rejected", "fulfilled", "cancelled"];
+  if (!allowed.includes(status)) return res.status(400).json({ error: "BAD_STATUS", message: "\u062D\u0627\u0644\u0629 \u063A\u064A\u0631 \u0645\u0639\u0631\u0648\u0641\u0629." });
   if (isBuyer && !isSeller && status !== "cancelled") {
     return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0627\u0644\u0645\u0634\u062A\u0631\u064A \u064A\u0642\u062F\u0631 \u064A\u0644\u063A\u064A \u0627\u0644\u0637\u0644\u0628 \u0641\u0642\u0637." });
   }
-  order.status = status;
-  if (typeof req.body?.sellerNote === "string") order.sellerNote = req.body.sellerNote.slice(0, 400);
-  if (typeof req.body?.sellerInvoiceNumber === "string") order.sellerInvoiceNumber = req.body.sellerInvoiceNumber.slice(0, 60);
-  order.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-  if (status === "fulfilled" && !order.purchaseId) {
+  if (status === order.status) return res.json({ success: true, order, unchanged: true });
+  const transitions = {
+    pending: ["accepted", "rejected", "cancelled"],
+    accepted: ["fulfilled", "cancelled"],
+    fulfilled: [],
+    rejected: [],
+    cancelled: []
+  };
+  if (!transitions[order.status].includes(status)) {
+    return res.status(409).json({ error: "INVALID_TRANSITION", message: "\u0644\u0627 \u064A\u0645\u0643\u0646 \u062A\u063A\u064A\u064A\u0631 \u062D\u0627\u0644\u0629 \u0627\u0644\u0637\u0644\u0628 \u0628\u0639\u062F \u0627\u0643\u062A\u0645\u0627\u0644\u0647 \u0623\u0648 \u0625\u0644\u063A\u0627\u0626\u0647." });
+  }
+  if (isBuyer && !isSeller && !["pending", "accepted"].includes(order.status)) {
+    return res.status(409).json({ error: "INVALID_TRANSITION", message: "\u0644\u0627 \u064A\u0645\u0643\u0646 \u0625\u0644\u063A\u0627\u0621 \u0627\u0644\u0637\u0644\u0628 \u0641\u064A \u062D\u0627\u0644\u062A\u0647 \u0627\u0644\u062D\u0627\u0644\u064A\u0629." });
+  }
+  if (typeof req.body?.sellerNote === "string" && isSeller) order.sellerNote = req.body.sellerNote.slice(0, 400);
+  if (status === "fulfilled") {
     const buyer = db.getTenant(order.buyerTenantId);
     const branch = db.getSchema().branches.find((b) => b.tenantId === order.buyerTenantId && b.isActive);
-    if (buyer && branch) {
+    if (!buyer || !branch) {
+      return res.status(409).json({ error: "BUYER_BRANCH_REQUIRED", message: "\u0644\u0627 \u064A\u0648\u062C\u062F \u0641\u0631\u0639 \u0646\u0634\u0637 \u0644\u0644\u0645\u0634\u062A\u0631\u064A. \u0641\u0639\u0651\u0644 \u0641\u0631\u0639\u0627\u064B \u0642\u0628\u0644 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062A\u0633\u0644\u064A\u0645 \u062D\u062A\u0649 \u064A\u064F\u0633\u062C\u0651\u0644 \u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u0648\u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629." });
+    }
+    await ensureSupplyInvoiceNumber(order);
+    if (!order.purchaseId) {
       const rate = Number(order.paymentExchangeRate) || 1;
       for (const line of order.items) {
         let myProduct = db.getSchema().products.find(
@@ -7927,42 +8097,44 @@ apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, (req, res) => {
           actorName: "\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F"
         });
       }
-      const invoiceNumber = order.sellerInvoiceNumber || purchaseInvoiceNumber(buyer.id);
       const purchase = {
         id: newId("purch"),
         tenantId: buyer.id,
         branchId: branch.id,
         branchName: branch.name,
         supplierName: order.sellerName,
-        invoiceNumber: order.sellerInvoiceNumber || invoiceNumber,
+        invoiceNumber: order.invoiceNumber,
+        supplyOrderId: order.id,
+        supplyOrderNumber: order.orderNumber,
         currency: order.paymentCurrency || "SDG",
         exchangeRate: rate,
         items: order.items.map((it) => ({
           productId: it.productId,
           productName: it.productName,
           quantity: it.quantity,
-          costInCurrency: rate > 1 ? it.unitPriceSdg / rate : it.unitPriceSdg,
+          costInCurrency: rate > 0 ? it.unitPriceSdg / rate : it.unitPriceSdg,
           currency: order.paymentCurrency || "SDG",
           exchangeRate: rate,
           costSdg: it.unitPriceSdg
         })),
         totalCostSdg: order.totalSdg,
-        paymentStatus: order.paymentMethod === "credit" ? "credit" : order.paymentMethod === "cash" || order.paymentMethod === "bankak" || order.paymentMethod === "bank_transfer" ? "paid" : "credit",
-        notes: `\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F ${order.orderNumber} \u2014 \u0627\u0644\u062F\u0641\u0639: ${order.paymentMethod === "cash" ? "\u0643\u0627\u0634" : order.paymentMethod === "bankak" ? "\u0628\u0646\u0643\u0643" : order.paymentMethod === "bank_transfer" ? "\u062D\u0648\u0627\u0644\u0629 \u0628\u0646\u0643\u064A\u0629" : "\u0622\u062C\u0644"}${order.note ? ` \u2022 \u0645\u0644\u0627\u062D\u0638\u0629: ${order.note}` : ""}`,
+        paymentStatus: order.paymentMethod === "credit" ? "credit" : "paid",
+        notes: `\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F ${order.orderNumber}${order.sellerInvoiceNumber ? ` \u2022 \u0645\u0631\u062C\u0639 \u0627\u0644\u0645\u0648\u0631\u062F ${order.sellerInvoiceNumber}` : ""}${order.note ? ` \u2022 \u0645\u0644\u0627\u062D\u0638\u0629: ${order.note}` : ""}`,
         createdBy: "\u0637\u0644\u0628 \u062A\u0648\u0631\u064A\u062F",
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       db.getSchema().purchases.unshift(purchase);
       order.purchaseId = purchase.id;
-      order.invoiceNumber = purchase.invoiceNumber;
       order.deliveredAt = (/* @__PURE__ */ new Date()).toISOString();
     }
   }
+  order.status = status;
+  order.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   db.commit();
   db.logAudit({
     tenantId: me,
-    actorId: "merchant",
-    actorName: me,
+    actorId: req.actorId,
+    actorName: req.actorName,
     action: "SUPPLY_ORDER_STATUS",
     entity: "SupplyOrder",
     entityId: order.id,
@@ -7970,51 +8142,57 @@ apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, (req, res) => {
   });
   const otherTenantId = isSeller ? order.buyerTenantId : order.sellerTenantId;
   const statusAr = status === "accepted" ? "\u0645\u0642\u0628\u0648\u0644 \u2014 \u062C\u0627\u0631\u064D \u0627\u0644\u062A\u062D\u0636\u064A\u0631" : status === "rejected" ? "\u0645\u0631\u0641\u0648\u0636" : status === "fulfilled" ? "\u062A\u0645 \u0627\u0644\u062A\u0633\u0644\u064A\u0645" : "\u0645\u0644\u063A\u064A";
-  notify({
+  await notify({
     app: "merchant",
     kind: "order_status",
     title: `\u0627\u0644\u0637\u0644\u0628 ${order.orderNumber}: ${statusAr}`,
     body: `${isSeller ? "\u0627\u0644\u0645\u0648\u0631\u062F" : "\u0627\u0644\u0645\u0634\u062A\u0631\u064A"} \u062D\u062F\u0651\u062B \u062D\u0627\u0644\u0629 \u0637\u0644\u0628 \u0627\u0644\u062A\u0648\u0631\u064A\u062F \u0628\u0642\u064A\u0645\u0629 ${Number(order.totalSdg).toLocaleString("en-US")} \u062C.\u0633${order.invoiceNumber ? ` \u2022 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 ${order.invoiceNumber}` : ""}`,
     linkTab: "links",
     tenantId: otherTenantId,
-    dedupeKey: `supply_${order.id}_${status}`
-  }).catch(() => {
+    dedupeKey: `supply_${order.id}_${status}_${order.updatedAt}`,
+    telegram: false,
+    ntfy: false
   });
-  res.json({
-    success: true,
-    order,
-    invoice: order.invoiceNumber ? { invoiceNumber: order.invoiceNumber, purchaseId: order.purchaseId } : null
-  });
+  res.json({ success: true, order, invoice: order.invoiceNumber ? { invoiceNumber: order.invoiceNumber, purchaseId: order.purchaseId } : null });
 });
-apiRouter.post("/supply-orders/:id/invoice-copy", merchantAuthMiddleware, (req, res) => {
-  const me = db.getTenant(req.tenantId);
-  if (!me) return res.status(404).json({ error: "TENANT_NOT_FOUND", message: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+apiRouter.post("/supply-orders/:id/invoice", merchantAuthMiddleware, async (req, res) => {
+  const me = req.tenantId;
   const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
-  if (order.sellerTenantId !== me.id && order.buyerTenantId !== me.id) {
+  if (order.sellerTenantId !== me && order.buyerTenantId !== me) {
     return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0644\u0627 \u064A\u062E\u0635\u0643." });
   }
-  const invoiceNumber = order.sellerInvoiceNumber || order.invoiceNumber || order.orderNumber;
-  const total = Number(order.totalSdg) || 0;
-  const currency = order.paymentCurrency || "SDG";
-  const rate = Number(order.paymentExchangeRate) || 1;
-  const lines = (order.items || []).map((it) => `${it.productName} \xD7 ${it.quantity}`).join(" \xB7 ");
-  const body = `\u0641\u0627\u062A\u0648\u0631\u0629 ${invoiceNumber} \u2022 \u0637\u0644\u0628 ${order.orderNumber} \u2022 ${total.toLocaleString("en-US")} \u062C.\u0633` + (currency !== "SDG" && rate > 1 ? ` (${currency}: ${(total / rate).toLocaleString("en-US", { maximumFractionDigits: 2 })})` : "") + `
-${lines}
-\u0627\u0644\u0645\u0634\u062A\u0631\u064A: ${order.buyerName}${order.buyerPhone ? ` \u2014 ${order.buyerPhone}` : ""}` + (typeof req.body?.text === "string" && req.body.text.trim() ? `
-
-${String(req.body.text).slice(0, 1200)}` : "");
-  notify({
+  if (!orderHasInvoice(order)) return res.status(409).json({ error: "INVOICE_NOT_AVAILABLE", message: "\u062A\u062A\u0627\u062D \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0639\u062F \u0642\u0628\u0648\u0644 \u0627\u0644\u0637\u0644\u0628 \u0623\u0648 \u062A\u0633\u0644\u064A\u0645\u0647." });
+  const existed = !!order.invoiceNumber;
+  await ensureSupplyInvoiceNumber(order);
+  db.commit();
+  res.json({ success: true, order, invoiceNumber: order.invoiceNumber, alreadyIssued: existed });
+});
+apiRouter.post("/supply-orders/:id/invoice-copy", merchantAuthMiddleware, async (req, res) => {
+  const me = req.tenantId;
+  const order = (db.getSchema().supplyOrders || []).find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (order.sellerTenantId !== me && order.buyerTenantId !== me) {
+    return res.status(403).json({ error: "NOT_ALLOWED", message: "\u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0644\u0627 \u064A\u062E\u0635\u0643." });
+  }
+  if (!orderHasInvoice(order)) return res.status(409).json({ error: "INVOICE_NOT_AVAILABLE", message: "\u062A\u062A\u0627\u062D \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0639\u062F \u0642\u0628\u0648\u0644 \u0627\u0644\u0637\u0644\u0628 \u0623\u0648 \u062A\u0633\u0644\u064A\u0645\u0647." });
+  await ensureSupplyInvoiceNumber(order);
+  const invoice = buildOrderInvoice(order, supplyInvoiceContext(order));
+  const notification = await notify({
     app: "merchant",
     kind: "invoice_copy",
-    title: `\u0646\u0633\u062E\u0629 \u0641\u0627\u062A\u0648\u0631\u0629 \u2014 ${invoiceNumber}`,
-    body,
+    title: `\u0646\u0633\u062E\u0629 \u0641\u0627\u062A\u0648\u0631\u0629 \u2014 ${invoice.invoiceNumber}`,
+    body: orderInvoiceText(invoice),
+    pushBody: `\u0646\u0633\u062E\u0629 \u0641\u0627\u062A\u0648\u0631\u0629 ${invoice.invoiceNumber} \u2022 \u0637\u0644\u0628 ${order.orderNumber} \u2022 ${Number(order.totalSdg).toLocaleString("en-US")} \u062C.\u0633. \u0627\u0641\u062A\u062D \u0633\u0646\u062F \u0644\u0642\u0631\u0627\u0621\u0629 \u0627\u0644\u0628\u0646\u0648\u062F \u0643\u0627\u0645\u0644\u0629.`,
     linkTab: "links",
-    tenantId: me.id,
-    dedupeKey: `invoicecopy_${order.id}_${Date.now()}`
-  }).catch(() => {
+    tenantId: me,
+    dedupeKey: `invoicecopy_${order.id}_${invoice.invoiceNumber}_${me}_${order.status}`,
+    pushData: { orderId: order.id, invoiceNumber: invoice.invoiceNumber },
+    telegram: false,
+    ntfy: false
   });
-  res.json({ success: true, invoiceNumber, notified: true });
+  db.commit();
+  res.json({ success: true, invoiceNumber: invoice.invoiceNumber, notified: true, notificationId: notification.id });
 });
 apiRouter.get("/links/incoming", merchantAuthMiddleware, (req, res) => {
   const me = db.getTenant(req.tenantId);
@@ -10763,8 +10941,8 @@ var ASSISTANT_MODELS = [
 var AR_CODES_RE_SERVER = /دولار|ريال|درهم|يورو|جنيه|ليرة|دينار|روبل|يوان|استرليني|إسترليني/;
 var isNewsQuery = (msg) => {
   const news = /(اخبار|أخبار|جريدة|صحيفة|عناوين|أحداث|احداث)/i.test(msg);
-  const money2 = /(سعر|أسعار|اسعار|صرف|دولار|ريال|درهم|يورو|تحويل)/i.test(msg);
-  return news && !money2;
+  const money3 = /(سعر|أسعار|اسعار|صرف|دولار|ريال|درهم|يورو|تحويل)/i.test(msg);
+  return news && !money3;
 };
 var ratesBlockForPrompt = (snapshot) => {
   if (!snapshot?.rates?.length) {
@@ -12252,17 +12430,31 @@ apiRouter.get("/push/public-key", (_req, res) => {
     message: key ? void 0 : "\u0625\u0634\u0639\u0627\u0631\u0627\u062A \u0627\u0644\u0647\u0627\u062A\u0641 \u063A\u064A\u0631 \u0645\u0647\u064A\u0623\u0629 \u0639\u0644\u0649 \u0627\u0644\u062E\u0627\u062F\u0645 \u0628\u0639\u062F."
   });
 });
-apiRouter.get("/notifications", (req, res) => {
+apiRouter.get("/notifications", (req, res, next) => {
   const app = notificationAppOf(req.query.app);
-  const ownerToken = req.headers["x-owner-token"] || void 0;
-  const limit = Math.min(Number(req.query.limit) || 50, 200);
-  const headerTenant = String(req.headers["x-tenant-id"] || "").trim();
-  const tenantFilter = app === "merchant" ? String(req.query.tenantId || headerTenant || "").trim() || void 0 : void 0;
-  const rows = db.getNotifications({ app, ownerToken, tenantId: tenantFilter, limit });
-  const unread = db.getNotifications({ app, ownerToken, tenantId: tenantFilter }).filter((n) => !n.read).length;
-  res.json({ notifications: rows, unreadCount: unread, app });
+  const load = () => {
+    const ownerToken = req.headers["x-owner-token"] || void 0;
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const tenantFilter = app === "merchant" ? req.tenantId : void 0;
+    const rows = db.getNotifications({ app, ownerToken, tenantId: tenantFilter, limit });
+    const unread = db.getNotifications({ app, ownerToken, tenantId: tenantFilter }).filter((n) => !n.read).length;
+    res.json({ notifications: rows, unreadCount: unread, app });
+  };
+  if (app === "merchant") return merchantAuthMiddleware(req, res, () => load());
+  load();
 });
-apiRouter.post("/notifications/:id/read", (req, res) => {
+function notificationAccess(req, res, next) {
+  const notification = db.getNotification(req.params.id);
+  if (!notification) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0625\u0634\u0639\u0627\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+  if (notification.app !== "merchant") return next();
+  merchantAuthMiddleware(req, res, () => {
+    if (notification.tenantId !== req.tenantId) {
+      return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0625\u0634\u0639\u0627\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+    }
+    next();
+  });
+}
+apiRouter.post("/notifications/:id/read", notificationAccess, (req, res) => {
   const ok = db.markNotificationRead(req.params.id);
   if (!ok) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0625\u0634\u0639\u0627\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true });
@@ -12270,50 +12462,67 @@ apiRouter.post("/notifications/:id/read", (req, res) => {
 apiRouter.post("/notifications/read-all", (req, res) => {
   const app = notificationAppOf(req.body?.app);
   const ownerToken = req.headers["x-owner-token"] || void 0;
-  const changed = db.markAllNotificationsRead({ app, ownerToken });
-  res.json({ success: true, changed });
+  const mark = () => {
+    const tenantId = app === "merchant" ? req.tenantId : void 0;
+    const changed = db.markAllNotificationsRead({ app, ownerToken, tenantId });
+    res.json({ success: true, changed });
+  };
+  if (app === "merchant") return merchantAuthMiddleware(req, res, mark);
+  mark();
 });
-apiRouter.delete("/notifications/:id", (req, res) => {
+apiRouter.delete("/notifications/:id", notificationAccess, (req, res) => {
   const ok = db.deleteNotification(req.params.id);
   if (!ok) return res.status(404).json({ error: "NOT_FOUND", message: "\u0627\u0644\u0625\u0634\u0639\u0627\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
   res.json({ success: true });
 });
 apiRouter.post("/push/subscribe", (req, res) => {
-  const { subscription, app, ownerToken } = req.body || {};
-  const endpoint = subscription?.endpoint;
-  const p256dh = subscription?.keys?.p256dh;
-  const auth = subscription?.keys?.auth;
-  if (!endpoint || !p256dh || !auth) {
-    return res.status(400).json({ error: "BAD_SUBSCRIPTION", message: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643 \u063A\u064A\u0631 \u0645\u0643\u062A\u0645\u0644\u0629." });
-  }
-  const saved = db.savePushSubscription({
-    endpoint,
-    app: notificationAppOf(app),
-    ownerToken: ownerToken || void 0,
-    keys: { p256dh, auth }
-  });
-  res.json({ success: true, id: saved.id });
+  const app = notificationAppOf(req.body?.app);
+  const save = () => {
+    const { subscription, ownerToken } = req.body || {};
+    const endpoint = subscription?.endpoint;
+    const p256dh = subscription?.keys?.p256dh;
+    const auth = subscription?.keys?.auth;
+    if (!endpoint || !p256dh || !auth) {
+      return res.status(400).json({ error: "BAD_SUBSCRIPTION", message: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0627\u0634\u062A\u0631\u0627\u0643 \u063A\u064A\u0631 \u0645\u0643\u062A\u0645\u0644\u0629." });
+    }
+    const saved = db.savePushSubscription({
+      endpoint,
+      app,
+      tenantId: app === "merchant" ? req.tenantId : void 0,
+      ownerToken: ownerToken || void 0,
+      keys: { p256dh, auth }
+    });
+    res.json({ success: true, id: saved.id });
+  };
+  if (app === "merchant") return merchantAuthMiddleware(req, res, save);
+  save();
 });
 apiRouter.post("/push/unsubscribe", (req, res) => {
   const endpoint = req.body?.endpoint;
-  if (!endpoint) {
-    return res.status(400).json({ error: "ENDPOINT_REQUIRED", message: "\u0627\u0644\u0631\u0627\u0628\u0637 \u0645\u0637\u0644\u0648\u0628." });
-  }
+  if (!endpoint) return res.status(400).json({ error: "ENDPOINT_REQUIRED", message: "\u0627\u0644\u0631\u0627\u0628\u0637 \u0645\u0637\u0644\u0648\u0628." });
   db.deletePushSubscription(endpoint);
   res.json({ success: true });
 });
-apiRouter.post("/push/test", async (req, res) => {
+apiRouter.post("/push/test", (req, res) => {
   const app = notificationAppOf(req.body?.app);
   const ownerToken = req.headers["x-owner-token"] || void 0;
-  const notification = await notify({
-    app,
-    kind: "system",
-    title: "\u0625\u0634\u0639\u0627\u0631 \u062A\u062C\u0631\u064A\u0628\u064A \u0645\u0646 \u0633\u0646\u062F",
-    body: "\u0625\u0646 \u0648\u0635\u0644\u062A\u0643 \u0647\u0630\u0647 \u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u0641\u0625\u0634\u0639\u0627\u0631\u0627\u062A \u0627\u0644\u0647\u0627\u062A\u0641 \u062A\u0639\u0645\u0644 \u0628\u0646\u062C\u0627\u062D \u2705",
-    linkTab: void 0,
-    recipientToken: ownerToken
+  const send = async () => {
+    const notification = await notify({
+      app,
+      kind: "system",
+      title: "\u0625\u0634\u0639\u0627\u0631 \u062A\u062C\u0631\u064A\u0628\u064A \u0645\u0646 \u0633\u0646\u062F",
+      body: "\u0625\u0646 \u0648\u0635\u0644\u062A\u0643 \u0647\u0630\u0647 \u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u0641\u0625\u0634\u0639\u0627\u0631\u0627\u062A \u0627\u0644\u0647\u0627\u062A\u0641 \u062A\u0639\u0645\u0644 \u0628\u0646\u062C\u0627\u062D \u2705",
+      recipientToken: ownerToken,
+      tenantId: app === "merchant" ? req.tenantId : void 0,
+      telegram: false,
+      ntfy: false
+    });
+    res.json({ success: true, notification });
+  };
+  if (app === "merchant") return merchantAuthMiddleware(req, res, () => {
+    void send();
   });
-  res.json({ success: true, notification });
+  void send();
 });
 apiRouter.post("/notifications/scan", async (_req, res) => {
   const result = await runNotificationScan();
@@ -12475,27 +12684,34 @@ function createApp() {
       return next();
     }
     const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-    if (isMutation) {
-      const originalJson = res.json.bind(res);
-      let flushed = false;
-      res.json = (body) => {
-        if (flushed) return originalJson(body);
-        flushed = true;
-        db.flush({ lock: false }).then(() => originalJson(body)).catch((err) => {
-          const message = err.message;
-          console.error("[DB] Flush failed:", message);
-          recordDbError(err);
-          res.status(/timeout/i.test(message) ? 503 : 500);
-          originalJson({
-            error: "DB_WRITE_FAILED",
-            message: "\u062A\u0639\u0630\u0631 \u062D\u0641\u0638 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A\u060C \u064A\u0631\u062C\u0649 \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
-            detail: message
-          });
-        });
-        return res;
-      };
-    }
     withInstanceLock(async () => {
+      let releaseWriteLock = null;
+      if (isMutation) {
+        try {
+          releaseWriteLock = await acquireWriteLock();
+        } catch (err) {
+          recordDbError(err);
+          return res.status(503).json({ error: "DB_BUSY", message: "\u0627\u0644\u062E\u0627\u062F\u0645 \u0645\u0634\u063A\u0648\u0644 \u0628\u062D\u0641\u0638 \u0639\u0645\u0644\u064A\u0629 \u0623\u062E\u0631\u0649. \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629 \u0628\u0639\u062F \u0644\u062D\u0638\u0627\u062A." });
+        }
+        const originalJson = res.json.bind(res);
+        let flushed = false;
+        res.json = (body) => {
+          if (flushed) return originalJson(body);
+          flushed = true;
+          db.flush({ lock: false }).then(() => originalJson(body)).catch((err) => {
+            const message = err.message;
+            console.error("[DB] Flush failed:", message);
+            recordDbError(err);
+            res.status(/timeout/i.test(message) ? 503 : 500);
+            originalJson({
+              error: "DB_WRITE_FAILED",
+              message: "\u062A\u0639\u0630\u0631 \u062D\u0641\u0638 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A\u060C \u064A\u0631\u062C\u0649 \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629.",
+              detail: message
+            });
+          });
+          return res;
+        };
+      }
       try {
         await db.init();
         await db.refresh();
@@ -12516,6 +12732,9 @@ function createApp() {
         res.on("finish", finish);
         res.on("close", finish);
         next();
+      }).finally(async () => {
+        if (releaseWriteLock) await releaseWriteLock().catch(() => {
+        });
       });
     }).catch((err) => {
       console.error("[API] Request failed:", err.message);

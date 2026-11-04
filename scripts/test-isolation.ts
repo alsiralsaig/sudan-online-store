@@ -40,7 +40,8 @@ try{
   // merchant A creates product
   r=await req('/products','POST',{name:'منتج A', barcode:'1111111111111', unit:'حبة', sellingPriceSdg:100, purchaseCost:50, minStockAlert:1, branchId:'branch_kht_main'}, {Authorization:`Bearer ${tokA}`}); assert.equal(r.status,200); const pid=r.body.product.id;
   // merchant B tries to delete it -> 404
-  r=await req(`/products/${pid}`,'DELETE',undefined,{Authorization:`Bearer ${tokB}`}); assert.equal(r.status,404,'cross-tenant delete should 404');
+  r=await req(`/products/${pid}`,'DELETE',undefined,{Authorization:`Bearer ${tokB}`}); assert.ok(r.status===403 || r.status===404,'cross-tenant delete must be denied');
+  r=await req('/products','GET',undefined,{Authorization:`Bearer ${tokA}`}); assert.ok(r.body.products.some((p:any)=>p.id===pid && p.isActive!==false),'cross-tenant delete must not archive the product');
   // merchant B tries to fetch it via products list -> should not see
   r=await req('/products','GET',undefined,{Authorization:`Bearer ${tokB}`}); assert.equal(r.status,200); assert(!r.body.products.some((p:any)=>p.id===pid));
   // merchant A can still fetch own
@@ -50,7 +51,7 @@ try{
   // admin token cannot access merchant products (merchant middleware expects merchant role)
   r=await req('/products','GET',undefined,{Authorization:`Bearer ${admTok}`}); assert.equal(r.status,401);
   // storefront public remains accessible
-  const slug=db.getTenant(t1)!.slug;
+  const slug=db.getTenant(t2)!.slug; // retailer storefront is public; supplier/wholesale catalogs are VIP-gated
   r=await req(`/storefront/${slug}`); assert.equal(r.status,200);
   // market ad spoof test: anon claiming tenant: should be rejected
   r=await req('/market-ads','POST',{title:'إعلان مزيف يحاول انتحال متجر', phone:'0911000000', imageUrl:'https://example.com/x.jpg', ownerToken:`tenant:${t1}`, category:'عام', priceSdg:1000, location:'الخرطوم'}); assert.equal(r.status,401,'spoof tenant ad without auth should 401');

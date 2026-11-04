@@ -909,7 +909,7 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2">
-          <button onClick={async()=>{ await api.merchantLogout(); api.clearLocalSession(); setMerchantAuthed(false); }} className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px] ctx-btn-ghost">خروج المتجر</button>
+          <button onClick={async()=>{ try { const reg = await navigator.serviceWorker?.getRegistration(); const sub = await reg?.pushManager.getSubscription(); if (sub) await api.unsubscribePush(sub.endpoint); } catch {} await api.merchantLogout(); api.clearLocalSession(); setMerchantAuthed(false); }} className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px] ctx-btn-ghost">خروج المتجر</button>
           <button
             onClick={() => switchAppMode('client')}
             className="px-2.5 py-1 bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-all shadow-xs"

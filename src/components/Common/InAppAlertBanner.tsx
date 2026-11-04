@@ -41,6 +41,17 @@ export const InAppAlertBanner: React.FC<InAppAlertBannerProps> = ({
   const startedAt = useRef<number>(Date.now());
   const timerRef = useRef<number | null>(null);
 
+  // Store/app switch: drop the previous identity's queue and seen ids so a
+  // banner queued for store A can never appear after switching to store B.
+  useEffect(() => {
+    setQueue([]);
+    setCurrent(null);
+    setLeaving(false);
+    seen.current = new Set();
+    primed.current = false;
+    startedAt.current = Date.now();
+  }, [app, ownerToken]);
+
   // First load only records what already exists — no banner storm on opening.
   useEffect(() => {
     let cancelled = false;

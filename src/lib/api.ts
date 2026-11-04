@@ -404,27 +404,20 @@ class ApiClient {
     return this.request('/supply-orders', { method: 'POST', body: JSON.stringify(payload) });
   }
 
-  public async setSupplyOrderStatus(
-    id: string,
-    status: string,
-    sellerNote?: string,
-    sellerInvoiceNumber?: string,
-  ) {
-    return this.request(`/supply-orders/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status, sellerNote, sellerInvoiceNumber }),
+  public async setSupplyOrderStatus(id: string, status: string, sellerNote?: string) {
+    return this.request(`/supply-orders/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify({ status, sellerNote }),
     });
   }
 
-  /**
-   * إرسال نسخة من فاتورة طلب توريد إلى صاحب المتجر (إشعار + Push).
-   * تُستخدم من زر «نسخة لصاحب المتجر» داخل نافذة الفاتورة.
-   */
-  public async sendInvoiceCopyToStoreOwner(orderId: string, text?: string) {
-    return this.request(`/supply-orders/${orderId}/invoice-copy`, {
-      method: 'POST',
-      body: JSON.stringify({ text }),
-    });
+  /** إصدار الرقم من السيرفر مرة واحدة؛ إعادة الضغط تفتح نفس الفاتورة. */
+  public async issueSupplyOrderInvoice(id: string) {
+    return this.request(`/supply-orders/${encodeURIComponent(id)}/invoice`, { method: 'POST', body: '{}' });
+  }
+
+  /** النسخة الكاملة يولّدها السيرفر؛ المتصفح لا يرسل نصاً موثوقاً. */
+  public async sendInvoiceCopyToStoreOwner(orderId: string) {
+    return this.request(`/supply-orders/${encodeURIComponent(orderId)}/invoice-copy`, { method: 'POST', body: '{}' });
   }
 
   /** للطبقة الأعلى: من ربط بأصنافي وبأي هامش وسعر. */

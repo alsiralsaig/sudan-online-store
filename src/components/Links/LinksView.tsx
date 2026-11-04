@@ -13,10 +13,9 @@ import {
   buildOrderInvoice,
   orderHasInvoice,
   orderInvoiceHtml,
-  orderInvoiceText,
-  orderInvoiceWhatsAppUrl,
+  orderInvoiceMarkup,
+  ORDER_INVOICE_CSS,
 } from '../../lib/orderInvoice.ts';
-import { downloadOrderInvoicePdf } from '../../lib/orderInvoicePdf.ts';
 
 /**
  * «الربط والموردون»
@@ -316,10 +315,11 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
     }
   };
 
-  const respondOrder = async (order: any, status: string, sellerInvoiceNumber?: string) => {
+  const respondOrder = async (order: any, status: string) => {
     setBusy(true);
+    setError('');
     try {
-      await api.setSupplyOrderStatus(order.id, status, undefined, sellerInvoiceNumber);
+      await api.setSupplyOrderStatus(order.id, status);
       const ord = await api.getSupplyOrders().catch(() => null);
       if (ord) setOrders(ord as any);
       setNote(`تم تحديث الطلب ${order.orderNumber}.`);
@@ -341,7 +341,34 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
    */
   const [myStore, setMyStore] = useState<any | null>(null);
   /** الطلب الذي تُعرض فاتورته الآن (زر «إصدار الفاتورة» → نافذة كاملة) */
-  const [invoiceFor, setInvoiceFor] = useState<any | null>(null);
+  const [invoiceOrderId, setInvoiceOrderId] = useState<string | null>(null);
+  const invoiceFor = useMemo(() => {
+    if (!invoiceOrderId) return null;
+    const incomingOrder = orders.incoming.find((o) => o.id === invoiceOrderId);
+    if (incomingOrder) return { ...incomingOrder, side: 'in' };
+    const outgoingOrder = orders.outgoing.find((o) => o.id === invoiceOrderId);
+    return outgoingOrder ? { ...outgoingOrder, side: 'out' } : null;
+  }, [invoiceOrderId, orders]);
+
+  const openInvoice = async (o: any) => {
+    setBusy(true);
+    setError('');
+    try {
+      const res: any = await api.issueSupplyOrderInvoice(o.id);
+      const updated = res.order;
+      setOrders((prev) => ({
+        ...prev,
+        incoming: prev.incoming.map((x) => x.id === updated.id ? updated : x),
+        outgoing: prev.outgoing.map((x) => x.id === updated.id ? updated : x),
+      }));
+      setInvoiceOrderId(o.id);
+      setPrintBlocked(false);
+    } catch (err: any) {
+      setError(err.message || 'تعذّر إصدار الفاتورة من السيرفر.');
+    } finally {
+      setBusy(false);
+    }
+  };
   useEffect(() => {
     let alive = true;
     api.merchantMe()
@@ -361,99 +388,49 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
     });
   };
 
-  /** تنزيل الفاتورة PDF مباشرة (بلا طباعة) + خيار إرسالها على واتساب */
-  const downloadInvoicePdf = async (o: any) => {
-    setBusy(true);
-    setError('');
-    try {
-      const res = await downloadOrderInvoicePdf(invoiceOf(o));
-      if (!res.ok) setError(res.error || 'تعذّر توليد PDF');
-      else setNote(`تم تنزيل ${res.fileName} — جاهز للمشاركة على واتساب.`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /**
-   * الطباعة: نفتح نافذة الطباعة بالمستند ثم نغلق المعاينة تلقائياً.
-   * ملاحظة مهمة: على الجوال (أندرويد/كروم) غالباً يمنع المتصفح window.open
-   * من داخل معالج زر في نافذة أخرى. لذلك إن مُنع الفتح نُخبر المستخدم
-   * بالحل فوراً بدل زر «لا يعمل» بصمت — وكان هذا سبب شكوى «طباعة ما شغالة».
-   */
+  /** الطباعة لا تغلق المعاينة؛ يظل بديل الطباعة ظاهراً إذا منع المتصفح النافذة. */
   const [printBlocked, setPrintBlocked] = useState(false);
-  /** آخر طلب طُلب طباعته — يستخدمه بديل الطباعة داخل الصفحة */
-  const [pendingPrintOrder, setPendingPrintOrder] = useState<any | null>(null);
-  /**
-   * طباعة داخل الصفحة نفسها: نُدخل مستند الفاتورة في منطقة مخفية ثم نطبع
-   * الصفحة الحالية. الحل الوحيد الذي يعمل على متصفحات الجوال التي تمنع
-   * النوافذ المنبثقة (كان الزر يبدو «لا يعمل» عند المستخدم).
-   */
-  const printInlineFallback = () => {
-    const pending = invoiceFor || pendingPrintOrder;
-    if (!pending) {
-      setError('اختر «إصدار الفاتورة» أولاً ثم اطبع.');
-      return;
-    }
-    const html = orderInvoiceHtml(invoiceOf(pending));
-    const body = html.slice(html.indexOf('<body>') + 6, html.lastIndexOf('</body>'));
-    const styles = html.slice(html.indexOf('<style>'), html.indexOf('</style>') + 8);
 
-    /*
-     * العقدة تُضاف إلى <body> مباشرةً (لا داخل شجرة React) حتى يستطيع
-     * @media print أن يُخفي التطبيق كله ويُظهر الفاتورة وحدها.
-     */
+  const printInlineFallback = () => {
+    if (!invoiceFor) return;
+    setError('');
     document.getElementById('sanad-inline-print')?.remove();
     const host = document.createElement('div');
     host.id = 'sanad-inline-print';
-    host.innerHTML = styles + body.replace(/<script[\s\S]*?<\/script>/g, '');
+    const style = document.createElement('style');
+    style.textContent = ORDER_INVOICE_CSS;
+    const content = document.createElement('div');
+    content.innerHTML = orderInvoiceMarkup(invoiceOf(invoiceFor));
+    host.append(style, content);
     document.body.appendChild(host);
+    const cleanup = () => host.remove();
+    window.addEventListener('afterprint', cleanup, { once: true });
     setTimeout(() => {
-      window.print();
-      setTimeout(() => host.remove(), 1200);
+      try {
+        window.print();
+        setPrintBlocked(false);
+      } catch {
+        setError('تعذّر فتح الطباعة. استخدم PDF ثم اطبع الملف من تطبيق الملفات.');
+      }
+      setTimeout(cleanup, 60_000);
     }, 150);
   };
 
-  const printOrderInvoice = (o: any, closeAfter = false) => {
-    setPendingPrintOrder(o);
-    let html = '';
-    try {
-      html = orderInvoiceHtml(invoiceOf(o));
-    } catch (e) {
-      setError('تعذّر تجهيز نسخة الطباعة.');
-      return;
-    }
-    const w = window.open('', '_blank');
-    if (!w) {
-      setPrintBlocked(true);
-      setError('المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة، أو استخدم «PDF» ثم اطبع الملف.');
-      return;
-    }
+  const printOrderInvoice = (o: any) => {
     setPrintBlocked(false);
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    if (closeAfter) setTimeout(() => setInvoiceFor(null), 400);
-  };
-
-  const sendOrderInvoiceWhatsApp = (o: any) => {
-    const w = window.open(orderInvoiceWhatsAppUrl(invoiceOf(o)), '_blank');
-    if (!w) setError('المتصفح منع فتح واتساب — اسمح بالنوافذ المنبثقة ثم أعد المحاولة.');
-  };
-
-  /** رقم فاتورة المورد — يُحفظ على الطلب ويظهر في الفاتورة المرسلة للتاجر */
-  const setMyInvoiceNumber = async (o: any) => {
-    const input = window.prompt('رقم فاتورتك لهذا الطلب (يظهر في الفاتورة التي تُرسل للتاجر):', o.sellerInvoiceNumber || '');
-    if (input === null) return;
-    setBusy(true);
+    setError('');
+    let w: Window | null = null;
     try {
-      await api.setSupplyOrderStatus(o.id, o.status, o.sellerNote, input.trim());
-      const ord = await api.getSupplyOrders().catch(() => null);
-      if (ord) setOrders(ord as any);
-      setNote('تم حفظ رقم الفاتورة.');
-    } catch (err: any) {
-      setError(err.message || 'تعذّر حفظ رقم الفاتورة');
-    } finally {
-      setBusy(false);
+      w = window.open('', '_blank');
+      if (!w) throw new Error('blocked');
+      const html = orderInvoiceHtml(invoiceOf(o));
+      w.document.open();
+      w.document.write(html.replace('</body>', '<script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script></body>'));
+      w.document.close();
+    } catch {
+      w?.close();
+      setPrintBlocked(true);
+      setError('المتصفح منع نافذة الطباعة. استخدم «اطبع من هذه الصفحة» داخل الفاتورة، أو نزّل PDF.');
     }
   };
 
@@ -556,15 +533,6 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
           <span className="flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" /> {error}
           </span>
-          {printBlocked && (
-            /* بديل فوري عندما يمنع الجوال فتح نافذة الطباعة */
-            <button
-              onClick={printInlineFallback}
-              className="self-start rounded-lg bg-rose-700 text-white px-2 py-1 text-[10.5px] font-black"
-            >
-              اطبع من هذه الصفحة بدلاً من ذلك
-            </button>
-          )}
         </div>
       )}
 
@@ -754,8 +722,8 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                     ))}
                   </div>
                   {/* طريقة الدفع والعملة */}
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <label className="text-[10px] font-black text-sky-900">
+                  <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-1.5 min-w-0">
+                    <label className="min-w-0 text-[10px] font-black text-sky-900">
                       طريقة الدفع
                       <select
                         value={payMethod}
@@ -768,7 +736,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                         <option value="credit">آجل</option>
                       </select>
                     </label>
-                    <label className="text-[10px] font-black text-sky-900">
+                    <label className="min-w-0 text-[10px] font-black text-sky-900">
                       عملة الدفع
                       <select
                         value={payCurrency}
@@ -1068,7 +1036,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11.5px] font-black text-emerald-700">{Number(o.totalSdg).toLocaleString('en-US')} ج.س</span>
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center justify-end gap-1 min-w-0">
                       {o.side === 'in' && o.status === 'pending' && (
                         <>
                           <button onClick={() => respondOrder(o, 'accepted')} disabled={busy} className="rounded-lg bg-sky-700 text-white px-2 py-1 text-[10.5px] font-black flex items-center gap-1 disabled:opacity-60">
@@ -1105,13 +1073,14 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                     */}
                   {orderHasInvoice(o) && (
                     <button
-                      onClick={() => setInvoiceFor(o)}
+                      onClick={() => { void openInvoice(o); }}
+                      disabled={busy}
                       className="w-full rounded-xl bg-sky-700 hover:bg-sky-800 text-white py-2 text-[11.5px] font-black flex items-center justify-center gap-1.5"
                     >
                       <FileText className="w-3.5 h-3.5" />
                       {o.status === 'fulfilled' ? 'إصدار الفاتورة النهائية' : 'إصدار الفاتورة'}
                       <span className="rounded bg-white/15 px-1 py-0.5 font-mono text-[9.5px]">
-                        {o.sellerInvoiceNumber || o.invoiceNumber || o.orderNumber}
+                        {o.invoiceNumber || 'إصدار الرقم'}
                       </span>
                     </button>
                   )}
@@ -1134,7 +1103,7 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
                     )}
                     {orderHasInvoice(o) && !o.invoiceNumber && (
                       <span className="rounded-md bg-sky-100 text-sky-900 px-1.5 py-0.5 font-black inline-flex items-center gap-1">
-                        <FileText className="w-3 h-3" /> فاتورة مبدئية: {o.orderNumber}
+                        <FileText className="w-3 h-3" /> بانتظار إصدار رقم الفاتورة
                       </span>
                     )}
                     {o.status === 'fulfilled' && !o.invoiceNumber && o.side === 'in' && (
@@ -1153,16 +1122,15 @@ export const LinksView: React.FC<{ onRefresh?: () => void }> = ({ onRefresh }) =
         <OrderInvoiceModal
           invoice={invoiceOf(invoiceFor)}
           canSendToOwner={invoiceFor.side === 'in'}
-          onClose={() => setInvoiceFor(null)}
-          onPrint={() => printOrderInvoice(invoiceFor, true)}
+          onClose={() => setInvoiceOrderId(null)}
+          onPrint={() => printOrderInvoice(invoiceFor)}
+          printBlocked={printBlocked}
+          onPrintInline={printInlineFallback}
           onSendToBuyer={() => {
-            /* واتساب يُفتح من داخل النافذة؛ نحفظ الرقم على الطلب إن لم يكن */
-            if (!invoiceFor.buyerPhone) {
-              setNote('لا يوجد رقم للمشتري — اختر جهة الاتصال في واتساب وأرسل نص الفاتورة.');
-            }
+            if (!invoiceFor.buyerPhone) setNote('لا يوجد رقم للمشتري — اختر جهة الاتصال في واتساب وأرسل نص الفاتورة.');
           }}
           onSendToStoreOwner={async () => {
-            await api.sendInvoiceCopyToStoreOwner(invoiceFor.id, orderInvoiceText(invoiceOf(invoiceFor)));
+            await api.sendInvoiceCopyToStoreOwner(invoiceFor.id);
           }}
         />
       )}

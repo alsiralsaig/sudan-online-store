@@ -62,6 +62,8 @@ interface NotifyInput {
   linkTab?: string;
   recipientToken?: string;
   tenantId?: string;
+  /** Optional short lock-screen text; the in-app body remains complete. */
+  pushBody?: string;
   /** Extra payload merged into the push message (e.g. a deep link). */
   pushData?: Record<string, any>;
   /** Skip creating a duplicate when this key was already used. */
@@ -77,6 +79,10 @@ interface NotifyInput {
 
 /** Create the in-app notification and fire the push to matching devices. */
 export async function notify(input: NotifyInput): Promise<AppNotification> {
+  if (input.dedupeKey) {
+    const existing = db.getNotificationByDedupeKey(input.dedupeKey);
+    if (existing) return existing;
+  }
   const notification = db.createNotification({
     dedupeKey: input.dedupeKey,
     app: input.app,
@@ -115,8 +121,16 @@ export async function notify(input: NotifyInput): Promise<AppNotification> {
 
 async function sendPush(input: NotifyInput, notification: AppNotification): Promise<void> {
   if (!configured && !initPush()) return;
+  // Merchant push is always store-scoped. A merchant notification without a
+  // tenant must not blast every registered merchant device.
+  if (notification.app === 'merchant' && !notification.tenantId) return;
 
-  const subscriptions = db.getPushSubscriptions({ app: input.app }).filter((s) => {
+  const subscriptions = db.getPushSubscriptions({
+    app: input.app,
+    tenantId: notification.app === 'merchant' ? notification.tenantId : undefined,
+  }).filter((s) => {
+    // A tenant notification must never reach an unbound/legacy device or another store.
+    if (notification.app === 'merchant' && notification.tenantId && s.tenantId !== notification.tenantId) return false;
     if (notification.recipientToken) return s.ownerToken === notification.recipientToken;
     return true;
   });
@@ -125,7 +139,7 @@ async function sendPush(input: NotifyInput, notification: AppNotification): Prom
 
   const payload = JSON.stringify({
     title: input.title,
-    body: input.body,
+    body: input.pushBody ?? input.body,
     icon: '/icons/sanad-icon-192.png',
     badge: '/icons/sanad-favicon-96.png',
     url: buildUrl(input.app, input.linkTab, input.pushData),
@@ -139,7 +153,8 @@ async function sendPush(input: NotifyInput, notification: AppNotification): Prom
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: sub.keys },
-          payload
+          payload,
+          { TTL: 3600, timeout: 5000 }
         );
       } catch (err: any) {
         // 404/410 = the device dropped the subscription

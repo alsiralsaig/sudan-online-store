@@ -30,7 +30,10 @@
     "native:setup": "bash android-scripts/setup_android_toolchain.sh",
     "native:web": "SANAD_NATIVE=true VITE_API_BASE=${VITE_API_BASE:-https://sudan-online-store-eta.vercel.app} vite build",
     "native:copy": "npx cap copy android",
-    "native:build": "bash android-scripts/build_native_apks.sh"
+    "native:build": "bash android-scripts/build_native_apks.sh",
+    "test:order-invoice": "tsx scripts/test-order-invoice.ts",
+    "test:order-invoice-ui": "tsx scripts/test-order-invoice-ui.ts",
+    "preview:order-invoice": "tsx scripts/preview-order-invoice.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -57,6 +60,7 @@
     "@capacitor/cli": "^5.7.8",
     "@capacitor/core": "^5.7.8",
     "@electric-sql/pglite": "^0.5.10",
+    "@playwright/test": "^1.64.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/pg": "^8.11.10",

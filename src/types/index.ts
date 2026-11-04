@@ -576,8 +576,13 @@ export interface SupplyOrder {
   paymentRateSource?: 'manual' | 'parallel' | 'table' | 'none';
   /* فاتورة المشتريات التي تُنشأ تلقائياً عند التسليم + وثيقة المورد */
   purchaseId?: string;
+  /** رقم سند الموحّد، يُصدر مرة واحدة ويُعاد استخدامه في فاتورة المشتريات عند التسليم. */
   invoiceNumber?: string;
+  invoiceIssuedAt?: string;
+  /** مرجع قديم أدخله المورد؛ لا يستبدل رقم سند ولا رقم فاتورة المشتريات. */
   sellerInvoiceNumber?: string;
+  sellerPhone?: string;
+  sellerAddress?: string;
   deliveredAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -988,6 +993,8 @@ export interface PushSubscriptionRecord {
   id: string;
   endpoint: string;
   app: NotificationApp;
+  /** Merchant devices are bound to the authenticated store, never a client-supplied id. */
+  tenantId?: string;
   ownerToken?: string;
   keys: { p256dh: string; auth: string };
   createdAt: string;
