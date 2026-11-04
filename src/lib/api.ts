@@ -34,7 +34,40 @@ import {
   saveOfflineSale,
   getPendingOfflineSales,
   clearSyncedSales,
+  nextOfflineInvoiceNumber,
 } from './indexedDb.ts';
+import { computeInvoiceTotals } from './invoiceMath.ts';
+
+/**
+ * خطأ HTTP يحمل رمز الحالة.
+ * بدونه كان كل خطأ — رفض صلاحية أو نقص مخزون أو مبلغ خاطئ — يُعامل كأنه
+ * انقطاع شبكة، فيُصفّ في طابور «دون اتصال» ويُعرض للتاجر كنجاح.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/**
+ * هل يجوز حفظ العملية في طابور الانتظار وإعادة إرسالها لاحقاً؟
+ * نعم لانقطاع الشبكة و5xx و408 و429 فقط.
+ * لا لأي 4xx آخر: الخادم رفض الطلب لسبب موضوعي، وإعادة إرساله لن تُصلحه.
+ */
+export function isQueueableFailure(err: unknown): boolean {
+  if (err instanceof ApiError) {
+    return err.status >= 500 || err.status === 408 || err.status === 429;
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  if (msg === 'OFFLINE_MODE') return true;
+  /* أخطاء fetch نفسها (TypeError: Failed to fetch / انقطاع) */
+  return err instanceof TypeError || /fetch|network|timeout|abort/i.test(msg);
+}
 
 /** ترجمة رموز الأخطاء الشائعة إلى عربية واضحة (تُستخدم عندما لا يرسل الخادم رسالة). */
 const ARABIC_ERRORS: Record<string, string> = {
@@ -269,6 +302,7 @@ class ApiClient {
 
     if (!res.ok) {
       let msg = 'حدث خطأ في استجابة الخادم';
+      let code: string | undefined;
       try {
         const data = await res.json();
         /*
@@ -276,11 +310,12 @@ class ApiClient {
          * ليه: التاجر كان يرى «INVALID_CODE» وحدها فلا يفهم إن كان الكود
          * خطأ أم أن المتجر لم يُفعّل بعد.
          */
+        code = typeof data.error === 'string' ? data.error : undefined;
         msg = data.message || ARABIC_ERRORS[data.error] || data.error || msg;
       } catch {
         // ignore
       }
-      throw new Error(msg);
+      throw new ApiError(msg, res.status, code);
     }
 
     const data = await res.json();
@@ -741,13 +776,51 @@ class ApiClient {
 
   /* POS Sales with OFFLINE-FIRST support */
   public async recordSale(salePayload: any): Promise<{ success: boolean; sale: Sale; isOffline?: boolean }> {
-    const saleId = salePayload.id || `sale_cli_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const invoiceNumber = salePayload.invoiceNumber || `INV-OFF-${Date.now().toString().slice(-6)}`;
+    const saleId = salePayload.id || `sale_cli_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    /* الرقم المتصل يحجزه الخادم. رقم الجهاز يُحجز فقط إن احتجنا التصفيف،
+       فلا تُستهلك أرقام على مبيعات رفضها الخادم أو أتمّها متصلاً. */
+    const providedInvoiceNumber = String(salePayload.invoiceNumber || '').trim();
+    const reserveOfflineNumber = async (): Promise<string> => {
+      if (providedInvoiceNumber) return providedInvoiceNumber;
+      try {
+        return await nextOfflineInvoiceNumber();
+      } catch (err) {
+        console.error('[pos] offline invoice numbering unavailable', err);
+        throw new ApiError(
+          'تعذّر حجز رقم فاتورة على هذا الجهاز. أعد المحاولة، وإن استمر الخطأ امسح بيانات الموقع بعد مزامنة المعلّق.',
+          0,
+          'OFFLINE_NUMBERING_UNAVAILABLE',
+        );
+      }
+    };
+
+    // حماية لأي مستدعٍ لا يرسل الإجماليات: نحسبها من البنود حتى لا تنهار الواجهة والتقارير.
+    const needsTotals = !Number.isFinite(Number(salePayload.grandTotalSdg)) || !Number.isFinite(Number(salePayload.subtotalSdg));
+    const computed = needsTotals
+      ? computeInvoiceTotals(
+          (salePayload.items || []).map((it: any) => ({
+            quantity: it.quantity,
+            unitPrice: it.unitPriceSdg,
+            discount: it.discountSdg,
+            taxRate: it.taxRate,
+          })),
+          { pricesIncludeVat: Boolean(salePayload.pricesIncludeVat), invoiceDiscount: salePayload.discountTotalSdg },
+        )
+      : null;
 
     const fullSale: Sale = {
+      status: 'completed',
       ...salePayload,
+      ...(computed
+        ? {
+            subtotalSdg: computed.subtotal,
+            discountTotalSdg: computed.discountTotal,
+            taxTotalSdg: computed.taxTotal,
+            grandTotalSdg: computed.grandTotal,
+          }
+        : {}),
       id: saleId,
-      invoiceNumber,
+      ...(providedInvoiceNumber ? { invoiceNumber: providedInvoiceNumber } : {}),
       tenantId: this.tenantId,
       cashierId: this.currentActor.id,
       cashierName: this.currentActor.name,
@@ -755,6 +828,7 @@ class ApiClient {
     };
 
     if (this.isOffline()) {
+      fullSale.invoiceNumber = await reserveOfflineNumber();
       fullSale.isOfflineCreated = true;
       await saveOfflineSale(fullSale);
       return { success: true, sale: fullSale, isOffline: true };
@@ -767,9 +841,18 @@ class ApiClient {
       });
       return { ...res, isOffline: false };
     } catch (err: any) {
-      console.warn('Network error during online sale, saving offline:', err);
+      /* رفض من الخادم (نقص مخزون، صلاحية، مبلغ غير صالح) ليس انقطاع شبكة:
+         نُظهره للتاجر كما هو ولا نحفظ الفاتورة كأنها نجحت. */
+      if (!isQueueableFailure(err)) throw err;
+      console.warn('Network unavailable during sale, queued offline:', err);
+      fullSale.invoiceNumber = await reserveOfflineNumber();
       fullSale.isOfflineCreated = true;
-      await saveOfflineSale(fullSale);
+      try {
+        await saveOfflineSale(fullSale);
+      } catch (saveErr) {
+        console.error('[pos] failed to queue offline sale', saveErr);
+        throw new ApiError('تعذّر حفظ الفاتورة على الجهاز ولم يصل الخادم. لا تُعِد البيع قبل التحقق — أعد المحاولة الآن.', 0, 'OFFLINE_QUEUE_FAILED');
+      }
       return { success: true, sale: fullSale, isOffline: true };
     }
   }
@@ -784,6 +867,8 @@ class ApiClient {
     payload: {
       reason: string;
       returnItems?: { productId: string; quantity: number }[];
+      /** معرّف ثابت للعملية: إعادة المحاولة بنفس المعرّف لا تُصدر إشعاراً ثانياً. */
+      requestId?: string;
     }
   ): Promise<{ success: boolean; returnRecord?: ReturnRecord; sale?: Sale }> {
     return this.request(`/pos/sales/${saleId}/refund`, {
@@ -832,20 +917,26 @@ class ApiClient {
   }
 
   /* Offline Sync Queue */
-  public async syncPendingOfflineSales(): Promise<{ success: boolean; syncedCount: number; errors: any[] }> {
+  public async syncPendingOfflineSales(): Promise<{
+    success: boolean;
+    syncedCount: number;
+    errors: any[];
+    renumbered?: { id: string; from: string; to: string }[];
+  }> {
     const pending = await getPendingOfflineSales();
     if (!pending.length) {
-      return { success: true, syncedCount: 0, errors: [] };
+      return { success: true, syncedCount: 0, errors: [], renumbered: [] };
     }
 
-    const res = await fetch('/api/sync/batch', {
+    const res = await fetch(`${API_BASE}/api/sync/batch`, {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify({ sales: pending }),
     });
 
     if (!res.ok) {
-      throw new Error('فشلت مزامنة المبيعات مع الخادم');
+      throw new ApiError('فشلت مزامنة المبيعات مع الخادم', res.status);
     }
 
     const result = await res.json();

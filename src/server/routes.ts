@@ -37,6 +37,8 @@ import { ntfyStatus, sendNtfy } from './ntfy.ts';
 import { newId, newCode } from './ids.ts';
 import type { SupplyOrder, SupplyOrderItem } from '../types/index.ts';
 import { buildOrderInvoice, orderInvoiceText, orderHasInvoice } from '../lib/orderInvoice.ts';
+import { computeInvoiceTotals, validateInvoiceLine, createRefundAllocator, round2 } from '../lib/invoiceMath.ts';
+import { commitSaleAtomic, commitRefundAtomic, claimPosOperation, releasePosOperation, seedLegacyReturns, readSupplyInvoiceNumber, putSupplyInvoiceNumberIfAbsent } from './posAtomic.ts';
 import {
   saveMedia, getMedia, deleteMedia, buildMediaResponse, prepareForStreaming, HttpError, MAX_RAW_BYTES,
   MAX_VIDEO_BYTES, CHUNK_BYTES, saveChunk, completeChunked,
@@ -1338,10 +1340,81 @@ async function reservePurchaseInvoiceNumber(tenantId: string): Promise<string> {
   return `${prefix}${String(next).padStart(5, '0')}`;
 }
 
+/**
+ * ضغطتان متزامنتان على «إصدار الفاتورة» كانتا تحجزان رقمين وتُبقيان الثاني (فجوة في الترقيم
+ * ورقم يختلف عمّا رآه الطرف الأول). الآن طلب واحد قيد التنفيذ لكل أمر، والبقية تنتظر نتيجته.
+ */
+const supplyInvoiceInFlight = new Map<string, Promise<void>>();
 async function ensureSupplyInvoiceNumber(order: SupplyOrder): Promise<void> {
   if (order.invoiceNumber) return;
-  order.invoiceNumber = await reservePurchaseInvoiceNumber(order.buyerTenantId);
-  order.invoiceIssuedAt = new Date().toISOString();
+  /* حاجز داخل النسخة + حجز فريد في قاعدة البيانات عبر كل النسخ. */
+  let pending = supplyInvoiceInFlight.get(order.id);
+  if (!pending) {
+    pending = (async () => {
+      const already = await readSupplyInvoiceNumber(order.id);
+      if (already) {
+        order.invoiceNumber = already.number;
+        order.invoiceIssuedAt = already.issuedAt;
+        return;
+      }
+      const candidate = await reservePurchaseInvoiceNumber(order.buyerTenantId);
+      const winner = await putSupplyInvoiceNumberIfAbsent(order.id, candidate, new Date().toISOString());
+      order.invoiceNumber = winner.number;
+      order.invoiceIssuedAt = winner.issuedAt;
+    })().finally(() => supplyInvoiceInFlight.delete(order.id));
+    supplyInvoiceInFlight.set(order.id, pending);
+  }
+  await pending;
+}
+
+/**
+ * ترقيم تسلسلي لفواتير البيع (INV) وإشعارات الدائن (CN) لكل منشأة وسنة.
+ * كان الرقم عشوائياً (Math.random) فيتكرر ولا يُعدّ تسلسلاً محاسبياً صالحاً.
+ * العداد ذرّي في Postgres؛ والمسح أدناه فقط لرفع نقطة البداية فوق الأرقام الموجودة.
+ */
+async function nextTenantDocumentNumber(kind: 'INV' | 'CN', tenantId: string, existing: Array<string | undefined>): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `${kind}-${year}-`;
+  const re = new RegExp(`^${prefix}(\\d+)$`);
+  let max = 0;
+  for (const value of existing) {
+    const m = re.exec(String(value || ''));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  const next = await db.nextDocumentSequence(`${kind.toLowerCase()}:${tenantId}:${year}`, max + 1);
+  return `${prefix}${String(next).padStart(6, '0')}`;
+}
+
+/** تحديث أرقام الوردية بعد بيع (يُستخدم في البيع المباشر ومزامنة المبيعات دون اتصال). */
+function applySaleToShift(shift: any, sale: { grandTotalSdg: number; paymentMethod: string; splitDetails?: any }): void {
+  if (!shift || shift.status !== 'open') return;
+  const grand = Number(sale.grandTotalSdg) || 0;
+  shift.salesCount += 1;
+  shift.totalSalesSdg += grand;
+  const method = sale.paymentMethod;
+  const split = sale.splitDetails;
+  if (method === 'cash') {
+    shift.totalCashSalesSdg += grand;
+    shift.expectedCashSdg += grand;
+  } else if (method === 'bankak') {
+    shift.totalBankakSalesSdg += grand;
+  } else if (method === 'syberpay' || method === 'fawry') {
+    shift.totalCardSalesSdg += grand;
+  } else if (method === 'split' && split) {
+    shift.totalCashSalesSdg += split.cashAmountSdg || 0;
+    shift.expectedCashSdg += split.cashAmountSdg || 0;
+    shift.totalBankakSalesSdg += split.bankakAmountSdg || 0;
+    shift.totalCardSalesSdg += (split.cardAmountSdg || 0) + (split.fawryAmountSdg || 0);
+  }
+}
+
+/**
+ * هل هذا الصنف يُتتبع في المخزون؟
+ * الخدمات (استشارة، توصيل، اشتراك…) لا رصيد لها، فلا تُخصم ولا يُرفض بيعها.
+ * الافتراضي true حتى لا يتغيّر سلوك الأصناف الحالية.
+ */
+function tracksInventory(product: { trackInventory?: boolean } | undefined | null): boolean {
+  return product?.trackInventory !== false;
 }
 
 function supplyInvoiceContext(order: SupplyOrder) {
@@ -1903,7 +1976,7 @@ apiRouter.post('/products', merchantAuthMiddleware, (req, res) => {
   const {
     name, sku, barcode, category, unit, purchaseCost, costCurrency, sellingPriceSdg,
     minStockAlert, initialStock, branchId, imageUrl, videoUrl, isTaxExempt, customTaxRate,
-    description, expiryDate, productionDate,
+    description, expiryDate, productionDate, trackInventory,
   } = req.body;
 
   if (!name || !sellingPriceSdg) {
@@ -1934,6 +2007,8 @@ apiRouter.post('/products', merchantAuthMiddleware, (req, res) => {
     /* أقل كمية للطلب على مستوى الصنف */
     minOrderQty: Number(req.body?.minOrderQty) > 0 ? Math.round(Number(req.body.minOrderQty)) : undefined,
     isTaxExempt: Boolean(isTaxExempt),
+    /* الافتراضي صنف مخزوني؛ false تعني خدمة لا رصيد لها. */
+    trackInventory: trackInventory === false ? false : true,
     customTaxRate: customTaxRate !== undefined && customTaxRate !== '' ? Number(customTaxRate) : undefined,
     isActive: true,
     createdAt: new Date().toISOString(),
@@ -1985,6 +2060,7 @@ apiRouter.put('/products/:id', merchantAuthMiddleware, requireProductEditor, (re
   }
   if ('sellingPriceSdg' in body && !(body.sellingPriceSdg > 0)) return res.status(400).json({ error: 'سعر البيع يجب أن يكون أكبر من صفر.' });
   if ('isTaxExempt' in body && typeof body.isTaxExempt !== 'boolean') return res.status(400).json({ error: 'حالة الضريبة غير صالحة.' });
+  if ('trackInventory' in body && typeof body.trackInventory !== 'boolean') return res.status(400).json({ error: 'حالة تتبّع المخزون غير صالحة.' });
   if ('barcode' in body && body.barcode.trim() && normalizeBarcode(body.barcode) !== normalizeBarcode(product.barcode)) {
     const code = normalizeBarcode(body.barcode);
     const duplicate = db.getProducts(actor.tenantId).find((p) => p.id !== product.id && p.isActive !== false && normalizeBarcode(p.barcode) === code);
@@ -2024,6 +2100,7 @@ apiRouter.put('/products/:id', merchantAuthMiddleware, requireProductEditor, (re
   }
   if ('minStockAlert' in body) product.minimumStock = body.minStockAlert;
   if ('isTaxExempt' in body) product.isTaxExempt = body.isTaxExempt;
+  if ('trackInventory' in body) product.trackInventory = body.trackInventory;
   if ('customTaxRate' in body) product.customTaxRate = body.customTaxRate === null ? undefined : body.customTaxRate;
 
   /*
@@ -2528,7 +2605,7 @@ apiRouter.get('/pos/shifts', merchantAuthMiddleware, (req, res) => {
 /* =========================================================================
    7. POS SALES & INVOICING
    ========================================================================= */
-apiRouter.post('/pos/sales', merchantAuthMiddleware, (req, res) => {
+apiRouter.post('/pos/sales', merchantAuthMiddleware, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const {
     id, // client-generated UUID for idempotency & offline sync
@@ -2585,73 +2662,125 @@ apiRouter.post('/pos/sales', merchantAuthMiddleware, (req, res) => {
   }
   const tenant = db.getTenant(authReq.tenantId);
 
-  // VAT settings resolution
-  const isVatActive = clientVatEnabled !== undefined ? Boolean(clientVatEnabled) : (tenant?.settings?.vatEnabled ?? true);
-  const effectiveDefaultVatPct = Number(clientDefaultVatPct ?? tenant?.settings?.defaultVatPct ?? 15);
-  const isPricesIncludeVat = clientPricesIncludeVat !== undefined ? Boolean(clientPricesIncludeVat) : (tenant?.settings?.pricesIncludeVat ?? false);
+  /* الإعدادات الضريبية مرجعها المنشأة وحدها.
+     قبولها من الجهاز كان يسمح بإصدار فاتورة بلا ضريبة بإرسال vatEnabled:false،
+     أو تغيير نسبة الضريبة من طلب مُعدّل — وهذا خلل مالي لا تجميلي. */
+  const isVatActive = tenant?.settings?.vatEnabled ?? true;
+  const effectiveDefaultVatPct = Number(tenant?.settings?.defaultVatPct ?? 15);
+  const isPricesIncludeVat = tenant?.settings?.pricesIncludeVat ?? false;
+  void clientVatEnabled; void clientDefaultVatPct; void clientPricesIncludeVat;
 
-  // Calculate totals and item VAT
-  let subtotal = 0;
-  let computedTaxTotal = 0;
-  const processedItems: SaleItem[] = [];
+  // 1) حلّ وتحقق كل البنود قبل لمس المخزون (بند فاسد لا يجوز أن يترك سلة مخصومة جزئياً).
+  const saleActorEmployee = db.getSchema().employees.find((e) => e.tenantId === authReq.tenantId && e.id === authReq.actorId);
+  const saleActorPerms = resolveActorPerms(authReq.actorRole, saleActorEmployee);
 
+  const resolvedLines: Array<{
+    item: any; product: any; qty: number; unitPrice: number; discount: number; isTaxExempt: boolean; taxRate: number;
+  }> = [];
   for (const item of items) {
     const product = db.getSchema().products.find((p) => p.id === item.productId && p.tenantId === authReq.tenantId);
-    const qty = Number(item.quantity);
-    const unitPrice = Number(item.unitPriceSdg || product?.sellingPriceSdg || 0);
-    const discount = Number(item.discountSdg || 0);
-    const total = qty * unitPrice - discount;
-    subtotal += total;
-
+    /* ?? لا ||: السعر صفر سعرٌ مقصود (هدية/تصفير)، لا «قيمة مفقودة». */
+    const unitPrice = Number(item.unitPriceSdg ?? product?.sellingPriceSdg ?? 0);
+    /* تجاوز سعر القائمة يحتاج صلاحية تعديل الأسعار — وإلا فأي طلب مُعدّل
+       يبيع بأقل من السعر المسجّل دون علم المالك. */
+    const listPrice = Number(product?.sellingPriceSdg ?? 0);
+    if (
+      !isOfflineCreated &&
+      item.unitPriceSdg !== undefined &&
+      Math.abs(unitPrice - listPrice) > 0.009 &&
+      !saleActorPerms.editPrices
+    ) {
+      return res.status(403).json({
+        error: 'PRICE_OVERRIDE_FORBIDDEN',
+        message: `ليست لديك صلاحية تعديل سعر «${product?.name || 'الصنف'}». السعر المسجّل ${listPrice.toLocaleString()} ج.س.`,
+      });
+    }
+    const lineError = validateInvoiceLine(item, unitPrice);
+    if (lineError) {
+      return res.status(400).json({ error: `«${product?.name || item.productName || 'صنف'}»: ${lineError}` });
+    }
     // Check item-level tax status
     const isTaxExempt = item.isTaxExempt !== undefined ? Boolean(item.isTaxExempt) : Boolean(product?.isTaxExempt);
-    const taxRate = isTaxExempt || !isVatActive ? 0 : Number(item.taxRate ?? product?.customTaxRate ?? effectiveDefaultVatPct);
-    let itemTax = 0;
-    if (isVatActive && taxRate > 0) {
-      if (isPricesIncludeVat) {
-        // Price already includes VAT
-        itemTax = total - (total / (1 + taxRate / 100));
-      } else {
-        // Price is before VAT
-        itemTax = total * (taxRate / 100);
-      }
-    }
-    computedTaxTotal += itemTax;
-
-    processedItems.push({
-      productId: item.productId,
-      productName: product?.name || item.productName || 'صنف',
-      unit: product?.unit || item.unit || 'حبة',
-      quantity: qty,
-      unitPriceSdg: unitPrice,
-      discountSdg: discount,
-      totalSdg: total,
-      costPerUnitSdg: product?.purchaseCost || 0,
-      notes: item.notes || undefined,
+    const rawRate = isTaxExempt || !isVatActive ? 0 : Number(item.taxRate ?? product?.customTaxRate ?? effectiveDefaultVatPct);
+    resolvedLines.push({
+      item,
+      product,
+      qty: Number(item.quantity),
+      unitPrice,
+      discount: Number(item.discountSdg || 0),
       isTaxExempt,
-      taxRate,
-      taxAmountSdg: Math.round(itemTax * 100) / 100,
-    });
-
-    // Deduct stock
-    db.adjustStock({
-      tenantId: authReq.tenantId,
-      branchId,
-      productId: item.productId,
-      delta: -qty,
-      type: 'sale_deduction',
-      reason: `بيع مباشر في الكاشير`,
-      actorName: authReq.actorName,
+      taxRate: Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 0,
     });
   }
 
-  const taxTotal = Math.round(computedTaxTotal * 100) / 100;
-  const discountTotal = Number(discountTotalSdg) || 0;
-  const grandTotal = isPricesIncludeVat
-    ? Math.max(0, subtotal - discountTotal)
-    : Math.max(0, subtotal - discountTotal + taxTotal);
+  // 2) البنود غير المخزونية (خدمات) لا تُخصم ولا تُرفض بسبب الرصيد.
+  const stockDeltas = resolvedLines
+    .filter((r) => tracksInventory(r.product))
+    .map((r) => ({ productId: r.item.productId, delta: -r.qty }));
+  /* فحص مبكر لرسالة واضحة؛ الحكم النهائي ذرّي داخل المعاملة أدناه. */
+  if (!tenant?.settings?.allowNegativeStock) {
+    const needed = new Map<string, number>();
+    for (const d of stockDeltas) needed.set(d.productId, (needed.get(d.productId) || 0) - d.delta);
+    for (const [productId, qty] of needed) {
+      const inv = db.getSchema().branchInventories.find(
+        (i) => i.tenantId === authReq.tenantId && i.branchId === branchId && i.productId === productId,
+      );
+      const available = inv ? inv.quantity : 0;
+      if (available < qty) {
+        const name = db.getSchema().products.find((p) => p.id === productId)?.name || productId;
+        return res.status(409).json({ error: 'INSUFFICIENT_STOCK', message: `الرصيد المتاح من «${name}» غير كافٍ (${available}).` });
+      }
+    }
+  }
 
-  const invoiceNumber = `INV-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+  // 3) الإجماليات: مصدر موحّد مع الواجهة (تقريب خانتين + الضريبة بعد خصم الفاتورة).
+  const totals = computeInvoiceTotals(
+    resolvedLines.map((r) => ({ quantity: r.qty, unitPrice: r.unitPrice, discount: r.discount, taxRate: r.taxRate })),
+    { pricesIncludeVat: isPricesIncludeVat, invoiceDiscount: Number(discountTotalSdg) || 0 },
+  );
+  const subtotal = totals.subtotal;
+  const discountTotal = totals.discountTotal;
+  const taxTotal = totals.taxTotal;
+  const grandTotal = totals.grandTotal;
+
+  // 4) رقم تسلسلي. الانتظار هنا يفتح نافذة سباق، لذا نعيد فحص التكرار بعده وقبل أي تعديل.
+  let invoiceNumber: string;
+  try {
+    invoiceNumber = await nextTenantDocumentNumber(
+      'INV',
+      authReq.tenantId,
+      db.getSchema().sales.filter((s) => s.tenantId === authReq.tenantId).map((s) => s.invoiceNumber),
+    );
+  } catch (err) {
+    console.error('[pos/sales] invoice number reservation failed', err);
+    return res.status(503).json({ error: 'تعذّر حجز رقم الفاتورة. أعد المحاولة.' });
+  }
+  if (id) {
+    const duplicate = db.getSchema().sales.find((s) => s.id === id && s.tenantId === authReq.tenantId);
+    if (duplicate) return res.json({ success: true, sale: duplicate, isDuplicate: true });
+  }
+
+  // 5) بناء البنود (الخصم يحدث ذرّياً مع حفظ الفاتورة أدناه).
+  const processedItems: SaleItem[] = [];
+  resolvedLines.forEach((r, idx) => {
+    const line = totals.lines[idx];
+    processedItems.push({
+      productId: r.item.productId,
+      productName: r.product?.name || r.item.productName || 'صنف',
+      unit: r.product?.unit || r.item.unit || 'حبة',
+      quantity: r.qty,
+      unitPriceSdg: r.unitPrice,
+      discountSdg: r.discount,
+      totalSdg: line.total,
+      costPerUnitSdg: r.product?.purchaseCost || 0,
+      notes: r.item.notes || undefined,
+      isTaxExempt: r.isTaxExempt,
+      taxRate: r.taxRate,
+      taxAmountSdg: line.taxAmount,
+    });
+
+  });
+
 
   // Customer linkage & loyalty points accumulation
   let linkedCustomerId = customerId || undefined;
@@ -2662,13 +2791,6 @@ apiRouter.post('/pos/sales', merchantAuthMiddleware, (req, res) => {
 
   let earnedPoints = 0;
   let updatedCustomer: any = null;
-  if (linkedCustomerId) {
-    const loyaltyRes = db.recordCustomerSale(authReq.tenantId, linkedCustomerId, grandTotal);
-    if (loyaltyRes) {
-      earnedPoints = loyaltyRes.earnedPoints;
-      updatedCustomer = loyaltyRes.cust;
-    }
-  }
 
   const sale: Sale = {
     id: id || newId('sale'),
@@ -2678,8 +2800,8 @@ apiRouter.post('/pos/sales', merchantAuthMiddleware, (req, res) => {
     shiftId: shiftId || '',
     invoiceNumber,
     customerId: linkedCustomerId,
-    customerName: customerName || (updatedCustomer ? updatedCustomer.name : 'عميل نقدي'),
-    customerPhone: customerPhone || (updatedCustomer ? updatedCustomer.phone : ''),
+    customerName: customerName || db.getSchema().customers.find((c) => c.id === linkedCustomerId)?.name || 'عميل نقدي',
+    customerPhone: customerPhone || db.getSchema().customers.find((c) => c.id === linkedCustomerId)?.phone || '',
     items: processedItems,
     subtotalSdg: subtotal,
     discountTotalSdg: discountTotal,
@@ -2696,7 +2818,35 @@ apiRouter.post('/pos/sales', merchantAuthMiddleware, (req, res) => {
     createdAt: new Date().toISOString(),
   };
 
-  db.getSchema().sales.unshift(sale);
+  /* بيع + خصم مخزون + منع التكرار في معاملة واحدة عبر كل النسخ.
+     العلم القادم من الجهاز لم يعد يمنح سماحاً بالمخزون السالب. */
+  const committed = await commitSaleAtomic(db.atomicContext(), {
+    sale,
+    deltas: stockDeltas,
+    allowNegative: Boolean(tenant?.settings?.allowNegativeStock),
+    operationKey: `sale:${authReq.tenantId}:${sale.id}`,
+    actorName: authReq.actorName,
+    reason: isOfflineCreated ? 'بيع من الكاشير (مسجّل دون اتصال)' : 'بيع مباشر في الكاشير',
+  });
+  if (!committed.ok) {
+    if (committed.code === 'DUPLICATE') {
+      await db.refresh();
+      const existing = db.getSchema().sales.find((s) => s.id === sale.id && s.tenantId === authReq.tenantId);
+      if (existing) return res.json({ success: true, sale: existing, isDuplicate: true });
+      return res.status(409).json({ error: 'SALE_IN_PROGRESS', message: 'هذه الفاتورة قيد التسجيل. أعد المحاولة بعد لحظات.' });
+    }
+    const name = db.getSchema().products.find((p) => p.id === committed.productId)?.name || committed.productId;
+    return res.status(409).json({ error: 'INSUFFICIENT_STOCK', message: `الرصيد المتاح من «${name}» غير كافٍ (${committed.available}).` });
+  }
+
+  /* نقاط الولاء تُمنح بعد نجاح الحفظ فقط، فلا تُحتسب لعملية مرفوضة. */
+  if (linkedCustomerId) {
+    const loyaltyRes = db.recordCustomerSale(authReq.tenantId, linkedCustomerId, grandTotal);
+    if (loyaltyRes) {
+      earnedPoints = loyaltyRes.earnedPoints;
+      updatedCustomer = loyaltyRes.cust;
+    }
+  }
 
   // Generate Kitchen Ticket for items with quick order notes or order dispatch
   const itemsWithNotes = processedItems.filter((it) => it.notes && it.notes.trim().length > 0);
@@ -2729,24 +2879,7 @@ apiRouter.post('/pos/sales', merchantAuthMiddleware, (req, res) => {
   // Update active shift if specified
   if (shiftId) {
     const shift = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
-    if (shift && shift.status === 'open') {
-      shift.salesCount += 1;
-      shift.totalSalesSdg += grandTotal;
-
-      if (paymentMethod === 'cash') {
-        shift.totalCashSalesSdg += grandTotal;
-        shift.expectedCashSdg += grandTotal;
-      } else if (paymentMethod === 'bankak') {
-        shift.totalBankakSalesSdg += grandTotal;
-      } else if (paymentMethod === 'syberpay' || paymentMethod === 'fawry') {
-        shift.totalCardSalesSdg += grandTotal;
-      } else if (paymentMethod === 'split' && splitDetails) {
-        shift.totalCashSalesSdg += splitDetails.cashAmountSdg || 0;
-        shift.expectedCashSdg += splitDetails.cashAmountSdg || 0;
-        shift.totalBankakSalesSdg += splitDetails.bankakAmountSdg || 0;
-        shift.totalCardSalesSdg += (splitDetails.cardAmountSdg || 0) + (splitDetails.fawryAmountSdg || 0);
-      }
-    }
+    applySaleToShift(shift, { grandTotalSdg: grandTotal, paymentMethod, splitDetails });
   }
 
   db.commit();
@@ -2766,110 +2899,137 @@ apiRouter.get('/pos/sales', merchantAuthMiddleware, (req, res) => {
 });
 
 // Refunds / Returns & Credit Notes
-apiRouter.post('/pos/sales/:id/refund', merchantAuthMiddleware, (req, res) => {
+apiRouter.post('/pos/sales/:id/refund', merchantAuthMiddleware, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
+  /* الإرجاع حركة مال ومخزون: صلاحية «إرجاع الفواتير» كانت معرّفة وغير مفحوصة،
+     فأي مستخدم مسجّل — مدقّق أو أمين مخزن — يستطيع إصدار إشعار دائن. */
+  const refundEmployee = db.getSchema().employees.find((e) => e.tenantId === authReq.tenantId && e.id === authReq.actorId);
+  if (!resolveActorPerms(authReq.actorRole, refundEmployee).processReturns) {
+    return res.status(403).json({ error: 'REFUND_FORBIDDEN', message: 'ليست لديك صلاحية إرجاع الفواتير.' });
+  }
   const sale = db.getSchema().sales.find((s) => s.id === req.params.id && s.tenantId === authReq.tenantId);
   if (!sale) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
-  if (sale.status === 'refunded') return res.status(400).json({ error: 'تم إرجاع هذه الفاتورة بالكامل مسبقاً' });
 
-  const { reason, returnItems } = req.body; // returnItems: { productId: string; quantity: number }[]
+  const { reason, returnItems } = req.body;
+  /* معرّف العملية من الجهاز يمنع تكرار نفس الإرجاع عند إعادة المحاولة.
+     عند غيابه نولّد واحداً؛ دفتر الحجز الذرّي يبقى هو الحكم على الكميات. */
+  const requestId = typeof req.body?.requestId === 'string' && req.body.requestId.trim()
+    ? req.body.requestId.trim().slice(0, 80)
+    : newId('req');
+  const operationKey = `refund:${authReq.tenantId}:${sale.id}:${requestId}`;
 
-  // Find existing returns for this sale to compute remaining returnable quantities
+  /* إعادة نفس الطلب تُجاب بالإشعار الأصلي — حتى لو اكتمل الإرجاع بعدها.
+     الفحص لازم يسبق رفض «مرتجع بالكامل» وإلا رأى التاجر خطأً لعملية نجحت. */
+  const priorNote = db.getSchema().returns.find((r) => r.saleId === sale.id && (r as any).requestId === requestId);
+  if (priorNote) return res.json({ success: true, returnRecord: priorNote, sale, isDuplicate: true });
+
+  if (sale.status === 'refunded') {
+    return res.status(409).json({ error: 'ALREADY_REFUNDED', message: 'تم إرجاع هذه الفاتورة بالكامل مسبقاً' });
+  }
+
+  /* المرتجعات السابقة تدخل دفتر الحجز مرة واحدة لتبقى الكميات صحيحة بعد الترقية. */
   const existingReturns = db.getSchema().returns.filter((r) => r.saleId === sale.id);
+  /* البذر للسجلات القديمة فقط (بلا requestId).
+     الإشعارات الجديدة حجزت كمياتها في الدفتر وقت الإصدار؛ إعادة إدخالها
+     كانت تُضاعف المرتجع فيُرفض إرجاع جزئي ثانٍ سليم. */
+  const legacyReturns = existingReturns.filter((r) => !(r as any).requestId);
+  await seedLegacyReturns(sale.id, legacyReturns.flatMap((r) => r.items.map((it) => ({ productId: it.productId, quantity: it.quantity }))));
+
+  const soldQuantities = new Map<string, number>();
+  for (const it of sale.items) soldQuantities.set(it.productId, (soldQuantities.get(it.productId) || 0) + (Number(it.quantity) || 0));
+
   const previouslyReturnedMap: Record<string, number> = {};
   for (const ret of existingReturns) {
     for (const it of ret.items) {
       previouslyReturnedMap[it.productId] = (previouslyReturnedMap[it.productId] || 0) + it.quantity;
     }
   }
+  const previouslyRefundedTax = existingReturns.reduce((n, r) => n + (Number((r as any).taxRefundSdg) || 0), 0);
 
-  // Items to process
-  let itemsToRefund: { productId: string; productName: string; quantity: number; refundAmountSdg: number }[] = [];
-  let totalRefundSdg = 0;
+  const refundAllocator = createRefundAllocator(sale);
+  const saleGrand = refundAllocator.grand;
 
+  /* تجميع البنود المكرّرة: نفس الصنف مرتين في الطلب لا يجوز أن يُرجع ضعف الكمية. */
+  const requested = new Map<string, number>();
   if (Array.isArray(returnItems) && returnItems.length > 0) {
-    // Custom item selection with specific quantities
     for (const retItem of returnItems) {
-      const origItem = sale.items.find((i) => i.productId === retItem.productId);
-      if (!origItem) continue;
-
-      const alreadyReturned = previouslyReturnedMap[retItem.productId] || 0;
-      const availableToReturn = Math.max(0, origItem.quantity - alreadyReturned);
-      const requestedQty = Math.min(Math.max(0, Number(retItem.quantity) || 0), availableToReturn);
-
-      if (requestedQty <= 0) continue;
-
-      const unitEffectivePrice = origItem.quantity > 0 ? origItem.totalSdg / origItem.quantity : origItem.unitPriceSdg;
-      const refundAmt = Math.round(unitEffectivePrice * requestedQty);
-
-      itemsToRefund.push({
-        productId: origItem.productId,
-        productName: origItem.productName,
-        quantity: requestedQty,
-        refundAmountSdg: refundAmt,
-      });
-
-      totalRefundSdg += refundAmt;
+      const productId = String(retItem?.productId || '');
+      if (!soldQuantities.has(productId)) continue;
+      const qty = Number(retItem?.quantity);
+      if (!Number.isFinite(qty) || qty < 0) {
+        return res.status(400).json({ error: 'INVALID_RETURN_QTY', message: 'كمية الإرجاع غير صالحة.' });
+      }
+      requested.set(productId, (requested.get(productId) || 0) + qty);
     }
   } else {
-    // Return all remaining quantities for this sale
-    for (const origItem of sale.items) {
-      const alreadyReturned = previouslyReturnedMap[origItem.productId] || 0;
-      const availableToReturn = Math.max(0, origItem.quantity - alreadyReturned);
-      if (availableToReturn <= 0) continue;
-
-      const unitEffectivePrice = origItem.quantity > 0 ? origItem.totalSdg / origItem.quantity : origItem.unitPriceSdg;
-      const refundAmt = Math.round(unitEffectivePrice * availableToReturn);
-
-      itemsToRefund.push({
-        productId: origItem.productId,
-        productName: origItem.productName,
-        quantity: availableToReturn,
-        refundAmountSdg: refundAmt,
-      });
-
-      totalRefundSdg += refundAmt;
+    for (const [productId, sold] of soldQuantities) {
+      requested.set(productId, Math.max(0, sold - (previouslyReturnedMap[productId] || 0)));
     }
   }
 
-  if (itemsToRefund.length === 0 || totalRefundSdg <= 0) {
-    return res.status(400).json({ error: 'لم يتم تحديد أي أصناف قابلة للإرجاع أو الكميات غير صحيحة' });
+  for (const [productId, qty] of requested) {
+    const remaining = Math.max(0, (soldQuantities.get(productId) || 0) - (previouslyReturnedMap[productId] || 0));
+    if (qty > remaining + 1e-9) {
+      const name = sale.items.find((i) => i.productId === productId)?.productName || productId;
+      return res.status(400).json({
+        error: 'RETURN_QTY_EXCEEDED',
+        message: `الكمية المطلوبة من «${name}» تتجاوز المتبقي للإرجاع (${remaining}).`,
+      });
+    }
   }
 
-  // Generate unique Credit Note Number
-  const creditNoteNumber = `CN-${sale.invoiceNumber.replace(/^INV-/, '')}-${Math.floor(100 + Math.random() * 900)}`;
-
-  // Restore inventory for each returned item
-  for (const retItem of itemsToRefund) {
-    db.adjustStock({
-      tenantId: authReq.tenantId,
-      branchId: sale.branchId,
-      productId: retItem.productId,
-      delta: retItem.quantity,
-      type: 'return_refund',
-      reason: `إرجاع أصناف بموجب إشعار دائن (${creditNoteNumber}) للفاتورة (${sale.invoiceNumber}): ${reason || 'طلب الزبون'}`,
-      actorName: authReq.actorName,
+  type RefundLine = { productId: string; productName: string; quantity: number; refundAmountSdg: number; taxAmountSdg: number };
+  const itemsToRefund: RefundLine[] = [];
+  for (const [productId, qty] of requested) {
+    if (qty <= 0) continue;
+    const origItem = sale.items.find((i) => i.productId === productId)!;
+    itemsToRefund.push({
+      productId,
+      productName: origItem.productName,
+      quantity: qty,
+      refundAmountSdg: refundAllocator.forQty(origItem, qty),
+      taxAmountSdg: refundAllocator.taxForQty(origItem, qty),
     });
   }
 
-  // Calculate total returned across all returns including this one
-  const updatedRefundedAmount = (sale.refundedAmountSdg || 0) + totalRefundSdg;
-  sale.refundedAmountSdg = updatedRefundedAmount;
-
-  // Check if all original items are now fully returned
-  let isFullyRefunded = true;
-  for (const origItem of sale.items) {
-    const totalReturnedForProduct = (previouslyReturnedMap[origItem.productId] || 0) +
-      (itemsToRefund.find((i) => i.productId === origItem.productId)?.quantity || 0);
-    if (totalReturnedForProduct < origItem.quantity) {
-      isFullyRefunded = false;
-      break;
-    }
+  if (itemsToRefund.length === 0) {
+    return res.status(400).json({ error: 'لم يتم تحديد أي أصناف قابلة للإرجاع أو الكميات غير صحيحة' });
   }
 
-  sale.status = isFullyRefunded ? 'refunded' : 'partially_refunded';
+  const isFullyRefunded = [...soldQuantities].every(
+    ([productId, sold]) => (previouslyReturnedMap[productId] || 0) + (requested.get(productId) || 0) >= sold - 1e-9,
+  );
+  const remainingRefundable = Math.max(0, round2(saleGrand - (Number(sale.refundedAmountSdg) || 0)));
+  let totalRefundSdg = round2(itemsToRefund.reduce((n, r) => n + r.refundAmountSdg, 0));
+  let taxRefundSdg = round2(itemsToRefund.reduce((n, r) => n + r.taxAmountSdg, 0));
 
-  // Record Return & Credit Note
+  /* آخر إرجاع يعيد المتبقي بالضبط، فلا تُهدر قروش التقريب ولا يُتجاوز المدفوع. */
+  if (isFullyRefunded || totalRefundSdg > remainingRefundable) {
+    const last = itemsToRefund[itemsToRefund.length - 1];
+    last.refundAmountSdg = round2(Math.max(0, last.refundAmountSdg + (remainingRefundable - totalRefundSdg)));
+    totalRefundSdg = Math.min(round2(itemsToRefund.reduce((n, r) => n + r.refundAmountSdg, 0)), remainingRefundable);
+    if (isFullyRefunded) {
+      const remainingTax = Math.max(0, round2((Number(sale.taxTotalSdg) || 0) - previouslyRefundedTax));
+      last.taxAmountSdg = round2(Math.max(0, last.taxAmountSdg + (remainingTax - taxRefundSdg)));
+      taxRefundSdg = round2(itemsToRefund.reduce((n, r) => n + r.taxAmountSdg, 0));
+    }
+  }
+  if (totalRefundSdg <= 0) {
+    return res.status(400).json({ error: 'لا يوجد مبلغ متبقٍ قابل للإرجاع لهذه الفاتورة' });
+  }
+
+  let creditNoteNumber: string;
+  try {
+    creditNoteNumber = await nextTenantDocumentNumber(
+      'CN',
+      authReq.tenantId,
+      db.getSchema().returns.filter((r) => r.tenantId === authReq.tenantId).map((r) => r.creditNoteNumber),
+    );
+  } catch (err) {
+    console.error('[refund] credit note number reservation failed', err);
+    return res.status(503).json({ error: 'تعذّر حجز رقم إشعار الدائن. أعد المحاولة.' });
+  }
+
   const returnRec: ReturnRecord = {
     id: newId('ret'),
     tenantId: authReq.tenantId,
@@ -2881,13 +3041,45 @@ apiRouter.post('/pos/sales/:id/refund', merchantAuthMiddleware, (req, res) => {
     cashierName: authReq.actorName,
     items: itemsToRefund,
     totalRefundSdg,
+    taxRefundSdg,
+    requestId,
     reason: reason || 'إرجاع وتعديل كميات الأصناف مع إصدار إشعار دائن',
     createdAt: new Date().toISOString(),
   };
 
-  db.getSchema().returns.unshift(returnRec);
+  /* حجز الكميات + رد المخزون + حفظ الإشعار + تحديث الفاتورة في معاملة واحدة. */
+  const committed = await commitRefundAtomic(db.atomicContext(), {
+    saleId: sale.id,
+    tenantId: authReq.tenantId,
+    branchId: sale.branchId,
+    operationKey,
+    items: itemsToRefund.filter((it) => tracksInventory(db.getSchema().products.find((p) => p.id === it.productId))),
+    soldQuantities,
+    totalRefundSdg,
+    record: returnRec,
+    actorName: authReq.actorName,
+  });
 
-  // If in an active shift, deduct from shift expected cash if it was cash
+  if (!committed.ok) {
+    if (committed.code === 'DUPLICATE') {
+      await db.refresh();
+      const prior = db.getSchema().returns.find((r) => r.saleId === sale.id && (r as any).requestId === requestId);
+      if (prior) {
+        const current = db.getSchema().sales.find((s) => s.id === sale.id);
+        return res.json({ success: true, returnRecord: prior, sale: current, isDuplicate: true });
+      }
+      return res.status(409).json({ error: 'REFUND_IN_PROGRESS', message: 'عملية إرجاع لهذه الفاتورة قيد التنفيذ. أعد المحاولة بعد لحظات.' });
+    }
+    if (committed.code === 'ALREADY_REFUNDED') {
+      return res.status(409).json({ error: 'ALREADY_REFUNDED', message: 'تم إرجاع هذه الفاتورة بالكامل مسبقاً' });
+    }
+    const name = sale.items.find((i) => i.productId === committed.productId)?.productName || committed.productId;
+    return res.status(409).json({
+      error: 'RETURN_QTY_EXCEEDED',
+      message: `الكمية المرتجعة من «${name}» تتجاوز المتبقي (${committed.remaining}).`,
+    });
+  }
+
   if (sale.shiftId) {
     const shift = db.getSchema().cashierShifts.find((s) => s.id === sale.shiftId);
     if (shift && shift.status === 'open') {
@@ -2908,7 +3100,7 @@ apiRouter.post('/pos/sales/:id/refund', merchantAuthMiddleware, (req, res) => {
     action: 'REFUND_INVOICE',
     entity: 'Sale',
     entityId: sale.id,
-    details: `إرجاع فاتورة (${sale.invoiceNumber}) وإصدار إشعار دائن (${creditNoteNumber}) بقيمة ${totalRefundSdg.toLocaleString()} ج.س. الحالة: ${isFullyRefunded ? 'مرتجع بالكامل' : 'مرتجع جزئي'}. السبب: ${reason}`,
+    details: `إرجاع فاتورة (${sale.invoiceNumber}) وإصدار إشعار دائن (${creditNoteNumber}) بقيمة ${totalRefundSdg.toLocaleString()} ج.س. الحالة: ${isFullyRefunded ? 'مرتجع بالكامل' : 'مرتجع جزئي'}. السبب: ${reason || '—'}`,
   });
 
   res.json({ success: true, returnRecord: returnRec, sale });
@@ -3056,35 +3248,118 @@ apiRouter.post('/sync/batch', merchantAuthMiddleware, (req, res) => {
   }
 
   const syncedIds: string[] = [];
+  const renumbered: { id: string; from: string; to: string }[] = [];
   const errors: { id: string; error: string }[] = [];
+  const tenant = db.getTenant(authReq.tenantId);
+  const allowedPayments = ['cash', 'bankak', 'fawry', 'syberpay', 'split'];
 
   for (const saleData of sales) {
+    const saleId = typeof saleData?.id === 'string' ? saleData.id : '';
     try {
-      // Check if already synced
-      const existing = db.getSchema().sales.find((s) => s.id === saleData.id);
+      if (!saleId) throw new Error('معرّف الفاتورة مفقود');
+      // الفحص كان بلا tenantId: معرّف يخص منشأة أخرى كان يُعدّ «تمت مزامنته» فتضيع الفاتورة.
+      const existing = db.getSchema().sales.find((s) => s.id === saleId);
       if (existing) {
-        syncedIds.push(saleData.id);
+        if (existing.tenantId !== authReq.tenantId) throw new Error('معرّف الفاتورة مستخدم');
+        syncedIds.push(saleId);
         continue;
       }
 
       // Validate ownership before syncing
       const syncBranch = db.getSchema().branches.find((b) => b.id === saleData.branchId && b.tenantId === authReq.tenantId);
       if (!syncBranch) throw new Error(`الفرع ${saleData.branchId} لا يتبع هذا المتجر`);
-      for (const it of (saleData.items || [])) {
+      const rawItems: any[] = Array.isArray(saleData.items) ? saleData.items : [];
+      if (!rawItems.length) throw new Error('الفاتورة بلا أصناف');
+
+      // تحقق من كل البنود قبل أي خصم مخزون (كان الخطأ في بند متأخر يترك مخزوناً مخصوماً بلا فاتورة).
+      const lines = rawItems.map((it) => {
         const prod = db.getSchema().products.find((p) => p.id === it.productId && p.tenantId === authReq.tenantId);
         if (!prod) throw new Error(`الصنف ${it.productId} لا يتبع هذا المتجر`);
+        const unitPrice = Number(it.unitPriceSdg ?? prod.sellingPriceSdg ?? 0);
+        const lineError = validateInvoiceLine(it, unitPrice);
+        if (lineError) throw new Error(`«${prod.name}»: ${lineError}`);
+        const isTaxExempt = Boolean(it.isTaxExempt);
+        const rate = isTaxExempt ? 0 : Number(it.taxRate) || 0;
+        return { it, prod, qty: Number(it.quantity), unitPrice, discount: Number(it.discountSdg || 0), isTaxExempt, taxRate: rate > 0 ? rate : 0 };
+      });
+
+      // الإجماليات تُحسب هنا من البنود؛ الحمولة القادمة من الجهاز لم تكن تحوي الإجمالي أصلاً.
+      const inclusive = saleData.pricesIncludeVat !== undefined
+        ? Boolean(saleData.pricesIncludeVat)
+        : Boolean(tenant?.settings?.pricesIncludeVat);
+      const totals = computeInvoiceTotals(
+        lines.map((l) => ({ quantity: l.qty, unitPrice: l.unitPrice, discount: l.discount, taxRate: l.taxRate })),
+        { pricesIncludeVat: inclusive, invoiceDiscount: Number(saleData.discountTotalSdg) || 0 },
+      );
+
+      /* رقم الفاتورة طُبع للعميل دون اتصال، فالأصل أن يُحفظ كما هو.
+         لو صادف رقماً لفاتورة أخرى فلا نُبدّله بصمت: نحتفظ بالأصل في حقل
+         مستقل ونُبلِغ الواجهة بالتغيير ليُعاد طبع الإيصال بالرقم الصحيح. */
+      const taken = (n: string) => db.getSchema().sales.some((s) => s.tenantId === authReq.tenantId && s.invoiceNumber === n);
+      const printedInvoiceNumber = String(saleData.invoiceNumber || '').trim();
+      let invoiceNumber = printedInvoiceNumber || newCode('INV-OFF');
+      if (taken(invoiceNumber)) {
+        let k = 2;
+        while (taken(`${invoiceNumber}-${k}`)) k++;
+        invoiceNumber = `${invoiceNumber}-${k}`;
+        renumbered.push({ id: saleId, from: printedInvoiceNumber, to: invoiceNumber });
       }
 
-      // Record offline sale
+      const shift = saleData.shiftId
+        ? db.getSchema().cashierShifts.find((s) => s.id === saleData.shiftId && s.tenantId === authReq.tenantId && s.branchId === saleData.branchId)
+        : undefined;
+      const customer = saleData.customerId
+        ? db.getSchema().customers.find((c) => c.id === saleData.customerId && c.tenantId === authReq.tenantId)
+        : undefined;
+      const createdAtDate = new Date(saleData.createdAt);
+      const paymentMethod = allowedPayments.includes(saleData.paymentMethod) ? saleData.paymentMethod : 'cash';
+
+      // قائمة بيضاء بالحقول بدل `...saleData` (كان العميل يستطيع فرض أي حقل: status, refundedAmountSdg ...).
       const newSale: Sale = {
-        ...saleData,
+        id: saleId,
         tenantId: authReq.tenantId,
+        branchId: saleData.branchId,
+        branchName: syncBranch.name,
+        shiftId: shift ? shift.id : '',
+        invoiceNumber,
+        customerId: customer?.id,
+        customerName: String(saleData.customerName || customer?.name || 'عميل نقدي'),
+        customerPhone: String(saleData.customerPhone || customer?.phone || ''),
+        items: lines.map((l, idx) => ({
+          productId: l.it.productId,
+          productName: l.prod.name,
+          unit: l.prod.unit || l.it.unit || 'حبة',
+          quantity: l.qty,
+          unitPriceSdg: l.unitPrice,
+          discountSdg: l.discount,
+          totalSdg: totals.lines[idx].total,
+          costPerUnitSdg: l.prod.purchaseCost || 0,
+          notes: l.it.notes || undefined,
+          isTaxExempt: l.isTaxExempt,
+          taxRate: l.taxRate,
+          taxAmountSdg: totals.lines[idx].taxAmount,
+        })),
+        subtotalSdg: totals.subtotal,
+        discountTotalSdg: totals.discountTotal,
+        taxTotalSdg: totals.taxTotal,
+        grandTotalSdg: totals.grandTotal,
+        paymentMethod,
+        splitDetails: saleData.splitDetails || undefined,
+        multiCurrency: saleData.multiCurrency || undefined,
+        paymentReference: saleData.paymentReference || undefined,
+        status: 'completed',
+        /* هوية الكاشير من الجلسة فقط: الحزمة القادمة من الجهاز لا تُعيّن موظفاً. */
+        cashierId: authReq.actorId,
+        cashierName: authReq.actorName,
         isOfflineCreated: true,
         offlineSyncedAt: new Date().toISOString(),
+        createdAt: isNaN(createdAtDate.getTime()) ? new Date().toISOString() : createdAtDate.toISOString(),
       };
 
-      // Deduct inventory
+      // Deduct inventory — البيع حدث فعلاً، فيُخصم حتى لو صار الرصيد سالباً (وإلا يُتجاهل الخصم بصمت).
+      // الخدمات غير المخزونية لا رصيد لها فلا تُخصم.
       for (const item of newSale.items) {
+        if (!tracksInventory(db.getSchema().products.find((p) => p.id === item.productId))) continue;
         db.adjustStock({
           tenantId: authReq.tenantId,
           branchId: newSale.branchId,
@@ -3093,13 +3368,23 @@ apiRouter.post('/sync/batch', merchantAuthMiddleware, (req, res) => {
           type: 'sale_deduction',
           reason: `مزامنة مبيعات دون اتصال (فاتورة ${newSale.invoiceNumber})`,
           actorName: newSale.cashierName || authReq.actorName,
+          allowNegative: true,
         });
       }
+
+      /* نقاط الولاء للمبيعات المزامَنة: كانت تُمنح للبيع المتصل فقط،
+         فعميل اشترى دون اتصال يفقد نقاطه بلا سبب. */
+      if (customer) {
+        db.recordCustomerSale(authReq.tenantId, customer.id, totals.grandTotal);
+      }
+
+      // أرقام الوردية (كانت لا تتأثر بالمبيعات المزامَنة فيظهر عجز في تقرير الوردية).
+      applySaleToShift(shift, newSale);
 
       db.getSchema().sales.unshift(newSale);
       syncedIds.push(newSale.id);
     } catch (err: any) {
-      errors.push({ id: saleData.id, error: err.message || 'خطأ أثناء المعالجة' });
+      errors.push({ id: saleId, error: err.message || 'خطأ أثناء المعالجة' });
     }
   }
 
@@ -3119,6 +3404,8 @@ apiRouter.post('/sync/batch', merchantAuthMiddleware, (req, res) => {
     success: true,
     syncedCount: syncedIds.length,
     syncedIds,
+    /* تغيير الرقم يظهر للتاجر ولا يحدث بصمت خلف ظهره. */
+    renumbered,
     errors,
   });
 });

@@ -134,6 +134,8 @@ export interface Product {
   /** فيديو قصير جداً للصنف (اختياري) */
   videoUrl?: string;
   isActive: boolean;
+  /** false = خدمة غير مخزونية: لا تُخصم من الرصيد ولا يُرفض بيعها لنقصه. الافتراضي true. */
+  trackInventory?: boolean;
   isTaxExempt?: boolean; // Whether product is exempt from VAT
   customTaxRate?: number; // Custom VAT % override (if undefined, uses tenant default)
   currentStock?: number;
@@ -420,8 +422,14 @@ export interface ReturnRecord {
     productName: string;
     quantity: number;
     refundAmountSdg: number;
+    /** ضريبة هذا البند المرتجع، محفوظة وقت الإصدار لا مشتقة لاحقاً. */
+    taxAmountSdg?: number;
   }[];
   totalRefundSdg: number;
+  /** إجمالي ضريبة الإشعار الدائن كما اعتُمد وقت الإصدار. */
+  taxRefundSdg?: number;
+  /** معرّف عملية الإرجاع من الجهاز لمنع تكرار نفس الطلب. */
+  requestId?: string;
   creditNoteNumber?: string;
   reason: string;
   createdAt: string;

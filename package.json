@@ -32,8 +32,11 @@
     "native:copy": "npx cap copy android",
     "native:build": "bash android-scripts/build_native_apks.sh",
     "test:order-invoice": "tsx scripts/test-order-invoice.ts",
+    "test:invoice-fixes": "tsx scripts/test-invoice-fixes.ts",
     "test:order-invoice-ui": "tsx scripts/test-order-invoice-ui.ts",
-    "preview:order-invoice": "tsx scripts/preview-order-invoice.ts"
+    "preview:order-invoice": "tsx scripts/preview-order-invoice.ts",
+    "test:pos-atomic": "tsx scripts/test-pos-atomic.ts",
+    "test:offline-queue": "tsx scripts/test-offline-queue.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

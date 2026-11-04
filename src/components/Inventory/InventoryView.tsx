@@ -161,6 +161,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newMinAlert, setNewMinAlert] = useState('10');
   const [newInitialStock, setNewInitialStock] = useState('20');
   const [newIsTaxExempt, setNewIsTaxExempt] = useState(false);
+  const [newTrackInventory, setNewTrackInventory] = useState(true);
   const [newCustomTaxRate, setNewCustomTaxRate] = useState('');
   const [newImageUrl, setNewImageUrl] = useState('');
   /* تواريخ التتبع: الإنتاج والانتهاء (اختيارية لكن ظاهرة في كل صنف) */
@@ -465,6 +466,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         initialStock: Number(newInitialStock),
         branchId: selectedBranchId || branches[0]?.id,
         isTaxExempt: newIsTaxExempt,
+        trackInventory: newTrackInventory,
         customTaxRate: newCustomTaxRate ? Number(newCustomTaxRate) : undefined,
         imageUrl: newImageUrl || undefined,
         videoUrl: newVideoUrl || undefined,
@@ -480,6 +482,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         updateNewBarcode('');
         suggestedRef.current = { name: '' };
         setNewIsTaxExempt(false);
+        setNewTrackInventory(true);
         setNewCustomTaxRate('');
         setNewImageUrl('');
         setNewProductionDate('');
@@ -1494,6 +1497,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   {mediaError}
                 </p>
               )}
+
+              {/* خدمة أم صنف مخزوني: الخدمة لا رصيد لها فلا تُخصم ولا يُرفض بيعها */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <span className="font-bold text-slate-800 text-[11px]">تتبّع هذا الصنف في المخزون</span>
+                  <input
+                    type="checkbox"
+                    checked={newTrackInventory}
+                    onChange={(e) => setNewTrackInventory(e.target.checked)}
+                    className="w-4 h-4 accent-emerald-600 rounded"
+                  />
+                </label>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {newTrackInventory
+                    ? 'يُخصم من رصيد الفرع عند كل بيعة، ويُمنع البيع عند نفاد الرصيد.'
+                    : 'خدمة (استشارة، توصيل، اشتراك…): تُباع بلا رصيد ولا تُخصم من المخزون.'}
+                </p>
+              </div>
 
               {/* VAT (ضريبة القيمة المضافة) Settings per Product */}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">

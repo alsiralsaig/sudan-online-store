@@ -28,6 +28,7 @@ import {
 import type { Sale, Branch, ReturnRecord } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
 import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { createRefundAllocator } from '../../lib/invoiceMath.ts';
 import { getThermalReceiptSettings } from '../../lib/printerSettings.ts';
 
 interface SalesViewProps {
@@ -68,6 +69,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
   const [returnItemQtys, setReturnItemQtys] = useState<Record<string, number>>({});
   const [refundReason, setRefundReason] = useState('طلب الزبون استرجاع الصنف');
   const [isRefunding, setIsRefunding] = useState(false);
+  const refundRequestIdRef = React.useRef<{ saleId: string; id: string } | null>(null);
   const [refundError, setRefundError] = useState('');
 
   // Thermal settings
@@ -196,18 +198,20 @@ export const SalesView: React.FC<SalesViewProps> = ({
     setReturnItemQtys(updated);
   };
 
-  // Calculate total refund amount
+  /* المعاينة تستعمل نفس موزّع الخادم: نصيب البند مما دُفع فعلاً بعد الخصم ومع الضريبة.
+     الحساب القديم (سعر البند الصافي) كان يعرض للتاجر رقماً غير الذي سيُسترد. */
+  const refundAllocator = React.useMemo(
+    () => (refundingSale ? createRefundAllocator(refundingSale) : null),
+    [refundingSale],
+  );
+
   const calculateTotalRefund = () => {
-    if (!refundingSale) return 0;
-    let total = 0;
-    for (const item of refundingSale.items) {
+    if (!refundingSale || !refundAllocator) return 0;
+    const total = refundingSale.items.reduce((sum, item) => {
       const qty = returnItemQtys[item.productId] || 0;
-      if (qty > 0) {
-        const unitEffectivePrice = item.quantity > 0 ? item.totalSdg / item.quantity : item.unitPriceSdg;
-        total += Math.round(unitEffectivePrice * qty);
-      }
-    }
-    return total;
+      return qty > 0 ? sum + refundAllocator.forQty(item, qty) : sum;
+    }, 0);
+    return Math.round(total * 100) / 100;
   };
 
   // Confirm Refund with Credit Note Issuance
@@ -230,13 +234,24 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
     setIsRefunding(true);
 
+    /* معرّف واحد لكل محاولة إرجاع: لو انقطع الاتصال وأعاد التاجر الإرسال
+       بنفس المعرّف لا يُصدر الخادم إشعاراً دائناً ثانياً. */
+    if (!refundRequestIdRef.current || refundRequestIdRef.current.saleId !== refundingSale.id) {
+      refundRequestIdRef.current = {
+        saleId: refundingSale.id,
+        id: `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+      };
+    }
+
     try {
       const res = await api.refundSale(refundingSale.id, {
         reason: refundReason,
         returnItems: returnItemsPayload,
+        requestId: refundRequestIdRef.current.id,
       });
 
       if (res.success) {
+        refundRequestIdRef.current = null;
         setRefundingSale(null);
         await onRefresh();
         await loadReturns();
@@ -723,7 +738,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
                     مزامنة المخزون التلقائية وإصدار الإشعار الدائن:
                   </strong>
                   يمكنك تعديل كميات الأصناف المراد إرجاعها بدقة أدناه. سيتم إعادة الكميات المحددة فوراً إلى مخزون الفرع،
-                  وإصدار إشعار دائن (Credit Note) رسمي معتمد، وتحديث رصيد الصندوق المالي.
+                  وإصدار إشعار دائن (Credit Note) وتحديث رصيد الصندوق المالي.
                 </div>
               </div>
 
@@ -763,9 +778,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
                     <tbody className="divide-y divide-slate-100">
                       {refundingSale.items.map((item) => {
                         const returnQty = returnItemQtys[item.productId] || 0;
-                        const unitEffective =
-                          item.quantity > 0 ? item.totalSdg / item.quantity : item.unitPriceSdg;
-                        const itemRefundTotal = Math.round(unitEffective * returnQty);
+                        const itemRefundTotal = refundAllocator ? refundAllocator.forQty(item, returnQty) : 0;
 
                         return (
                           <tr
@@ -821,7 +834,11 @@ export const SalesView: React.FC<SalesViewProps> = ({
                               </div>
                             </td>
                             <td className="py-2.5 px-3 font-mono text-slate-700">
-                              {Math.round(unitEffective).toLocaleString()} ج.س
+                              {/* نصيب الوحدة مما دُفع فعلاً، متسق مع قيمة الإرجاع المعروضة */}
+                              {(item.quantity > 0 && refundAllocator
+                                ? refundAllocator.forQty(item, 1)
+                                : 0
+                              ).toLocaleString()} ج.س
                             </td>
                             <td className="py-2.5 px-3 font-mono font-bold text-rose-700">
                               {itemRefundTotal.toLocaleString()} ج.س
@@ -929,7 +946,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
             <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
               <span className="text-xs font-bold flex items-center gap-1.5">
                 <FileText className="w-4 h-4 text-rose-400" />
-                <span>إشعار دائن ضريبي معتمد</span>
+                <span>إشعار دائن ضريبي</span>
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -1034,15 +1051,21 @@ export const SalesView: React.FC<SalesViewProps> = ({
                         sellerName: receiptSettings.storeName,
                         taxNumber: receiptSettings.taxNumber,
                         timestamp: viewingCreditNote.createdAt,
-                        totalWithVat: viewingCreditNote.totalRefundSdg.toString(),
-                        vatTotal: '0',
+                        totalWithVat: Number(viewingCreditNote.totalRefundSdg || 0).toFixed(2),
+                        /* الضريبة المحفوظة وقت الإصدار هي المرجع.
+                           نسبة من إجمالي الفاتورة كانت تُظهر ضريبة على مرتجع معفى.
+                           الإشعارات القديمة بلا حقل نحسبها بنداً بنداً. */
+                        vatTotal: Number(
+                          viewingCreditNote.taxRefundSdg ??
+                          viewingCreditNote.items.reduce((n, it) => n + (Number(it.taxAmountSdg) || 0), 0),
+                        ).toFixed(2),
                       }),
                       88
                     ),
                   }}
                 />
                 <span className="text-[9px] text-slate-400 mt-1 font-mono">
-                  إشعار دائن ضريبي إلكتروني معتمد
+                  إشعار دائن ضريبي إلكتروني
                 </span>
               </div>
             </div>
@@ -1188,8 +1211,8 @@ export const SalesView: React.FC<SalesViewProps> = ({
                         sellerName: receiptSettings.storeName,
                         taxNumber: receiptSettings.taxNumber,
                         timestamp: viewingSale.createdAt,
-                        totalWithVat: viewingSale.grandTotalSdg.toString(),
-                        vatTotal: '0',
+                        totalWithVat: Number(viewingSale.grandTotalSdg || 0).toFixed(2),
+                        vatTotal: Number(viewingSale.taxTotalSdg || 0).toFixed(2),
                       }),
                       96
                     ),

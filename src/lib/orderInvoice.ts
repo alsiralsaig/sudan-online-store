@@ -4,6 +4,10 @@
  * لا تُقرأ أسعار السوق الحية هنا: سعر الصرف المثبّت على الطلب هو المعتمد.
  */
 import type { SupplyOrder } from '../types';
+import { round2 } from './invoiceMath.ts';
+
+/** مقارنة مبلغين بتسامح نصف قرش، فلا تظهر سطور «مجموع البنود» بسبب فروق الفاصلة العائمة. */
+const sameAmount = (a: number, b: number) => Math.abs(Number(a) - Number(b)) < 0.005;
 
 export const money = (n: number) =>
   Number(Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -21,7 +25,8 @@ const statusLabel = (s?: string) =>
     : s === 'accepted' ? 'مقبول — جارٍ التحضير'
       : s === 'rejected' ? 'مرفوض'
         : s === 'fulfilled' ? 'تم التسليم'
-          : 'ملغي';
+          : s === 'cancelled' ? 'ملغي'
+            : '—';
 
 const fmtDate = (iso?: string) => {
   const d = iso ? new Date(iso) : new Date();
@@ -39,7 +44,7 @@ export function normalizeWhatsAppPhone(value?: string): string | undefined {
   let digits = String(value || '').replace(/\D/g, '');
   if (digits.startsWith('00')) digits = digits.slice(2);
   if (digits.startsWith('0') && digits.length === 10) digits = `249${digits.slice(1)}`;
-  if (digits.startsWith('2490') && digits.length === 12) digits = `249${digits.slice(4)}`;
+  if (digits.startsWith('2490') && digits.length === 13) digits = `249${digits.slice(4)}`;
   return /^[1-9]\d{7,14}$/.test(digits) ? digits : undefined;
 }
 
@@ -99,9 +104,11 @@ export function buildOrderInvoice(order: SupplyOrder, ctx: OrderInvoiceContext =
     unit: it.unit || 'حبة',
     quantity: Number(it.quantity) || 0,
     unitPriceSdg: Number(it.unitPriceSdg) || 0,
-    totalSdg: Number(it.totalSdg) || (Number(it.unitPriceSdg) || 0) * (Number(it.quantity) || 0),
+    totalSdg: it.totalSdg != null && Number.isFinite(Number(it.totalSdg))
+      ? Number(it.totalSdg)
+      : round2((Number(it.unitPriceSdg) || 0) * (Number(it.quantity) || 0)),
   }));
-  const subtotalSdg = lines.reduce((s, l) => s + l.totalSdg, 0);
+  const subtotalSdg = round2(lines.reduce((s, l) => s + l.totalSdg, 0));
   const totalSdg = Number(order.totalSdg) || subtotalSdg;
   const purchaseNumber = order.invoiceNumber || undefined;
   return {
@@ -147,7 +154,7 @@ export function orderInvoiceText(model: OrderInvoiceModel): string {
     '*البنود:*',
     lines || '—',
     '',
-    ...(model.subtotalSdg !== model.totalSdg ? [`مجموع البنود: ${money(model.subtotalSdg)} ج.س`] : []),
+    ...(!sameAmount(model.subtotalSdg, model.totalSdg) ? [`مجموع البنود: ${money(model.subtotalSdg)} ج.س`] : []),
     `*الإجمالي المعتمد: ${money(model.totalSdg)} ج.س*`,
     `الدفع: ${model.payment}`,
     `العملة: ${invoiceCurrencyLabel(model)}`,
@@ -243,7 +250,7 @@ export function orderInvoiceMarkup(model: OrderInvoiceModel): string {
       <tbody>${rows || '<tr><td colspan="6" style="text-align:center">لا بنود</td></tr>'}</tbody>
     </table>
     <section class="totals">
-      ${model.subtotalSdg !== model.totalSdg ? `<div class="subtotal">مجموع البنود: ${money(model.subtotalSdg)} ج.س — الإجمالي أدناه هو المعتمد في الطلب.</div>` : ''}
+      ${!sameAmount(model.subtotalSdg, model.totalSdg) ? `<div class="subtotal">مجموع البنود: ${money(model.subtotalSdg)} ج.س — الإجمالي أدناه هو المعتمد في الطلب.</div>` : ''}
       <div class="total"><span>الإجمالي المعتمد</span><span class="num">${money(model.totalSdg)} ج.س</span></div>
       ${foreign !== null ? `<div class="total foreign"><span>المطلوب بـ ${e(model.currency)}</span><span class="num">${money(foreign)} ${e(model.currency)}</span></div>` : ''}
     </section>

@@ -444,6 +444,11 @@ export async function persistDiff(
   };
 }
 
+/** Writes one row inside an existing transaction (used by the atomic POS path). */
+export async function writeRow(client: SqlClient, def: TableDef, row: Record<string, any>): Promise<void> {
+  await upsertRow(client, def, row);
+}
+
 async function upsertRow(
   client: SqlClient,
   def: TableDef,

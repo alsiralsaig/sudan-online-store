@@ -57,6 +57,7 @@ import {
 } from '../../lib/marketRates.ts';
 import { RateSourceLine } from '../Common/RateSourceLine.tsx';
 import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { computeInvoiceTotals } from '../../lib/invoiceMath.ts';
 import { CameraBarcodeScanner } from './CameraBarcodeScanner.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
 import { findByBarcodeOrSku, looksLikeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
@@ -592,25 +593,14 @@ export const PosView: React.FC<PosViewProps> = ({
   const defaultVatPct = receiptSettings.defaultVatPct ?? 15;
   const isPricesIncludeVat = receiptSettings.pricesIncludeVat ?? false;
 
-  let computedTaxTotal = 0;
+  // الضريبة تُحسب بعد معرفة خصم الفاتورة (انظر invoiceTotals أدناه) وبنفس دالة السيرفر.
   const processedCartItems = cart.map((item) => {
     const isExempt = Boolean(item.product.isTaxExempt);
     const taxRate = isExempt || !isVatActive ? 0 : Number(item.product.customTaxRate ?? defaultVatPct);
-    const lineTotal = item.quantity * item.unitPrice - item.discount;
-    let taxAmount = 0;
-    if (isVatActive && taxRate > 0) {
-      if (isPricesIncludeVat) {
-        taxAmount = lineTotal - lineTotal / (1 + taxRate / 100);
-      } else {
-        taxAmount = lineTotal * (taxRate / 100);
-      }
-    }
-    computedTaxTotal += taxAmount;
     return {
       ...item,
       isTaxExempt: isExempt,
       taxRate,
-      taxAmount,
     };
   });
 
@@ -677,11 +667,19 @@ export const PosView: React.FC<PosViewProps> = ({
   const autoPromoDiscountTotal = appliedPromotions.reduce((acc, p) => acc + p.discountSdg, 0);
   const totalCombinedDiscount = discountTotal + autoPromoDiscountTotal;
 
-  const subtotal = cart.reduce((acc, item) => acc + item.quantity * item.unitPrice - item.discount, 0);
-  const taxTotal = Math.round(computedTaxTotal * 100) / 100;
-  const grandTotal = isPricesIncludeVat
-    ? Math.max(0, subtotal - totalCombinedDiscount)
-    : Math.max(0, subtotal - totalCombinedDiscount + taxTotal);
+  // كانت الضريبة تُحسب قبل خصم الفاتورة فيدفع العميل ضريبة على مبلغ لم يدفعه، وبلا تقريب للفاصلة العائمة.
+  const invoiceTotals = computeInvoiceTotals(
+    processedCartItems.map((i) => ({
+      quantity: i.quantity,
+      unitPrice: i.unitPrice,
+      discount: i.discount,
+      taxRate: i.taxRate,
+    })),
+    { pricesIncludeVat: isPricesIncludeVat, invoiceDiscount: totalCombinedDiscount },
+  );
+  const subtotal = invoiceTotals.subtotal;
+  const taxTotal = invoiceTotals.taxTotal;
+  const grandTotal = invoiceTotals.grandTotal;
 
   // Open Payment modal
   const handleProceedToPayment = () => {
@@ -708,19 +706,19 @@ export const PosView: React.FC<PosViewProps> = ({
     setIsSubmitting(true);
     setErrorMsg(null);
 
-    const saleItems: SaleItem[] = processedCartItems.map((i) => ({
+    const saleItems: SaleItem[] = processedCartItems.map((i, idx) => ({
       productId: i.product.id,
       productName: i.product.name,
       unit: i.product.unit,
       quantity: i.quantity,
       unitPriceSdg: i.unitPrice,
       discountSdg: i.discount,
-      totalSdg: i.quantity * i.unitPrice - i.discount,
+      totalSdg: invoiceTotals.lines[idx].total,
       costPerUnitSdg: i.product.purchaseCost,
       notes: i.notes || undefined,
       isTaxExempt: i.isTaxExempt,
       taxRate: i.taxRate,
-      taxAmountSdg: Math.round(i.taxAmount * 100) / 100,
+      taxAmountSdg: invoiceTotals.lines[idx].taxAmount,
     }));
 
     const currencyNames: Record<string, string> = {
@@ -762,8 +760,14 @@ export const PosView: React.FC<PosViewProps> = ({
       customerName: selectedCustomer ? selectedCustomer.name : customerName,
       customerPhone: selectedCustomer ? selectedCustomer.phone : customerPhone,
       items: saleItems,
-      discountTotalSdg: totalCombinedDiscount,
+      // الإجماليات تُرسل كاملة: الفاتورة المحفوظة دون اتصال تُعرض وتُطبع منها مباشرة
+      // (كانت تنقص subtotalSdg وgrandTotalSdg فينهار عرض الإيصال بعد بيع دون اتصال).
+      subtotalSdg: subtotal,
+      discountTotalSdg: invoiceTotals.discountTotal,
       taxTotalSdg: taxTotal,
+      grandTotalSdg: grandTotal,
+      status: 'completed',
+      branchName: currentBranch.name,
       vatEnabled: isVatActive,
       defaultVatPct,
       pricesIncludeVat: isPricesIncludeVat,
@@ -1834,7 +1838,7 @@ export const PosView: React.FC<PosViewProps> = ({
           >
             {/* Header actions */}
             <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
-              <span className="text-xs font-bold">فاتورة مبيعات إلكترونية معتمدة</span>
+              <span className="text-xs font-bold">فاتورة مبيعات إلكترونية</span>
               <div className="flex items-center gap-2">
                 <button
                   onClick={handlePrint}
@@ -2022,14 +2026,14 @@ export const PosView: React.FC<PosViewProps> = ({
                             receiptSettings.storeName || tenant?.tradeName || tenant?.name || 'المتجر',
                           taxNumber: receiptSettings.taxNumber || tenant?.taxNumber || '',
                           timestamp: completedSale.createdAt,
-                          totalWithVat: completedSale.grandTotalSdg.toString(),
-                          vatTotal: '0',
+                          totalWithVat: Number(completedSale.grandTotalSdg || 0).toFixed(2),
+                          vatTotal: Number(completedSale.taxTotalSdg || 0).toFixed(2),
                         }),
                         96
                       ),
                     }}
                   />
-                  <span className="text-[9px] text-slate-400 mt-1 font-mono">رمز الفاتورة الإلكترونية المعتمدة</span>
+                  <span className="text-[9px] text-slate-400 mt-1 font-mono">رمز الفاتورة الإلكترونية</span>
                 </div>
               )}
 

@@ -1,7 +1,7 @@
 import type { Product, Sale } from '../types/index.ts';
 
 const DB_NAME = 'sanad_pos_offline_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -28,6 +28,12 @@ function getDb(): Promise<IDBDatabase> {
 
       if (!db.objectStoreNames.contains('offline_shifts')) {
         db.createObjectStore('offline_shifts', { keyPath: 'id' });
+      }
+
+      /* عدّاد أرقام الفواتير وهوية الجهاز: الرقم المطبوع للعميل دون اتصال
+         يجب أن يكون فريداً وثابتاً، فلا يُعاد ترقيمه عند المزامنة. */
+      if (!db.objectStoreNames.contains('meta')) {
+        db.createObjectStore('meta', { keyPath: 'key' });
       }
     };
 
@@ -107,4 +113,61 @@ export async function clearSyncedSales(ids: string[]): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+function readMeta<T>(key: string): Promise<T | undefined> {
+  return getDb().then(
+    (db) =>
+      new Promise<T | undefined>((resolve, reject) => {
+        const req = db.transaction('meta', 'readonly').objectStore('meta').get(key);
+        req.onsuccess = () => resolve(req.result?.value as T | undefined);
+        req.onerror = () => reject(req.error);
+      }),
+  );
+}
+
+function writeMeta(key: string, value: unknown): Promise<void> {
+  return getDb().then(
+    (db) =>
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('meta', 'readwrite');
+        tx.objectStore('meta').put({ key, value });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      }),
+  );
+}
+
+/** هوية ثابتة لهذا الجهاز/المتصفح، تُنشأ مرة واحدة وتُحفظ. */
+export async function getDeviceTag(): Promise<string> {
+  const existing = await readMeta<string>('deviceTag');
+  if (existing) return existing;
+  const tag = Math.random().toString(36).slice(2, 6).toUpperCase() + Date.now().toString(36).slice(-3).toUpperCase();
+  await writeMeta('deviceTag', tag);
+  return tag;
+}
+
+/**
+ * رقم فاتورة دون اتصال: تسلسل يزيد ولا يعود + هوية الجهاز + التاريخ.
+ * لا يعتمد على `Date.now()` وحده (كان يتكرر كل ~16.7 دقيقة وبين الأجهزة).
+ * إن تعذّر التخزين المحلي نرمي خطأً واضحاً بدل إصدار رقم قد يتكرر بصمت.
+ */
+export async function nextOfflineInvoiceNumber(): Promise<string> {
+  const db = await getDb();
+  const seq: number = await new Promise((resolve, reject) => {
+    const tx = db.transaction('meta', 'readwrite');
+    const store = tx.objectStore('meta');
+    const req = store.get('invoiceSeq');
+    req.onsuccess = () => {
+      const next = Number(req.result?.value || 0) + 1;
+      store.put({ key: 'invoiceSeq', value: next });
+      resolve(next);
+    };
+    req.onerror = () => reject(req.error);
+    tx.onerror = () => reject(tx.error);
+  });
+  const tag = await getDeviceTag();
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  return `INV-OFF-${tag}-${stamp}-${String(seq).padStart(4, '0')}`;
 }

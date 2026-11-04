@@ -14,6 +14,7 @@ import {
   type TableDef,
   type Baseline,
 } from './repository.ts';
+import type { AtomicContext } from './posAtomic.ts';
 import type {
   CurrencyRatesSnapshot,
   MarketAuction,
@@ -1689,6 +1690,34 @@ class Database {
     return Number(rows[0].value);
   }
 
+  /** Table definition lookup for the atomic POS path. */
+  public tableDefFor(collection: string): TableDef | undefined {
+    return this.tableDefs.find((d) => d.collection === collection);
+  }
+
+  /**
+   * Marks a row as already written by an atomic transaction, so the generic
+   * snapshot flush does not overwrite it with a stale in-memory value.
+   */
+  public markRowPersisted(collection: string, id: string): void {
+    const rows = (this.data as any)[collection];
+    if (!Array.isArray(rows)) return;
+    const row = rows.find((r: any) => String(r?.id) === String(id));
+    if (!row) return;
+    let map = this.baseline.get(collection);
+    if (!map) { map = new Map(); this.baseline.set(collection, map); }
+    map.set(String(id), JSON.stringify(row));
+  }
+
+  /** Context handed to the atomic POS helpers. */
+  public atomicContext(): AtomicContext {
+    return {
+      data: this.data,
+      tableDefFor: (c) => this.tableDefFor(c),
+      markRowPersisted: (c, id) => this.markRowPersisted(c, id),
+    };
+  }
+
   public async shutdown(): Promise<void> {
     await closePool();
   }
@@ -2677,6 +2706,8 @@ class Database {
     reason: string;
     actorName: string;
     referenceId?: string;
+    /** مبيعات حدثت فعلاً (مثل المزامنة دون اتصال) يجب أن تُخصم حتى لو صار الرصيد سالباً. */
+    allowNegative?: boolean;
   }): { success: boolean; newBalance: number; error?: string } {
     let inv = this.data.branchInventories.find(
       (i) => i.tenantId === params.tenantId && i.branchId === params.branchId && i.productId === params.productId
@@ -2689,7 +2720,7 @@ class Database {
     const newQty = currentQty + params.delta;
 
     // Disallow negative stock if merchant policy enforces strict no negative stock
-    if (newQty < 0 && (!tenant || !tenant.settings.allowNegativeStock)) {
+    if (newQty < 0 && !params.allowNegative && (!tenant || !tenant.settings.allowNegativeStock)) {
       return {
         success: false,
         newBalance: currentQty,

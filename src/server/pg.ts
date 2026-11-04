@@ -108,16 +108,35 @@ export async function query(text: string, params?: any[]): Promise<QueryResult> 
  * Anything thrown rolls the whole batch back.
  */
 export async function transaction<T>(fn: (client: SqlClient) => Promise<T>): Promise<T> {
-  const client = activeClient();
-
-  // PGlite exposes transaction(); pg pools need a dedicated connection.
-  const anyClient = client as any;
-  if (typeof anyClient.transaction === 'function') {
-    return anyClient.transaction(async (tx: SqlClient) => fn(tx));
+  // PGlite exposes transaction() and runs it on its single connection.
+  if (injected) {
+    const anyClient = injected as any;
+    if (typeof anyClient.transaction === 'function') {
+      return anyClient.transaction(async (tx: SqlClient) => fn(tx));
+    }
+    await injected.query('BEGIN');
+    try {
+      const result = await fn(injected);
+      await injected.query('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        await injected.query('ROLLBACK');
+      } catch {
+        /* connection already gone */
+      }
+      throw err;
+    }
   }
 
-  await client.query('BEGIN');
+  /**
+   * مع `pg` لازم اتصال واحد مخصص للمعاملة كلها.
+   * الاستدعاء على الـ pool كان يوزّع BEGIN/COMMIT على اتصالات مختلفة،
+   * فلا تحصل معاملة حقيقية أصلاً ولا يحمي القفل ولا التراجع أي شيء.
+   */
+  const client = await getPool().connect();
   try {
+    await client.query('BEGIN');
     const result = await fn(client);
     await client.query('COMMIT');
     return result;
@@ -128,6 +147,8 @@ export async function transaction<T>(fn: (client: SqlClient) => Promise<T>): Pro
       /* connection already gone */
     }
     throw err;
+  } finally {
+    client.release();
   }
 }
 

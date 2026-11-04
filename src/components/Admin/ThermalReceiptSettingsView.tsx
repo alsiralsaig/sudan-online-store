@@ -22,11 +22,16 @@ import {
   saveThermalReceiptSettings,
   DEFAULT_RECEIPT_SETTINGS,
 } from '../../lib/printerSettings.ts';
-import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { generateZatcaTlvBase64, generateQrSvg, zatcaOverlongFields } from '../../lib/zatcaQr.ts';
 
 export const ThermalReceiptSettingsView: React.FC = () => {
   const [settings, setSettings] = useState<ThermalReceiptSettings>(getThermalReceiptSettings());
   const [savedSuccess, setSavedSuccess] = useState(false);
+  /* حد TLV 255 بايت لكل حقل: نُنبّه قبل الحفظ بدل قصّ الاسم بصمت داخل الرمز. */
+  const overlongQrFields = zatcaOverlongFields({
+    sellerName: settings.storeName,
+    taxNumber: settings.taxNumber,
+  });
 
   useEffect(() => {
     setSettings(getThermalReceiptSettings());
@@ -115,6 +120,12 @@ export const ThermalReceiptSettingsView: React.FC = () => {
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
                 required
               />
+              {overlongQrFields.length > 0 && (
+                <p className="mt-1.5 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] font-semibold text-amber-800">
+                  {overlongQrFields.join(' و')} أطول من الحد المسموح في رمز الفاتورة (255 بايت)، وسيُقصّ داخل الرمز فقط.
+                  اختصره ليطابق الرمز بيانات الفاتورة.
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -698,7 +709,7 @@ export const ThermalReceiptSettingsView: React.FC = () => {
                       ),
                     }}
                   />
-                  <span className="text-[8px] text-slate-400 mt-1 font-mono">فاتورة إلكترونية معتمدة</span>
+                  <span className="text-[8px] text-slate-400 mt-1 font-mono">فاتورة إلكترونية</span>
                 </div>
               )}
 

@@ -157,7 +157,11 @@ export function merchantAuthMiddleware(req: Request, res: Response, next: NextFu
    * جلسة الموظف (staff): رمز الموظف نفسه هو المصادقة، فلا نحتاج رأس
    * x-actor-id — بل العكس: نرفض أي محاولة لانتحال دور غيره من نفس الجهاز.
    */
-  const staffToken = extractToken(req, ['sanad_staff_token']);
+  /* رمز الموظف يُقرأ من الكوكي المخصص فقط.
+     extractToken كان يرتد إلى Bearer، فيلتقط رمز **التاجر** ويعامله كرمز
+     موظف؛ يفشل التحقق فيُكمل الطلب بلا actorId ولا actorRole أصلاً —
+     فتُسجّل المبيعات بلا كاشير وتُقيَّم الصلاحيات كأنه كاشير مجهول. */
+  const staffToken = parseCookies(req.headers.cookie as string | undefined)['sanad_staff_token'];
   if (staffToken) {
     const staffClaims = verifySession(staffToken, secret, 'staff');
     if (!staffClaims || staffClaims.tenantId !== tenant.id) {
@@ -167,6 +171,11 @@ export function merchantAuthMiddleware(req: Request, res: Response, next: NextFu
        * معطلاً بعد تسجيل دخول ناجح. الآن: نتجاهله ونكمل بجلسة المتجر
        * (ونمسحه من الجهاز في الواجهة عند رؤية staffSession=false).
        */
+      authReq.actorId = `emp_owner_${tenant.id}`;
+      authReq.actorName = tenant.ownerName || tenant.tradeName || 'مالك المتجر';
+      authReq.actorRole = 'owner';
+      authReq.authRole = 'merchant';
+      (req as any).merchantClaims = claims;
       return next();
     }
     const staffEmployee = (db.getSchema().employees || []).find((e) => e.id === staffClaims.employeeId && e.tenantId === tenant.id);

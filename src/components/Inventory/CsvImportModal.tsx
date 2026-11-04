@@ -35,6 +35,7 @@ interface ParsedCsvRow {
   category?: string;
   unit?: string;
   isTaxExempt?: boolean;
+  trackInventory?: boolean;
   customTaxRate?: number;
   isValid: boolean;
   error?: string;
@@ -199,6 +200,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
       const categoryIdx = getColIndex('التصنيف', 'category', 'الفئة', 'قسم');
       const unitIdx = getColIndex('الوحدة', 'unit', 'وحدة');
       const exemptIdx = getColIndex('معفى', 'taxexempt', 'ضريبة');
+      const svcIdx = getColIndex('خدمة', 'service', 'trackinventory', 'تتبع المخزون');
 
       const parsed: ParsedCsvRow[] = [];
 
@@ -223,6 +225,9 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
         const initialStock = parseFloat(stockStr.replace(/[^0-9.]/g, '')) || 0;
         const minStockAlert = parseFloat(minAlertStr.replace(/[^0-9.]/g, '')) || 5;
         const isTaxExempt = exemptStr === '1' || exemptStr.toLowerCase() === 'true' || exemptStr === 'نعم';
+        /* عمود اختياري: «خدمة» أو 0/false تعني صنفاً لا يُتتبع في المخزون. */
+        const svcStr = svcIdx !== -1 ? String(cols[svcIdx] ?? '').trim() : '';
+        const trackInventory = !(svcStr === '0' || svcStr.toLowerCase() === 'false' || svcStr === 'خدمة' || svcStr === 'نعم');
 
         let isValid = true;
         let error = '';
@@ -247,6 +252,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           category: category.trim() || 'المواد التموينية والأساسية',
           unit: unit.trim() || 'حبة',
           isTaxExempt,
+          trackInventory,
           isValid,
           error,
         });
@@ -312,6 +318,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
         category: r.category,
         unit: r.unit,
         isTaxExempt: r.isTaxExempt,
+        trackInventory: r.trackInventory,
       }));
 
       const res = await api.importProductsCsv(selectedBranchId, payload);
