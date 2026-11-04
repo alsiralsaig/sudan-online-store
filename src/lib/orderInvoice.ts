@@ -21,7 +21,8 @@ const statusLabel = (s?: string) =>
     : s === 'accepted' ? 'مقبول — جارٍ التحضير'
       : s === 'rejected' ? 'مرفوض'
         : s === 'fulfilled' ? 'تم التسليم'
-          : 'ملغي';
+          : s === 'cancelled' ? 'ملغي'
+            : 'غير معروفة';
 
 const fmtDate = (iso?: string) => {
   const d = iso ? new Date(iso) : new Date();
@@ -39,7 +40,7 @@ export function normalizeWhatsAppPhone(value?: string): string | undefined {
   let digits = String(value || '').replace(/\D/g, '');
   if (digits.startsWith('00')) digits = digits.slice(2);
   if (digits.startsWith('0') && digits.length === 10) digits = `249${digits.slice(1)}`;
-  if (digits.startsWith('2490') && digits.length === 12) digits = `249${digits.slice(4)}`;
+  if (digits.startsWith('2490') && (digits.length === 12 || digits.length === 13)) digits = `249${digits.slice(4)}`;
   return /^[1-9]\d{7,14}$/.test(digits) ? digits : undefined;
 }
 
@@ -147,7 +148,7 @@ export function orderInvoiceText(model: OrderInvoiceModel): string {
     '*البنود:*',
     lines || '—',
     '',
-    ...(model.subtotalSdg !== model.totalSdg ? [`مجموع البنود: ${money(model.subtotalSdg)} ج.س`] : []),
+    ...(Math.round(model.subtotalSdg * 100) !== Math.round(model.totalSdg * 100) ? [`مجموع البنود: ${money(model.subtotalSdg)} ج.س`] : []),
     `*الإجمالي المعتمد: ${money(model.totalSdg)} ج.س*`,
     `الدفع: ${model.payment}`,
     `العملة: ${invoiceCurrencyLabel(model)}`,

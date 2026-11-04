@@ -161,6 +161,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [newMinAlert, setNewMinAlert] = useState('10');
   const [newInitialStock, setNewInitialStock] = useState('20');
   const [newIsTaxExempt, setNewIsTaxExempt] = useState(false);
+  const [newTrackInventory, setNewTrackInventory] = useState(true);
   const [newCustomTaxRate, setNewCustomTaxRate] = useState('');
   const [newImageUrl, setNewImageUrl] = useState('');
   /* تواريخ التتبع: الإنتاج والانتهاء (اختيارية لكن ظاهرة في كل صنف) */
@@ -466,6 +467,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         branchId: selectedBranchId || branches[0]?.id,
         isTaxExempt: newIsTaxExempt,
         customTaxRate: newCustomTaxRate ? Number(newCustomTaxRate) : undefined,
+        trackInventory: newTrackInventory,
         imageUrl: newImageUrl || undefined,
         videoUrl: newVideoUrl || undefined,
         productionDate: newProductionDate || undefined,
@@ -1494,6 +1496,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   {mediaError}
                 </p>
               )}
+
+              {/* Inventory tracking: services opt out */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
+                <span className="font-bold text-slate-800 text-[11px]">تتبع المخزون:</span>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!newTrackInventory} onChange={(e) => setNewTrackInventory(!e.target.checked)} className="w-4 h-4 accent-sky-600 rounded" />
+                  <span className="font-semibold text-sky-800 text-[11px]">خدمة / صنف لا يتتبع المخزون (لا يُخصم رصيد)</span>
+                </label>
+              </div>
 
               {/* VAT (ضريبة القيمة المضافة) Settings per Product */}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">

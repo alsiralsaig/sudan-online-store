@@ -1,129 +1,110 @@
 /**
- * Electronic Receipt QR generator complying with standard Tag-Length-Value (TLV) structure:
- * Tag 1: Seller's Name
- * Tag 2: VAT Registration Number / Commercial Number
- * Tag 3: Time stamp (ISO8601)
- * Tag 4: Invoice total amount (with VAT/inclusive)
- * Tag 5: VAT total
+ * Electronic receipt QR — real ISO/IEC 18004 QR codes via the `qrcode`
+ * library, plus ZATCA-style TLV (Tag-Length-Value) base64 encoding.
+ *
+ * TLV fields:
+ *   1: Seller name
+ *   2: VAT / commercial registration number
+ *   3: Timestamp (ISO 8601)
+ *   4: Invoice total (VAT inclusive)
+ *   5: VAT total
+ *
+ * NOTE: a scannable QR is NOT a tax-authority certification. The UI must not
+ * label it "معتمد" unless an actual certification integration exists.
  */
+import QRCode from 'qrcode';
+
+const encoder = new TextEncoder();
+
+/** Maximum bytes a single TLV field may carry (length is one byte). */
+export const TLV_MAX_FIELD_BYTES = 255;
+
+export class TlvFieldTooLongError extends Error {
+  constructor(tag: number, bytes: number) {
+    super(`TLV field ${tag} is ${bytes} bytes; maximum is ${TLV_MAX_FIELD_BYTES}. Shorten the value (e.g. use the store's short trade name).`);
+    this.name = 'TlvFieldTooLongError';
+  }
+}
 
 function toTLV(tag: number, value: string): Uint8Array {
-  const encoder = new TextEncoder();
   const valueBytes = encoder.encode(value);
-  const length = valueBytes.length;
-  const tlv = new Uint8Array(2 + length);
+  if (valueBytes.length > TLV_MAX_FIELD_BYTES) {
+    throw new TlvFieldTooLongError(tag, valueBytes.length);
+  }
+  const tlv = new Uint8Array(2 + valueBytes.length);
   tlv[0] = tag;
-  tlv[1] = length;
+  tlv[1] = valueBytes.length;
   tlv.set(valueBytes, 2);
   return tlv;
 }
 
-export function generateZatcaTlvBase64(params: {
+export interface ZatcaTlvParams {
   sellerName: string;
   taxNumber: string;
   timestamp: string;
   totalWithVat: string;
   vatTotal: string;
-}): string {
-  const t1 = toTLV(1, params.sellerName);
-  const t2 = toTLV(2, params.taxNumber);
-  const t3 = toTLV(3, params.timestamp);
-  const t4 = toTLV(4, params.totalWithVat);
-  const t5 = toTLV(5, params.vatTotal);
+}
 
-  const totalLength = t1.length + t2.length + t3.length + t4.length + t5.length;
+export function generateZatcaTlvBase64(params: ZatcaTlvParams): string {
+  const parts = [
+    toTLV(1, params.sellerName),
+    toTLV(2, params.taxNumber),
+    toTLV(3, params.timestamp),
+    toTLV(4, params.totalWithVat),
+    toTLV(5, params.vatTotal),
+  ];
+  const totalLength = parts.reduce((s, p) => s + p.length, 0);
   const combined = new Uint8Array(totalLength);
-
   let offset = 0;
-  combined.set(t1, offset);
-  offset += t1.length;
-  combined.set(t2, offset);
-  offset += t2.length;
-  combined.set(t3, offset);
-  offset += t3.length;
-  combined.set(t4, offset);
-  offset += t4.length;
-  combined.set(t5, offset);
-
-  // Convert binary to base64
-  let binary = '';
-  for (let i = 0; i < combined.byteLength; i++) {
-    binary += String.fromCharCode(combined[i]);
+  for (const p of parts) {
+    combined.set(p, offset);
+    offset += p.length;
   }
+  let binary = '';
+  for (let i = 0; i < combined.byteLength; i++) binary += String.fromCharCode(combined[i]);
   return btoa(binary);
 }
 
 /**
- * Generates an SVG representation of a QR-like matrix grid based on hash of input
- * ensuring crisp, zero-dependency rendering in thermal prints and UI preview.
+ * Safe variant for receipt rendering: if a field is too long, returns null so
+ * the caller can hide the QR and show a warning instead of printing a broken
+ * or silently-truncated code.
+ */
+export function generateZatcaTlvBase64Safe(params: ZatcaTlvParams): string | null {
+  try {
+    return generateZatcaTlvBase64(params);
+  } catch (err) {
+    if (err instanceof TlvFieldTooLongError) {
+      console.warn('[QR]', err.message);
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Generate a real, scannable QR code as an SVG string (synchronous).
+ * Uses error-correction level M and a 4-module quiet zone.
  */
 export function generateQrSvg(data: string, size = 120): string {
-  // Simple deterministic 21x21 QR pattern generator from string hash
-  const gridSize = 21;
-  const matrix: boolean[][] = Array(gridSize)
-    .fill(false)
-    .map(() => Array(gridSize).fill(false));
+  const qr = QRCode.create(data, { errorCorrectionLevel: 'M' });
+  const modules = qr.modules;
+  const n = modules.size;
+  const quiet = 4;
+  const cells = n + quiet * 2;
+  const cellSize = size / cells;
 
-  // Finder patterns at three corners (7x7)
-  const setFinder = (startX: number, startY: number) => {
-    for (let r = 0; r < 7; r++) {
-      for (let c = 0; c < 7; c++) {
-        if (
-          r === 0 ||
-          r === 6 ||
-          c === 0 ||
-          c === 6 ||
-          (r >= 2 && r <= 4 && c >= 2 && c <= 4)
-        ) {
-          matrix[startY + r][startX + c] = true;
-        }
-      }
-    }
-  };
-
-  setFinder(0, 0); // Top-left
-  setFinder(14, 0); // Top-right
-  setFinder(0, 14); // Bottom-left
-
-  // Timing patterns
-  for (let i = 8; i < 13; i++) {
-    matrix[6][i] = i % 2 === 0;
-    matrix[i][6] = i % 2 === 0;
-  }
-
-  // Populate data cells deterministically
-  let hash = 0;
-  for (let i = 0; i < data.length; i++) {
-    hash = (hash * 31 + data.charCodeAt(i)) >>> 0;
-  }
-
-  for (let r = 0; r < gridSize; r++) {
-    for (let c = 0; c < gridSize; c++) {
-      // Don't overwrite finders
-      if (
-        (r < 8 && c < 8) ||
-        (r < 8 && c > 13) ||
-        (r > 13 && c < 8)
-      ) {
-        continue;
-      }
-      hash = ((hash ^ (r * 19 + c * 37)) * 1664525 + 1013904223) >>> 0;
-      matrix[r][c] = (hash % 100) < 52;
-    }
-  }
-
-  const cellSize = size / gridSize;
-  let paths = '';
-  for (let r = 0; r < gridSize; r++) {
-    for (let c = 0; c < gridSize; c++) {
-      if (matrix[r][c]) {
-        const x = (c * cellSize).toFixed(2);
-        const y = (r * cellSize).toFixed(2);
-        const w = cellSize.toFixed(2);
-        paths += `<rect x="${x}" y="${y}" width="${w}" height="${w}" fill="#000000" />`;
+  let path = '';
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (modules.get(r, c)) {
+        const x = ((c + quiet) * cellSize).toFixed(3);
+        const y = ((r + quiet) * cellSize).toFixed(3);
+        path += `M${x} ${y}h${cellSize.toFixed(3)}v${cellSize.toFixed(3)}h-${cellSize.toFixed(3)}z`;
       }
     }
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#ffffff"/>${paths}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#ffffff"/><path d="${path}" fill="#000000"/></svg>`;
 }

@@ -27,7 +27,8 @@ import {
 } from 'lucide-react';
 import type { Sale, Branch, ReturnRecord } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
-import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { generateZatcaTlvBase64Safe, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { allocateRefund, previouslyReturnedMap, legacyRefundableLines } from '../../lib/invoiceMath.ts';
 import { getThermalReceiptSettings } from '../../lib/printerSettings.ts';
 
 interface SalesViewProps {
@@ -69,6 +70,9 @@ export const SalesView: React.FC<SalesViewProps> = ({
   const [refundReason, setRefundReason] = useState('طلب الزبون استرجاع الصنف');
   const [isRefunding, setIsRefunding] = useState(false);
   const [refundError, setRefundError] = useState('');
+  // Stable idempotency key for the current refund attempt: a network retry must
+  // not issue a second credit note. Regenerated each time the modal is opened.
+  const [refundRequestId, setRefundRequestId] = useState('');
 
   // Thermal settings
   const receiptSettings = getThermalReceiptSettings();
@@ -116,6 +120,11 @@ export const SalesView: React.FC<SalesViewProps> = ({
     setRefundingSale(sale);
     setRefundError('');
     setRefundReason('طلب الزبون استرجاع الصنف ومطابقة الجرد');
+    setRefundRequestId(
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `ref_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    );
 
     // Calculate previously returned quantities for this sale
     const previouslyReturnedMap: Record<string, number> = {};
@@ -196,18 +205,20 @@ export const SalesView: React.FC<SalesViewProps> = ({
     setReturnItemQtys(updated);
   };
 
-  // Calculate total refund amount
+  // Calculate total refund amount with the SAME allocator the server uses,
+  // so the preview matches the issued credit note exactly.
   const calculateTotalRefund = () => {
     if (!refundingSale) return 0;
-    let total = 0;
-    for (const item of refundingSale.items) {
-      const qty = returnItemQtys[item.productId] || 0;
-      if (qty > 0) {
-        const unitEffectivePrice = item.quantity > 0 ? item.totalSdg / item.quantity : item.unitPriceSdg;
-        total += Math.round(unitEffectivePrice * qty);
-      }
-    }
-    return total;
+    const relatedReturns = returnsList.filter((r) => r.saleId === refundingSale.id);
+    const prevMap = previouslyReturnedMap(relatedReturns);
+    const hasPaid = refundingSale.items.every((i) => typeof i.paidSdg === 'number');
+    const refundable = hasPaid
+      ? refundingSale.items.map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, totalSdg: i.paidSdg as number, taxAmountSdg: i.taxAmountSdg || 0 }))
+      : legacyRefundableLines(refundingSale as any);
+    const requested: Record<string, number> = {};
+    for (const [pid, q] of Object.entries(returnItemQtys)) if (q > 0) requested[pid] = q;
+    const alloc = allocateRefund(refundable, prevMap, requested, refundingSale.grandTotalSdg, refundingSale.refundedAmountSdg || 0);
+    return alloc.totalRefundSdg;
   };
 
   // Confirm Refund with Credit Note Issuance
@@ -234,6 +245,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
       const res = await api.refundSale(refundingSale.id, {
         reason: refundReason,
         returnItems: returnItemsPayload,
+        refundRequestId,
       });
 
       if (res.success) {
@@ -723,7 +735,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
                     مزامنة المخزون التلقائية وإصدار الإشعار الدائن:
                   </strong>
                   يمكنك تعديل كميات الأصناف المراد إرجاعها بدقة أدناه. سيتم إعادة الكميات المحددة فوراً إلى مخزون الفرع،
-                  وإصدار إشعار دائن (Credit Note) رسمي معتمد، وتحديث رصيد الصندوق المالي.
+                  وإصدار إشعار دائن (Credit Note) وتحديث رصيد الصندوق المالي.
                 </div>
               </div>
 
@@ -929,7 +941,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
             <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
               <span className="text-xs font-bold flex items-center gap-1.5">
                 <FileText className="w-4 h-4 text-rose-400" />
-                <span>إشعار دائن ضريبي معتمد</span>
+                <span>إشعار دائن ضريبي</span>
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -1026,23 +1038,22 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
               {/* QR Code */}
               <div className="text-center pt-1 flex flex-col items-center">
-                <div
-                  className="w-24 h-24 bg-white p-1 border border-slate-200 rounded"
-                  dangerouslySetInnerHTML={{
-                    __html: generateQrSvg(
-                      generateZatcaTlvBase64({
-                        sellerName: receiptSettings.storeName,
-                        taxNumber: receiptSettings.taxNumber,
-                        timestamp: viewingCreditNote.createdAt,
-                        totalWithVat: viewingCreditNote.totalRefundSdg.toString(),
-                        vatTotal: '0',
-                      }),
-                      88
-                    ),
-                  }}
-                />
+                {(() => {
+                  const tlv = generateZatcaTlvBase64Safe({
+                    sellerName: receiptSettings.storeName,
+                    taxNumber: receiptSettings.taxNumber,
+                    timestamp: viewingCreditNote.createdAt,
+                    totalWithVat: viewingCreditNote.totalRefundSdg.toString(),
+                    vatTotal: (viewingCreditNote.taxRefundSdg || 0).toString(),
+                  });
+                  return tlv ? (
+                    <div className="w-24 h-24 bg-white p-1 border border-slate-200 rounded" dangerouslySetInnerHTML={{ __html: generateQrSvg(tlv, 88) }} />
+                  ) : (
+                    <div className="w-24 h-24 flex items-center justify-center text-[9px] text-amber-600 text-center border border-amber-300 rounded p-1">تعذّر توليد QR</div>
+                  );
+                })()}
                 <span className="text-[9px] text-slate-400 mt-1 font-mono">
-                  إشعار دائن ضريبي إلكتروني معتمد
+                  رمز الإشعار الدائن الإلكتروني
                 </span>
               </div>
             </div>
@@ -1180,21 +1191,20 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
               {/* QR Code */}
               <div className="text-center pt-2 flex flex-col items-center">
-                <div
-                  className="w-24 h-24 bg-white p-1 border border-slate-200 rounded"
-                  dangerouslySetInnerHTML={{
-                    __html: generateQrSvg(
-                      generateZatcaTlvBase64({
-                        sellerName: receiptSettings.storeName,
-                        taxNumber: receiptSettings.taxNumber,
-                        timestamp: viewingSale.createdAt,
-                        totalWithVat: viewingSale.grandTotalSdg.toString(),
-                        vatTotal: '0',
-                      }),
-                      96
-                    ),
-                  }}
-                />
+                {(() => {
+                  const tlv = generateZatcaTlvBase64Safe({
+                    sellerName: receiptSettings.storeName,
+                    taxNumber: receiptSettings.taxNumber,
+                    timestamp: viewingSale.createdAt,
+                    totalWithVat: viewingSale.grandTotalSdg.toString(),
+                    vatTotal: (viewingSale.taxTotalSdg || 0).toString(),
+                  });
+                  return tlv ? (
+                    <div className="w-24 h-24 bg-white p-1 border border-slate-200 rounded" dangerouslySetInnerHTML={{ __html: generateQrSvg(tlv, 96) }} />
+                  ) : (
+                    <div className="w-24 h-24 flex items-center justify-center text-[9px] text-amber-600 text-center border border-amber-300 rounded p-1">تعذّر توليد QR</div>
+                  );
+                })()}
                 <span className="text-[9px] text-slate-400 mt-1 font-mono">رمز الفاتورة الإلكترونية</span>
               </div>
             </div>

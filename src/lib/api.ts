@@ -28,6 +28,7 @@ import type {
   InventoryAuditItem,
 } from '../types/index.ts';
 
+import { computeInvoiceTotals } from './invoiceMath.ts';
 import {
   cacheProductsLocally,
   getLocallyCachedProducts,
@@ -111,6 +112,17 @@ function absolutizeDeep<T>(value: T, depth = 0): T {
     return out as unknown as T;
   }
   return value;
+}
+
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
 }
 
 class ApiClient {
@@ -277,10 +289,11 @@ class ApiClient {
          * خطأ أم أن المتجر لم يُفعّل بعد.
          */
         msg = data.message || ARABIC_ERRORS[data.error] || data.error || msg;
+        (res as any).__errorCode = data.error;
       } catch {
         // ignore
       }
-      throw new Error(msg);
+      throw new ApiError(msg, res.status, (res as any).__errorCode);
     }
 
     const data = await res.json();
@@ -741,11 +754,24 @@ class ApiClient {
 
   /* POS Sales with OFFLINE-FIRST support */
   public async recordSale(salePayload: any): Promise<{ success: boolean; sale: Sale; isOffline?: boolean }> {
-    const saleId = salePayload.id || `sale_cli_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const invoiceNumber = salePayload.invoiceNumber || `INV-OFF-${Date.now().toString().slice(-6)}`;
+    const saleId = salePayload.id || `sale_cli_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    const invoiceNumber = salePayload.invoiceNumber ||
+      `INV-OFF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    let totalsPatch: Partial<Sale> = {};
+    if (salePayload.subtotalSdg == null || salePayload.grandTotalSdg == null) {
+      const settings = {
+        vatEnabled: salePayload.vatEnabled ?? true,
+        defaultVatPct: salePayload.defaultVatPct ?? 15,
+        pricesIncludeVat: salePayload.pricesIncludeVat ?? false,
+      };
+      const t = computeInvoiceTotals(salePayload.items || [], settings, salePayload.discountTotalSdg || 0);
+      totalsPatch = { subtotalSdg: t.subtotalSdg, discountTotalSdg: t.discountTotalSdg, taxTotalSdg: t.taxTotalSdg, grandTotalSdg: t.grandTotalSdg };
+    }
 
     const fullSale: Sale = {
       ...salePayload,
+      ...totalsPatch,
       id: saleId,
       invoiceNumber,
       tenantId: this.tenantId,
@@ -767,6 +793,7 @@ class ApiClient {
       });
       return { ...res, isOffline: false };
     } catch (err: any) {
+      if (err instanceof ApiError) throw err;
       console.warn('Network error during online sale, saving offline:', err);
       fullSale.isOfflineCreated = true;
       await saveOfflineSale(fullSale);
@@ -784,11 +811,14 @@ class ApiClient {
     payload: {
       reason: string;
       returnItems?: { productId: string; quantity: number }[];
+      refundRequestId?: string;
     }
   ): Promise<{ success: boolean; returnRecord?: ReturnRecord; sale?: Sale }> {
+    const refundRequestId = payload.refundRequestId ||
+      (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `ref_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     return this.request(`/pos/sales/${saleId}/refund`, {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, refundRequestId }),
     });
   }
 
@@ -832,13 +862,13 @@ class ApiClient {
   }
 
   /* Offline Sync Queue */
-  public async syncPendingOfflineSales(): Promise<{ success: boolean; syncedCount: number; errors: any[] }> {
+  public async syncPendingOfflineSales(): Promise<{ success: boolean; syncedCount: number; errors: any[]; mismatches?: any[] }> {
     const pending = await getPendingOfflineSales();
     if (!pending.length) {
       return { success: true, syncedCount: 0, errors: [] };
     }
 
-    const res = await fetch('/api/sync/batch', {
+    const res = await fetch(`${API_BASE}/api/sync/batch`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ sales: pending }),

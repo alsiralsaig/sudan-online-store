@@ -56,7 +56,8 @@ import {
   type RateSide,
 } from '../../lib/marketRates.ts';
 import { RateSourceLine } from '../Common/RateSourceLine.tsx';
-import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { generateZatcaTlvBase64Safe, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { computeInvoiceTotals } from '../../lib/invoiceMath.ts';
 import { CameraBarcodeScanner } from './CameraBarcodeScanner.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
 import { findByBarcodeOrSku, looksLikeBarcode, pastedBarcode, productMatchesSearch } from '../../lib/barcodeMatch.ts';
@@ -677,11 +678,26 @@ export const PosView: React.FC<PosViewProps> = ({
   const autoPromoDiscountTotal = appliedPromotions.reduce((acc, p) => acc + p.discountSdg, 0);
   const totalCombinedDiscount = discountTotal + autoPromoDiscountTotal;
 
-  const subtotal = cart.reduce((acc, item) => acc + item.quantity * item.unitPrice - item.discount, 0);
-  const taxTotal = Math.round(computedTaxTotal * 100) / 100;
-  const grandTotal = isPricesIncludeVat
-    ? Math.max(0, subtotal - totalCombinedDiscount)
-    : Math.max(0, subtotal - totalCombinedDiscount + taxTotal);
+  // Single source of truth: same math the server uses.
+  const invoiceTotals = computeInvoiceTotals(
+    processedCartItems.map((i) => ({
+      productId: i.product.id,
+      productName: i.product.name,
+      unit: i.product.unit,
+      quantity: i.quantity,
+      unitPriceSdg: i.unitPrice,
+      discountSdg: i.discount,
+      isTaxExempt: i.isTaxExempt,
+      taxRate: i.taxRate,
+      notes: i.notes || undefined,
+      costPerUnitSdg: i.product.purchaseCost,
+    })),
+    { vatEnabled: isVatActive, defaultVatPct, pricesIncludeVat: isPricesIncludeVat },
+    totalCombinedDiscount
+  );
+  const subtotal = invoiceTotals.subtotalSdg;
+  const taxTotal = invoiceTotals.taxTotalSdg;
+  const grandTotal = invoiceTotals.grandTotalSdg;
 
   // Open Payment modal
   const handleProceedToPayment = () => {
@@ -708,19 +724,21 @@ export const PosView: React.FC<PosViewProps> = ({
     setIsSubmitting(true);
     setErrorMsg(null);
 
-    const saleItems: SaleItem[] = processedCartItems.map((i) => ({
-      productId: i.product.id,
-      productName: i.product.name,
-      unit: i.product.unit,
-      quantity: i.quantity,
-      unitPriceSdg: i.unitPrice,
-      discountSdg: i.discount,
-      totalSdg: i.quantity * i.unitPrice - i.discount,
-      costPerUnitSdg: i.product.purchaseCost,
-      notes: i.notes || undefined,
-      isTaxExempt: i.isTaxExempt,
-      taxRate: i.taxRate,
-      taxAmountSdg: Math.round(i.taxAmount * 100) / 100,
+    const saleItems: SaleItem[] = invoiceTotals.lines.map((l) => ({
+      productId: l.productId,
+      productName: l.productName,
+      unit: l.unit,
+      quantity: l.quantity,
+      unitPriceSdg: l.unitPriceSdg,
+      discountSdg: l.discountSdg,
+      totalSdg: l.netSdg,
+      paidSdg: l.totalSdg,
+      invoiceDiscountShareSdg: l.invoiceDiscountShareSdg,
+      costPerUnitSdg: l.costPerUnitSdg || 0,
+      notes: l.notes,
+      isTaxExempt: l.isTaxExempt,
+      taxRate: l.taxRate,
+      taxAmountSdg: l.taxAmountSdg,
     }));
 
     const currencyNames: Record<string, string> = {
@@ -762,6 +780,8 @@ export const PosView: React.FC<PosViewProps> = ({
       customerName: selectedCustomer ? selectedCustomer.name : customerName,
       customerPhone: selectedCustomer ? selectedCustomer.phone : customerPhone,
       items: saleItems,
+      subtotalSdg: subtotal,
+      grandTotalSdg: grandTotal,
       discountTotalSdg: totalCombinedDiscount,
       taxTotalSdg: taxTotal,
       vatEnabled: isVatActive,
@@ -1834,7 +1854,7 @@ export const PosView: React.FC<PosViewProps> = ({
           >
             {/* Header actions */}
             <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
-              <span className="text-xs font-bold">فاتورة مبيعات إلكترونية معتمدة</span>
+              <span className="text-xs font-bold">فاتورة مبيعات إلكترونية</span>
               <div className="flex items-center gap-2">
                 <button
                   onClick={handlePrint}
@@ -2013,23 +2033,23 @@ export const PosView: React.FC<PosViewProps> = ({
               {/* ZATCA / TLV Base64 QR Code */}
               {receiptSettings.showQrCode && (
                 <div className="flex flex-col items-center justify-center pt-2 pb-1">
-                  <div
-                    className="w-24 h-24"
-                    dangerouslySetInnerHTML={{
-                      __html: generateQrSvg(
-                        generateZatcaTlvBase64({
-                          sellerName:
-                            receiptSettings.storeName || tenant?.tradeName || tenant?.name || 'المتجر',
-                          taxNumber: receiptSettings.taxNumber || tenant?.taxNumber || '',
-                          timestamp: completedSale.createdAt,
-                          totalWithVat: completedSale.grandTotalSdg.toString(),
-                          vatTotal: '0',
-                        }),
-                        96
-                      ),
-                    }}
-                  />
-                  <span className="text-[9px] text-slate-400 mt-1 font-mono">رمز الفاتورة الإلكترونية المعتمدة</span>
+                  {(() => {
+                    const tlv = generateZatcaTlvBase64Safe({
+                      sellerName: receiptSettings.storeName || tenant?.tradeName || tenant?.name || 'المتجر',
+                      taxNumber: receiptSettings.taxNumber || tenant?.taxNumber || '',
+                      timestamp: completedSale.createdAt,
+                      totalWithVat: completedSale.grandTotalSdg.toString(),
+                      vatTotal: (completedSale.taxTotalSdg || 0).toString(),
+                    });
+                    return tlv ? (
+                      <div className="w-24 h-24" dangerouslySetInnerHTML={{ __html: generateQrSvg(tlv, 96) }} />
+                    ) : (
+                      <div className="w-24 h-24 flex items-center justify-center text-[9px] text-amber-600 text-center border border-amber-300 rounded p-1">
+                        اسم المتجر طويل جداً — تعذّر توليد QR
+                      </div>
+                    );
+                  })()}
+                  <span className="text-[9px] text-slate-400 mt-1 font-mono">رمز الفاتورة الإلكترونية</span>
                 </div>
               )}
 
