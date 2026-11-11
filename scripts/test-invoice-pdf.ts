@@ -47,7 +47,7 @@ const ORDER = {
   totalSdg: 7189000,
 };
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH });
 try {
   const page = await browser.newPage({ viewport: { width: 393, height: 851 }, acceptDownloads: true });
   await page.goto(`http://127.0.0.1:${(server.address() as any).port}/`);

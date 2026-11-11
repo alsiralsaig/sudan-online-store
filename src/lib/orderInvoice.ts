@@ -26,7 +26,7 @@ const statusLabel = (s?: string) =>
       : s === 'rejected' ? 'مرفوض'
         : s === 'fulfilled' ? 'تم التسليم'
           : s === 'cancelled' ? 'ملغي'
-            : '—';
+            : 'غير معروفة';
 
 const fmtDate = (iso?: string) => {
   const d = iso ? new Date(iso) : new Date();
@@ -44,7 +44,7 @@ export function normalizeWhatsAppPhone(value?: string): string | undefined {
   let digits = String(value || '').replace(/\D/g, '');
   if (digits.startsWith('00')) digits = digits.slice(2);
   if (digits.startsWith('0') && digits.length === 10) digits = `249${digits.slice(1)}`;
-  if (digits.startsWith('2490') && digits.length === 13) digits = `249${digits.slice(4)}`;
+  if (digits.startsWith('2490') && (digits.length === 12 || digits.length === 13)) digits = `249${digits.slice(4)}`;
   return /^[1-9]\d{7,14}$/.test(digits) ? digits : undefined;
 }
 

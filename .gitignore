@@ -17,6 +17,7 @@ package-lock.json
 dist/
 
 # signing keys & build artifacts that must never be public
+/apk-output/
 *.keystore
 *.jks
 *.aab

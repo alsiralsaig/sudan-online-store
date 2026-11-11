@@ -134,10 +134,10 @@ export interface Product {
   /** فيديو قصير جداً للصنف (اختياري) */
   videoUrl?: string;
   isActive: boolean;
-  /** false = خدمة غير مخزونية: لا تُخصم من الرصيد ولا يُرفض بيعها لنقصه. الافتراضي true. */
-  trackInventory?: boolean;
   isTaxExempt?: boolean; // Whether product is exempt from VAT
   customTaxRate?: number; // Custom VAT % override (if undefined, uses tenant default)
+  /** false = service / non-stock item: never checked or deducted against inventory. Defaults to true. */
+  trackInventory?: boolean;
   currentStock?: number;
   isPreOrderAllowed?: boolean;
   allowPreOrder?: boolean;
@@ -312,6 +312,9 @@ export interface SaleItem {
   isTaxExempt?: boolean;
   taxRate?: number;
   taxAmountSdg?: number;
+  /** Actual amount paid for this line, VAT included, after invoice-level discount. */
+  paidSdg?: number;
+  invoiceDiscountShareSdg?: number;
 }
 
 export interface Customer {
@@ -372,6 +375,10 @@ export interface Sale {
   cashierName: string;
   isOfflineCreated: boolean;
   offlineSyncedAt?: string;
+  /** Provisional number printed on the offline receipt, kept for traceability. */
+  offlineInvoiceNumber?: string;
+  /** Set when an offline sale's printed totals differ from the server recomputation. */
+  offlineTotalsMismatch?: { printedGrandTotalSdg: number; serverGrandTotalSdg: number };
   createdAt: string;
 }
 
@@ -422,15 +429,15 @@ export interface ReturnRecord {
     productName: string;
     quantity: number;
     refundAmountSdg: number;
-    /** ضريبة هذا البند المرتجع، محفوظة وقت الإصدار لا مشتقة لاحقاً. */
+    taxRefundSdg?: number;
     taxAmountSdg?: number;
   }[];
   totalRefundSdg: number;
-  /** إجمالي ضريبة الإشعار الدائن كما اعتُمد وقت الإصدار. */
   taxRefundSdg?: number;
-  /** معرّف عملية الإرجاع من الجهاز لمنع تكرار نفس الطلب. */
-  requestId?: string;
   creditNoteNumber?: string;
+  /** Client-generated idempotency key: the same key never issues two credit notes. */
+  refundRequestId?: string;
+  requestId?: string;
   reason: string;
   createdAt: string;
 }

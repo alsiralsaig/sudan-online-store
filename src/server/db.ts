@@ -2706,7 +2706,8 @@ class Database {
     reason: string;
     actorName: string;
     referenceId?: string;
-    /** مبيعات حدثت فعلاً (مثل المزامنة دون اتصال) يجب أن تُخصم حتى لو صار الرصيد سالباً. */
+    /** Explicit negative-stock policy for this call (actor override / offline sync).
+     *  Defaults to the merchant's allowNegativeStock setting. */
     allowNegative?: boolean;
   }): { success: boolean; newBalance: number; error?: string } {
     let inv = this.data.branchInventories.find(
@@ -2719,8 +2720,12 @@ class Database {
     const currentQty = inv ? inv.quantity : 0;
     const newQty = currentQty + params.delta;
 
-    // Disallow negative stock if merchant policy enforces strict no negative stock
-    if (newQty < 0 && !params.allowNegative && (!tenant || !tenant.settings.allowNegativeStock)) {
+    // Negative stock is governed by the merchant policy, unless the caller
+    // explicitly overrides it (actor with override_stock, or offline sync of a
+    // sale that already happened). Keep this in ONE place so the pre-flight
+    // check and the actual deduction can never disagree.
+    const negativeAllowed = params.allowNegative ?? Boolean(tenant?.settings?.allowNegativeStock);
+    if (newQty < 0 && !negativeAllowed) {
       return {
         success: false,
         newBalance: currentQty,

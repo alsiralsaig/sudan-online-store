@@ -3,10 +3,16 @@
  * التشغيل: npm run test:invoice-fixes
  */
 import assert from 'node:assert/strict';
-import { computeInvoiceTotals, createRefundAllocator, round2, validateInvoiceLine } from '../src/lib/invoiceMath.ts';
+import { computeInvoiceTotals as computeCurrentTotals, allocateRefund, round2, validateInvoiceLine as validateCurrentLine } from '../src/lib/invoiceMath.ts';
 import { generateQrSvg, generateZatcaTlvBase64, qrMatrix } from '../src/lib/zatcaQr.ts';
 import { buildOrderInvoice, normalizeWhatsAppPhone, orderInvoiceText } from '../src/lib/orderInvoice.ts';
 
+// Legacy scenario inputs adapted to the unified SDG model; assertions remain on the same financial cases.
+const computeInvoiceTotals = (items: any[], options: any = {}) => {
+  const r = computeCurrentTotals(items.map((l,i)=>({productId:String(i),quantity:l.quantity,unitPriceSdg:l.unitPrice,discountSdg:l.discount,taxRate:l.taxRate ?? 0})), {vatEnabled:true,defaultVatPct:0,pricesIncludeVat:Boolean(options.pricesIncludeVat)},options.invoiceDiscount ?? 0);
+  return {...r,subtotal:r.subtotalSdg,grandTotal:r.grandTotalSdg,discountTotal:r.discountTotalSdg,taxTotal:r.taxTotalSdg,lines:r.lines.map(l=>({...l,total:l.totalSdg,taxAmount:l.taxAmountSdg}))};
+};
+const validateInvoiceLine = (line:any,price:number) => validateCurrentLine({...line,productId:'test',unitPriceSdg:price});
 let passed = 0;
 const t = (name: string, fn: () => void) => {
   fn();
@@ -61,10 +67,11 @@ t('استرداد كل البنود = ما دفعه العميل (شامل ال�
     { totalSdg: tot.lines[0].total, taxAmountSdg: tot.lines[0].taxAmount, quantity: 2 },
     { totalSdg: tot.lines[1].total, taxAmountSdg: tot.lines[1].taxAmount, quantity: 4 },
   ];
-  const al = createRefundAllocator({ grandTotalSdg: tot.grandTotal, subtotalSdg: tot.subtotal, discountTotalSdg: tot.discountTotal, taxTotalSdg: tot.taxTotal, items });
-  const sum = al.forQty(items[0], 2) + al.forQty(items[1], 4);
-  assert.ok(Math.abs(sum - tot.grandTotal) <= 0.02);
-  assert.ok(al.forQty(items[0], 1) > 1000); // الاسترداد القديم كان 1000 فقط (بلا ضريبة)
+  const refundLines = items.map((l,i)=>({...l,productId:String(i),productName:String(i)}));
+  const full = allocateRefund(refundLines, {}, {'0':2,'1':4},tot.grandTotal,0);
+  assert.ok(Math.abs(full.totalRefundSdg - tot.grandTotal) <= 0.02);
+  const part = allocateRefund(refundLines, {}, {'0':1},tot.grandTotal,0);
+  assert.ok(part.totalRefundSdg > 1000);
 });
 
 console.log('رمز QR');
@@ -85,12 +92,8 @@ t('TLV يُفكّ بدقة مع اسم عربي (الطول بالبايت لا 
   assert.equal(tlv[4], '2070.00');
   assert.equal(tlv[5], '270.00');
 });
-t('قيمة أطول من 255 بايت تُقصّ دون كسر حرف ولا تفسد بقية الحقول', () => {
-  const tlv = parseTlv(generateZatcaTlvBase64({ sellerName: 'م'.repeat(300), taxNumber: '1', timestamp: 't', totalWithVat: '9', vatTotal: '8' }));
-  assert.ok(Buffer.byteLength(tlv[1]) <= 255);
-  assert.ok(!tlv[1].includes('\uFFFD'));
-  assert.equal(tlv[2], '1');
-  assert.equal(tlv[5], '8');
+t('قيمة أطول من 255 بايت تُرفض بدلاً من تغيير اسم المتجر بصمت', () => {
+  assert.throws(()=>generateZatcaTlvBase64({ sellerName:'م'.repeat(300),taxNumber:'1',timestamp:'t',totalWithVat:'9',vatTotal:'8' }));
 });
 t('المصفوفة: مقاس صحيح وأنماط الباحث في الزوايا الثلاث', () => {
   const m = qrMatrix(generateZatcaTlvBase64({ sellerName: 'متجر', taxNumber: '123456789012345', timestamp: '2026-11-04T10:00:00Z', totalWithVat: '115.00', vatTotal: '15.00' }));

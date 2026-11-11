@@ -28,6 +28,9 @@ import type {
   InventoryAuditItem,
 } from '../types/index.ts';
 
+import { computeInvoiceTotals } from './invoiceMath.ts';
+import { readSaleAttempt, writeSaleAttempt, clearSaleAttempt } from './saleAttempt.ts';
+import { withSaleAttemptLock } from './saleAttemptLock.ts';
 import {
   cacheProductsLocally,
   getLocallyCachedProducts,
@@ -36,37 +39,12 @@ import {
   clearSyncedSales,
   nextOfflineInvoiceNumber,
 } from './indexedDb.ts';
-import { computeInvoiceTotals } from './invoiceMath.ts';
 
-/**
- * خطأ HTTP يحمل رمز الحالة.
- * بدونه كان كل خطأ — رفض صلاحية أو نقص مخزون أو مبلغ خاطئ — يُعامل كأنه
- * انقطاع شبكة، فيُصفّ في طابور «دون اتصال» ويُعرض للتاجر كنجاح.
- */
-export class ApiError extends Error {
-  readonly status: number;
-  readonly code?: string;
-  constructor(message: string, status: number, code?: string) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.code = code;
-  }
-}
-
-/**
- * هل يجوز حفظ العملية في طابور الانتظار وإعادة إرسالها لاحقاً؟
- * نعم لانقطاع الشبكة و5xx و408 و429 فقط.
- * لا لأي 4xx آخر: الخادم رفض الطلب لسبب موضوعي، وإعادة إرساله لن تُصلحه.
- */
+/** Queue only recoverable transport/server failures, never validation/auth rejections. */
 export function isQueueableFailure(err: unknown): boolean {
-  if (err instanceof ApiError) {
-    return err.status >= 500 || err.status === 408 || err.status === 429;
-  }
+  if (err instanceof ApiError) return err.status >= 500 || err.status === 408 || err.status === 429;
   const msg = err instanceof Error ? err.message : String(err ?? '');
-  if (msg === 'OFFLINE_MODE') return true;
-  /* أخطاء fetch نفسها (TypeError: Failed to fetch / انقطاع) */
-  return err instanceof TypeError || /fetch|network|timeout|abort/i.test(msg);
+  return msg === 'OFFLINE_MODE' || err instanceof TypeError || /fetch|network|timeout|abort/i.test(msg);
 }
 
 /** ترجمة رموز الأخطاء الشائعة إلى عربية واضحة (تُستخدم عندما لا يرسل الخادم رسالة). */
@@ -146,7 +124,19 @@ function absolutizeDeep<T>(value: T, depth = 0): T {
   return value;
 }
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
 class ApiClient {
+  private sessionRevision = 0;
   private tenantId: string = 'tenant_alrowad';
   /**
    * الافتراضي «مالك المتجر» لا اسم شخص بعينه — الاسم الحقيقي يأتي من بيانات
@@ -194,6 +184,7 @@ class ApiClient {
    * معرّف المتجر والموظف محفوظان في localStorage من جلسة سابقة.
    */
   public clearLocalSession() {
+    this.sessionRevision++;
     this.tenantId = null;
     this.currentActor = { id: 'owner_default', name: 'مالك المتجر', role: 'owner' };
     this.currentBranchId = '';
@@ -205,6 +196,7 @@ class ApiClient {
   }
 
   public setTenantId(id: string) {
+    if (this.tenantId !== id) this.sessionRevision++;
     this.tenantId = id;
     if (typeof window !== 'undefined') {
       localStorage.setItem('sanad_tenant_id', id);
@@ -227,6 +219,7 @@ class ApiClient {
   }
 
   public setActor(actor: { id: string; name: string; role: string }) {
+    if (this.currentActor.id !== actor.id || this.currentActor.role !== actor.role) this.sessionRevision++;
     this.currentActor = actor;
     if (typeof window !== 'undefined') {
       localStorage.setItem('sanad_actor', JSON.stringify(actor));
@@ -302,7 +295,6 @@ class ApiClient {
 
     if (!res.ok) {
       let msg = 'حدث خطأ في استجابة الخادم';
-      let code: string | undefined;
       try {
         const data = await res.json();
         /*
@@ -310,12 +302,12 @@ class ApiClient {
          * ليه: التاجر كان يرى «INVALID_CODE» وحدها فلا يفهم إن كان الكود
          * خطأ أم أن المتجر لم يُفعّل بعد.
          */
-        code = typeof data.error === 'string' ? data.error : undefined;
         msg = data.message || ARABIC_ERRORS[data.error] || data.error || msg;
+        (res as any).__errorCode = data.error;
       } catch {
         // ignore
       }
-      throw new ApiError(msg, res.status, code);
+      throw new ApiError(msg, res.status, (res as any).__errorCode);
     }
 
     const data = await res.json();
@@ -776,85 +768,103 @@ class ApiClient {
 
   /* POS Sales with OFFLINE-FIRST support */
   public async recordSale(salePayload: any): Promise<{ success: boolean; sale: Sale; isOffline?: boolean }> {
+    const revision = this.sessionRevision;
     const saleId = salePayload.id || `sale_cli_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-    /* الرقم المتصل يحجزه الخادم. رقم الجهاز يُحجز فقط إن احتجنا التصفيف،
-       فلا تُستهلك أرقام على مبيعات رفضها الخادم أو أتمّها متصلاً. */
-    const providedInvoiceNumber = String(salePayload.invoiceNumber || '').trim();
-    const reserveOfflineNumber = async (): Promise<string> => {
-      if (providedInvoiceNumber) return providedInvoiceNumber;
-      try {
-        return await nextOfflineInvoiceNumber();
-      } catch (err) {
-        console.error('[pos] offline invoice numbering unavailable', err);
-        throw new ApiError(
-          'تعذّر حجز رقم فاتورة على هذا الجهاز. أعد المحاولة، وإن استمر الخطأ امسح بيانات الموقع بعد مزامنة المعلّق.',
-          0,
-          'OFFLINE_NUMBERING_UNAVAILABLE',
-        );
-      }
-    };
+    const invoiceNumber = String(salePayload.invoiceNumber || '').trim();
 
-    // حماية لأي مستدعٍ لا يرسل الإجماليات: نحسبها من البنود حتى لا تنهار الواجهة والتقارير.
-    const needsTotals = !Number.isFinite(Number(salePayload.grandTotalSdg)) || !Number.isFinite(Number(salePayload.subtotalSdg));
-    const computed = needsTotals
-      ? computeInvoiceTotals(
-          (salePayload.items || []).map((it: any) => ({
-            quantity: it.quantity,
-            unitPrice: it.unitPriceSdg,
-            discount: it.discountSdg,
-            taxRate: it.taxRate,
-          })),
-          { pricesIncludeVat: Boolean(salePayload.pricesIncludeVat), invoiceDiscount: salePayload.discountTotalSdg },
-        )
-      : null;
+    let totalsPatch: Partial<Sale> = {};
+    if (salePayload.subtotalSdg == null || salePayload.grandTotalSdg == null) {
+      const settings = {
+        vatEnabled: salePayload.vatEnabled ?? true,
+        defaultVatPct: salePayload.defaultVatPct ?? 15,
+        pricesIncludeVat: salePayload.pricesIncludeVat ?? false,
+      };
+      const t = computeInvoiceTotals(salePayload.items || [], settings, salePayload.discountTotalSdg || 0);
+      totalsPatch = { subtotalSdg: t.subtotalSdg, discountTotalSdg: t.discountTotalSdg, taxTotalSdg: t.taxTotalSdg, grandTotalSdg: t.grandTotalSdg };
+    }
 
     const fullSale: Sale = {
-      status: 'completed',
       ...salePayload,
-      ...(computed
-        ? {
-            subtotalSdg: computed.subtotal,
-            discountTotalSdg: computed.discountTotal,
-            taxTotalSdg: computed.taxTotal,
-            grandTotalSdg: computed.grandTotal,
-          }
-        : {}),
+      ...totalsPatch,
       id: saleId,
-      ...(providedInvoiceNumber ? { invoiceNumber: providedInvoiceNumber } : {}),
+      invoiceNumber,
       tenantId: this.tenantId,
       cashierId: this.currentActor.id,
       cashierName: this.currentActor.name,
       createdAt: new Date().toISOString(),
     };
 
-    if (this.isOffline()) {
-      fullSale.invoiceNumber = await reserveOfflineNumber();
+    return withSaleAttemptLock(fullSale.tenantId, async () => {
+      if (revision !== this.sessionRevision) throw new Error('تغير الحساب قبل إرسال البيع. راجع الحساب الحالي.');
+      // Journal inspection and submission must share the same cross-tab lock.
+      if (readSaleAttempt(fullSale.tenantId)) throw new Error('توجد محاولة بيع سابقة غير محسومة. استخدم استعادة البيع السابق، ولا تؤكد بيعاً جديداً.');
+      writeSaleAttempt(fullSale);
+      return this.submitSaleAttempt(fullSale);
+    });
+  }
+
+  public getPendingSaleAttempt(): Sale | null {
+    return readSaleAttempt(this.tenantId);
+  }
+
+  public async retryPendingSale(): Promise<{ success: boolean; sale: Sale; isOffline?: boolean }> {
+    const tenantId = this.tenantId;
+    return withSaleAttemptLock(tenantId, async () => {
+      const sale = readSaleAttempt(tenantId);
+      if (!sale) throw new Error('لا توجد محاولة بيع سابقة للاستعادة.');
+      if (sale.cashierId !== this.currentActor.id) throw new Error('استعد البيع من حساب الكاشير الذي بدأ العملية.');
+      // Use the original snapshot, never the current cart, clock, or a new id.
+      return this.submitSaleAttempt(sale, true);
+    });
+  }
+
+  private async submitSaleAttempt(fullSale: Sale, isRecovery = false): Promise<{ success: boolean; sale: Sale; isOffline?: boolean }> {
+    const revision = this.sessionRevision;
+    const identity = () => [MERCHANT_TOKEN_KEY, ADMIN_TOKEN_KEY, 'sanad_tenant_id', 'sanad_actor'].map(readStoredToken).join('|');
+    const storedIdentity = identity();
+    const assertContext = () => {
+      if (revision !== this.sessionRevision || storedIdentity !== identity() || this.tenantId !== fullSale.tenantId || this.currentActor.id !== fullSale.cashierId) {
+        throw new Error('تغير حساب المتجر أو الكاشير أثناء البيع. لا تُعد البيع؛ ارجع للحساب الأصلي واستعد المحاولة.');
+      }
+    };
+    assertContext();
+    const clearJournal = () => {
+      try { clearSaleAttempt(fullSale.tenantId, fullSale.id); }
+      catch { /* Keep acknowledged success; a residual journal is safely retried by id. */ }
+    };
+    const queueAttempt = async () => {
+      if (!fullSale.invoiceNumber) {
+        fullSale.invoiceNumber = await nextOfflineInvoiceNumber();
+        assertContext();
+        writeSaleAttempt(fullSale); // Retain the reserved number if queue storage fails.
+      }
       fullSale.isOfflineCreated = true;
       await saveOfflineSale(fullSale);
+      assertContext();
+      clearJournal();
       return { success: true, sale: fullSale, isOffline: true };
-    }
+    };
+    if (this.isOffline()) return queueAttempt();
 
+    let res: { success: boolean; sale: Sale };
     try {
-      const res = await this.request<{ success: boolean; sale: Sale }>('/pos/sales', {
-        method: 'POST',
-        body: JSON.stringify(fullSale),
+      res = await this.request<{ success: boolean; sale: Sale }>('/pos/sales', {
+        method: 'POST', body: JSON.stringify(fullSale),
       });
-      return { ...res, isOffline: false };
     } catch (err: any) {
-      /* رفض من الخادم (نقص مخزون، صلاحية، مبلغ غير صالح) ليس انقطاع شبكة:
-         نُظهره للتاجر كما هو ولا نحفظ الفاتورة كأنها نجحت. */
-      if (!isQueueableFailure(err)) throw err;
-      console.warn('Network unavailable during sale, queued offline:', err);
-      fullSale.invoiceNumber = await reserveOfflineNumber();
-      fullSale.isOfflineCreated = true;
-      try {
-        await saveOfflineSale(fullSale);
-      } catch (saveErr) {
-        console.error('[pos] failed to queue offline sale', saveErr);
-        throw new ApiError('تعذّر حفظ الفاتورة على الجهاز ولم يصل الخادم. لا تُعِد البيع قبل التحقق — أعد المحاولة الآن.', 0, 'OFFLINE_QUEUE_FAILED');
+      assertContext();
+      if (!isQueueableFailure(err)) {
+        if (!isRecovery && err instanceof ApiError && err.status >= 400 && err.status < 500) clearJournal();
+        throw err;
       }
-      return { success: true, sale: fullSale, isOffline: true };
+      return queueAttempt();
     }
+    assertContext();
+    if (!res.success || !res.sale || res.sale.id !== fullSale.id) {
+      throw new Error('لم يصل تأكيد صالح لحفظ البيع. استخدم استعادة البيع السابق.');
+    }
+    clearJournal();
+    return { ...res, isOffline: false };
   }
 
   public async getSales(branchId?: string): Promise<{ sales: Sale[] }> {
@@ -867,13 +877,14 @@ class ApiClient {
     payload: {
       reason: string;
       returnItems?: { productId: string; quantity: number }[];
-      /** معرّف ثابت للعملية: إعادة المحاولة بنفس المعرّف لا تُصدر إشعاراً ثانياً. */
-      requestId?: string;
+      refundRequestId?: string;
     }
   ): Promise<{ success: boolean; returnRecord?: ReturnRecord; sale?: Sale }> {
+    const refundRequestId = payload.refundRequestId ||
+      (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `ref_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     return this.request(`/pos/sales/${saleId}/refund`, {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, refundRequestId }),
     });
   }
 
@@ -917,26 +928,20 @@ class ApiClient {
   }
 
   /* Offline Sync Queue */
-  public async syncPendingOfflineSales(): Promise<{
-    success: boolean;
-    syncedCount: number;
-    errors: any[];
-    renumbered?: { id: string; from: string; to: string }[];
-  }> {
+  public async syncPendingOfflineSales(): Promise<{ success: boolean; syncedCount: number; errors: any[]; mismatches?: any[] }> {
     const pending = await getPendingOfflineSales();
     if (!pending.length) {
-      return { success: true, syncedCount: 0, errors: [], renumbered: [] };
+      return { success: true, syncedCount: 0, errors: [] };
     }
 
     const res = await fetch(`${API_BASE}/api/sync/batch`, {
       method: 'POST',
-      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify({ sales: pending }),
     });
 
     if (!res.ok) {
-      throw new ApiError('فشلت مزامنة المبيعات مع الخادم', res.status);
+      throw new Error('فشلت مزامنة المبيعات مع الخادم');
     }
 
     const result = await res.json();

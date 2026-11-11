@@ -1,7 +1,12 @@
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -674,123 +679,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// src/server/routes.ts
-import { Router } from "express";
-
-// src/server/barcodeLookup.ts
-var CATALOGS = [
-  { name: "Open Food Facts", base: "https://world.openfoodfacts.org" },
-  { name: "Open Beauty Facts", base: "https://world.openbeautyfacts.org" },
-  { name: "Open Products Facts", base: "https://world.openproductsfacts.org" }
-];
-function text(value) {
-  return typeof value === "string" ? value.trim().slice(0, 250) : "";
-}
-async function queryCatalog(catalog, barcode) {
-  const fields = "product_name_ar,product_name_en,product_name,brands,quantity";
-  const response = await fetch(`${catalog.base}/api/v2/product/${barcode}?fields=${fields}`, {
-    headers: { "User-Agent": "SanadPOS/1.0 (alsiralsaig@gmail.com)" },
-    signal: AbortSignal.timeout(7e3)
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`catalog unavailable: ${response.status}`);
-  const body = await response.json();
-  if (body.status !== 1 || !body.product) return null;
-  const p = body.product;
-  const productName = text(p.product_name_ar) || text(p.product_name) || text(p.product_name_en);
-  if (!productName) return null;
-  const brand = text(p.brands).split(",")[0].trim();
-  const quantity2 = text(p.quantity);
-  const nameParts = [productName];
-  if (brand && !productName.toLocaleLowerCase().includes(brand.toLocaleLowerCase())) nameParts.push(brand);
-  if (quantity2 && !productName.toLocaleLowerCase().includes(quantity2.toLocaleLowerCase())) nameParts.push(quantity2);
-  return { name: nameParts.join(" - "), source: catalog.name, sourceUrl: `${catalog.base}/product/${barcode}` };
-}
-async function barcodeLookupHandler(req, res) {
-  const barcode = req.params.barcode;
-  if (!/^(?:\d{8}|\d{12,14})$/.test(barcode)) {
-    return res.status(400).json({ error: "\u0627\u0633\u062A\u062E\u062F\u0645 \u0628\u0627\u0631\u0643\u0648\u062F \u0631\u0642\u0645\u064A \u0645\u0646 8 \u0623\u0648 12 \u0625\u0644\u0649 14 \u0631\u0642\u0645\u0627\u064B." });
-  }
-  res.set("Cache-Control", "no-store");
-  const results = await Promise.allSettled(CATALOGS.map((catalog) => queryCatalog(catalog, barcode)));
-  const match = results.find((result) => result.status === "fulfilled" && result.value !== null);
-  if (match?.status === "fulfilled" && match.value) return res.json({ found: true, product: match.value });
-  if (results.some((result) => result.status === "rejected")) {
-    return res.status(503).json({ error: "\u062A\u0639\u0630\u0631 \u0627\u0644\u0628\u062D\u062B \u0641\u064A \u0642\u0648\u0627\u0639\u062F \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u062D\u0627\u0644\u064A\u0627\u064B. \u062D\u0627\u0648\u0644 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649 \u0623\u0648 \u0623\u0643\u0645\u0644 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u064A\u062F\u0648\u064A\u0627\u064B." });
-  }
-  return res.json({ found: false });
-}
-
-// src/lib/staffPermissions.ts
-var PERM_DEFS = [
-  { key: "view_profits", label: "\u0627\u0644\u0627\u0637\u0644\u0627\u0639 \u0639\u0644\u0649 \u0635\u0627\u0641\u064A \u0627\u0644\u0623\u0631\u0628\u0627\u062D" },
-  { key: "view_cogs", label: "\u062A\u0643\u0644\u0641\u0629 \u0627\u0644\u0634\u0631\u0627\u0621 (COGS)" },
-  { key: "edit_prices", label: "\u062A\u0639\u062F\u064A\u0644 \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A" },
-  { key: "process_returns", label: "\u0625\u0631\u062C\u0627\u0639 \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631" },
-  { key: "override_stock", label: "\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u0628\u0627\u0644\u0633\u0627\u0644\u0628" },
-  { key: "manage_staff", label: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u0648\u0638\u0641\u064A\u0646" },
-  { key: "view_audit", label: "\u0633\u062C\u0644 \u0627\u0644\u062A\u062F\u0642\u064A\u0642" }
-];
-function defaultPermissions(role) {
-  switch (role) {
-    case "owner":
-    case "super_admin":
-      return ["all", ...PERM_DEFS.map((p) => p.key), "pos:sell", "inventory:view"];
-    case "branch_manager":
-      return ["pos:sell", "inventory:view", "edit_prices", "process_returns", "manage_staff", "view_audit"];
-    case "cashier":
-      return ["pos:sell", "inventory:view", "process_returns"];
-    case "inventory_officer":
-      return ["inventory:view", "view_cogs", "override_stock"];
-    case "accountant":
-      return ["view_profits", "view_cogs", "view_audit"];
-    case "auditor":
-      return ["view_audit", "inventory:view"];
-    default:
-      return ["pos:sell", "inventory:view"];
-  }
-}
-function hasPerm(employee, key) {
-  const perms = employee.permissions || [];
-  if (perms.includes("all") || employee.role === "owner" || employee.role === "super_admin") return true;
-  return perms.includes(key);
-}
-function resolveActorPerms(role, employee) {
-  const source = employee ? employee : {
-    role: role || "cashier",
-    permissions: defaultPermissions(role || "cashier")
-  };
-  return {
-    viewCogs: hasPerm(source, "view_cogs"),
-    viewProfits: hasPerm(source, "view_profits"),
-    editPrices: hasPerm(source, "edit_prices"),
-    processReturns: hasPerm(source, "process_returns"),
-    overrideStock: hasPerm(source, "override_stock"),
-    manageStaff: hasPerm(source, "manage_staff"),
-    viewAudit: hasPerm(source, "view_audit")
-  };
-}
-
-// src/lib/barcodeMatch.ts
-function normalizeBarcode(raw) {
-  return (raw || "").replace(/[\s\u200e\u200f-]/g, "");
-}
-
-// src/server/db.ts
-init_pg();
-
-// src/server/ids.ts
-import { randomUUID } from "crypto";
-function newId(prefix) {
-  const ts = Date.now().toString(36);
-  return `${prefix}_${ts}_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
-}
-function newCode(prefix, pad = 6) {
-  const rand = randomUUID().replace(/-/g, "").slice(0, pad).toUpperCase();
-  return `${prefix}-${rand}`;
-}
-
-// src/server/db.ts
+// src/server/posAtomic.ts
 init_pg();
 
 // src/server/repository.ts
@@ -1071,9 +960,6 @@ async function persistDiff(defs, data, baseline) {
     collections: work.map((w) => w.def.collection)
   };
 }
-async function writeRow(client, def, row) {
-  await upsertRow(client, def, row);
-}
 async function upsertRow(client, def, row) {
   const pk = def.primaryKey;
   const known = Object.keys(def.columns);
@@ -1104,7 +990,315 @@ async function upsertRow(client, def, row) {
   );
 }
 
+// src/server/posAtomic.ts
+var guardsReady = null;
+function ensurePosGuards() {
+  if (!isDbEnabled()) return Promise.resolve();
+  if (!guardsReady) {
+    guardsReady = (async () => {
+      await query(`CREATE TABLE IF NOT EXISTS sanad_pos_operations (key text PRIMARY KEY, createdat text NOT NULL)`);
+      await query(`CREATE TABLE IF NOT EXISTS sanad_pos_returned (saleid text NOT NULL, productid text NOT NULL, quantity double precision NOT NULL, PRIMARY KEY (saleid, productid))`);
+      await query(`CREATE TABLE IF NOT EXISTS sanad_supply_invoice_numbers (orderid text PRIMARY KEY, number text NOT NULL, issuedat text NOT NULL)`);
+    })().catch((err) => {
+      guardsReady = null;
+      throw err;
+    });
+  }
+  return guardsReady;
+}
+var memSupplyNumbers = /* @__PURE__ */ new Map();
+async function readSupplyInvoiceNumber(orderId) {
+  if (!isDbEnabled()) return memSupplyNumbers.get(orderId) || null;
+  await ensurePosGuards();
+  const { rows } = await query(`SELECT number, issuedat FROM sanad_supply_invoice_numbers WHERE orderid = $1`, [orderId]);
+  if (rows.length === 0) return null;
+  return { number: String(rows[0].number), issuedAt: String(rows[0].issuedat) };
+}
+async function putSupplyInvoiceNumberIfAbsent(orderId, number, issuedAt) {
+  if (!isDbEnabled()) {
+    const existing2 = memSupplyNumbers.get(orderId);
+    if (existing2) return existing2;
+    const value = { number, issuedAt };
+    memSupplyNumbers.set(orderId, value);
+    return value;
+  }
+  await ensurePosGuards();
+  const inserted = await query(
+    `INSERT INTO sanad_supply_invoice_numbers (orderid, number, issuedat) VALUES ($1, $2, $3)
+     ON CONFLICT (orderid) DO NOTHING RETURNING number, issuedat`,
+    [orderId, number, issuedAt]
+  );
+  if (inserted.rows.length > 0) return { number: String(inserted.rows[0].number), issuedAt: String(inserted.rows[0].issuedat) };
+  const existing = await readSupplyInvoiceNumber(orderId);
+  return existing || { number, issuedAt };
+}
+
+// src/server/routes.ts
+import { Router } from "express";
+
+// src/server/barcodeLookup.ts
+var CATALOGS = [
+  { name: "Open Food Facts", base: "https://world.openfoodfacts.org" },
+  { name: "Open Beauty Facts", base: "https://world.openbeautyfacts.org" },
+  { name: "Open Products Facts", base: "https://world.openproductsfacts.org" }
+];
+function text(value) {
+  return typeof value === "string" ? value.trim().slice(0, 250) : "";
+}
+async function queryCatalog(catalog, barcode) {
+  const fields = "product_name_ar,product_name_en,product_name,brands,quantity";
+  const response = await fetch(`${catalog.base}/api/v2/product/${barcode}?fields=${fields}`, {
+    headers: { "User-Agent": "SanadPOS/1.0 (alsiralsaig@gmail.com)" },
+    signal: AbortSignal.timeout(7e3)
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`catalog unavailable: ${response.status}`);
+  const body = await response.json();
+  if (body.status !== 1 || !body.product) return null;
+  const p = body.product;
+  const productName = text(p.product_name_ar) || text(p.product_name) || text(p.product_name_en);
+  if (!productName) return null;
+  const brand = text(p.brands).split(",")[0].trim();
+  const quantity2 = text(p.quantity);
+  const nameParts = [productName];
+  if (brand && !productName.toLocaleLowerCase().includes(brand.toLocaleLowerCase())) nameParts.push(brand);
+  if (quantity2 && !productName.toLocaleLowerCase().includes(quantity2.toLocaleLowerCase())) nameParts.push(quantity2);
+  return { name: nameParts.join(" - "), source: catalog.name, sourceUrl: `${catalog.base}/product/${barcode}` };
+}
+async function barcodeLookupHandler(req, res) {
+  const barcode = req.params.barcode;
+  if (!/^(?:\d{8}|\d{12,14})$/.test(barcode)) {
+    return res.status(400).json({ error: "\u0627\u0633\u062A\u062E\u062F\u0645 \u0628\u0627\u0631\u0643\u0648\u062F \u0631\u0642\u0645\u064A \u0645\u0646 8 \u0623\u0648 12 \u0625\u0644\u0649 14 \u0631\u0642\u0645\u0627\u064B." });
+  }
+  res.set("Cache-Control", "no-store");
+  const results = await Promise.allSettled(CATALOGS.map((catalog) => queryCatalog(catalog, barcode)));
+  const match = results.find((result) => result.status === "fulfilled" && result.value !== null);
+  if (match?.status === "fulfilled" && match.value) return res.json({ found: true, product: match.value });
+  if (results.some((result) => result.status === "rejected")) {
+    return res.status(503).json({ error: "\u062A\u0639\u0630\u0631 \u0627\u0644\u0628\u062D\u062B \u0641\u064A \u0642\u0648\u0627\u0639\u062F \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u062D\u0627\u0644\u064A\u0627\u064B. \u062D\u0627\u0648\u0644 \u0645\u0631\u0629 \u0623\u062E\u0631\u0649 \u0623\u0648 \u0623\u0643\u0645\u0644 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u064A\u062F\u0648\u064A\u0627\u064B." });
+  }
+  return res.json({ found: false });
+}
+
+// src/lib/staffPermissions.ts
+var PERM_DEFS = [
+  { key: "view_profits", label: "\u0627\u0644\u0627\u0637\u0644\u0627\u0639 \u0639\u0644\u0649 \u0635\u0627\u0641\u064A \u0627\u0644\u0623\u0631\u0628\u0627\u062D" },
+  { key: "view_cogs", label: "\u062A\u0643\u0644\u0641\u0629 \u0627\u0644\u0634\u0631\u0627\u0621 (COGS)" },
+  { key: "edit_prices", label: "\u062A\u0639\u062F\u064A\u0644 \u0623\u0633\u0639\u0627\u0631 \u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A" },
+  { key: "process_returns", label: "\u0625\u0631\u062C\u0627\u0639 \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631" },
+  { key: "override_stock", label: "\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u0628\u0627\u0644\u0633\u0627\u0644\u0628" },
+  { key: "manage_staff", label: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u0648\u0638\u0641\u064A\u0646" },
+  { key: "view_audit", label: "\u0633\u062C\u0644 \u0627\u0644\u062A\u062F\u0642\u064A\u0642" }
+];
+function defaultPermissions(role) {
+  switch (role) {
+    case "owner":
+    case "super_admin":
+      return ["all", ...PERM_DEFS.map((p) => p.key), "pos:sell", "inventory:view"];
+    case "branch_manager":
+      return ["pos:sell", "inventory:view", "edit_prices", "process_returns", "manage_staff", "view_audit"];
+    case "cashier":
+      return ["pos:sell", "inventory:view", "process_returns"];
+    case "inventory_officer":
+      return ["inventory:view", "view_cogs", "override_stock"];
+    case "accountant":
+      return ["view_profits", "view_cogs", "view_audit"];
+    case "auditor":
+      return ["view_audit", "inventory:view"];
+    default:
+      return ["pos:sell", "inventory:view"];
+  }
+}
+function hasPerm(employee, key) {
+  const perms = employee.permissions || [];
+  if (perms.includes("all") || employee.role === "owner" || employee.role === "super_admin") return true;
+  return perms.includes(key);
+}
+function resolveActorPerms(role, employee) {
+  const source = employee ? employee : {
+    role: role || "cashier",
+    permissions: defaultPermissions(role || "cashier")
+  };
+  return {
+    viewCogs: hasPerm(source, "view_cogs"),
+    viewProfits: hasPerm(source, "view_profits"),
+    editPrices: hasPerm(source, "edit_prices"),
+    processReturns: hasPerm(source, "process_returns"),
+    overrideStock: hasPerm(source, "override_stock"),
+    manageStaff: hasPerm(source, "manage_staff"),
+    viewAudit: hasPerm(source, "view_audit")
+  };
+}
+
+// src/lib/invoiceMath.ts
+function round2(n) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+function validateInvoiceLine(line) {
+  const qty = Number(line.quantity);
+  const price = Number(line.unitPriceSdg);
+  const discount = Number(line.discountSdg ?? 0);
+  if (!Number.isFinite(qty) || qty <= 0) return "\u0627\u0644\u0643\u0645\u064A\u0629 \u064A\u062C\u0628 \u0623\u0646 \u062A\u0643\u0648\u0646 \u0631\u0642\u0645\u0627\u064B \u0645\u0648\u062C\u0628\u0627\u064B";
+  if (!Number.isFinite(price) || price < 0) return "\u0627\u0644\u0633\u0639\u0631 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 \u0631\u0642\u0645\u0627\u064B \u0635\u0627\u0644\u062D\u0627\u064B (\u0635\u0641\u0631 \u0623\u0648 \u0623\u0643\u062B\u0631)";
+  if (!Number.isFinite(discount) || discount < 0) return "\u0627\u0644\u062E\u0635\u0645 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 \u0631\u0642\u0645\u0627\u064B \u0635\u0627\u0644\u062D\u0627\u064B \u063A\u064A\u0631 \u0633\u0627\u0644\u0628";
+  if (discount > round2(qty * price) + 5e-3) return "\u062E\u0635\u0645 \u0627\u0644\u0628\u0646\u062F \u0623\u0643\u0628\u0631 \u0645\u0646 \u0642\u064A\u0645\u062A\u0647";
+  const rate = Number(line.taxRate ?? 0);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) return "\u0645\u0639\u062F\u0644 \u0627\u0644\u0636\u0631\u064A\u0628\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D";
+  return null;
+}
+function computeInvoiceTotals(items, settings, invoiceDiscountSdg = 0) {
+  const prepared = items.map((it) => {
+    const qty = Number(it.quantity);
+    const price = Number(it.unitPriceSdg);
+    const lineDiscount = Math.min(round2(Number(it.discountSdg ?? 0)), round2(qty * price));
+    const lineNet = round2(qty * price - lineDiscount);
+    const rate = it.isTaxExempt || !settings.vatEnabled ? 0 : Number(it.taxRate ?? settings.defaultVatPct);
+    return { ...it, quantity: qty, unitPriceSdg: price, discountSdg: lineDiscount, lineNet, rate };
+  });
+  const subtotal = round2(prepared.reduce((s, l) => s + l.lineNet, 0));
+  const requestedDiscount = round2(Math.max(0, Number(invoiceDiscountSdg) || 0));
+  const discountTotal = Math.min(requestedDiscount, subtotal);
+  let allocated = 0;
+  const lines = prepared.map((l, idx) => {
+    let share = 0;
+    if (discountTotal > 0 && subtotal > 0) {
+      share = idx === prepared.length - 1 ? round2(discountTotal - allocated) : round2(l.lineNet / subtotal * discountTotal);
+      allocated = round2(allocated + share);
+    }
+    const net = round2(Math.max(0, l.lineNet - share));
+    let tax = 0;
+    if (settings.vatEnabled && l.rate > 0) {
+      tax = settings.pricesIncludeVat ? round2(net - net / (1 + l.rate / 100)) : round2(net * (l.rate / 100));
+    }
+    const total = settings.pricesIncludeVat ? net : round2(net + tax);
+    return {
+      productId: l.productId,
+      productName: l.productName || "\u0635\u0646\u0641",
+      unit: l.unit || "\u062D\u0628\u0629",
+      quantity: l.quantity,
+      unitPriceSdg: l.unitPriceSdg,
+      discountSdg: l.discountSdg,
+      isTaxExempt: l.isTaxExempt,
+      taxRate: l.rate,
+      notes: l.notes,
+      costPerUnitSdg: l.costPerUnitSdg,
+      lineNetSdg: l.lineNet,
+      invoiceDiscountShareSdg: share,
+      netSdg: net,
+      taxAmountSdg: tax,
+      totalSdg: total
+    };
+  });
+  const taxTotal = round2(lines.reduce((s, l) => s + l.taxAmountSdg, 0));
+  const grandTotal = round2(lines.reduce((s, l) => s + l.totalSdg, 0));
+  return { lines, subtotalSdg: subtotal, discountTotalSdg: discountTotal, taxTotalSdg: taxTotal, grandTotalSdg: grandTotal };
+}
+function allocateRefund(saleLines, previouslyReturned, requested, saleGrandTotalSdg, saleRefundedAmountSdg) {
+  const lines = [];
+  let total = 0;
+  let taxTotal = 0;
+  const byProduct = /* @__PURE__ */ new Map();
+  for (const l of saleLines) {
+    const cur = byProduct.get(l.productId) || { productName: l.productName, quantity: 0, totalSdg: 0, taxAmountSdg: 0 };
+    cur.quantity += Number(l.quantity) || 0;
+    cur.totalSdg += Number(l.totalSdg) || 0;
+    cur.taxAmountSdg += Number(l.taxAmountSdg ?? 0);
+    byProduct.set(l.productId, cur);
+  }
+  const remainingRefundable = round2(Math.max(0, saleGrandTotalSdg - saleRefundedAmountSdg));
+  for (const [productId, agg] of byProduct) {
+    const qty = Number(requested[productId] || 0);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    const prev = previouslyReturned[productId] || { quantity: 0, amountSdg: 0, taxSdg: 0 };
+    const available = round2(Math.max(0, agg.quantity - prev.quantity));
+    const take = Math.min(qty, available);
+    if (take <= 0) continue;
+    const isLast = Math.abs(take - available) < 1e-9;
+    const remainingLineAmount = round2(Math.max(0, agg.totalSdg - prev.amountSdg));
+    const remainingLineTax = round2(Math.max(0, agg.taxAmountSdg - (prev.taxSdg || 0)));
+    let amount;
+    let tax;
+    if (isLast) {
+      amount = remainingLineAmount;
+      tax = remainingLineTax;
+    } else {
+      const unitPaid = agg.quantity > 0 ? agg.totalSdg / agg.quantity : 0;
+      const unitTax = agg.quantity > 0 ? agg.taxAmountSdg / agg.quantity : 0;
+      amount = round2(unitPaid * take);
+      tax = round2(unitTax * take);
+    }
+    lines.push({ productId, productName: agg.productName, quantity: take, refundAmountSdg: amount, taxRefundSdg: tax });
+    total = round2(total + amount);
+    taxTotal = round2(taxTotal + tax);
+  }
+  if (total > remainingRefundable) {
+    const excess = round2(total - remainingRefundable);
+    for (let i = lines.length - 1; i >= 0 && excess > 0; i--) {
+      const reducible = Math.min(lines[i].refundAmountSdg, excess);
+      lines[i].refundAmountSdg = round2(lines[i].refundAmountSdg - reducible);
+      total = round2(total - reducible);
+      break;
+    }
+  }
+  return { lines: lines.filter((l) => l.refundAmountSdg > 0 || l.quantity > 0), totalRefundSdg: total, taxRefundSdg: taxTotal };
+}
+function previouslyReturnedMap(returns) {
+  const map = {};
+  for (const r of returns) {
+    for (const it of r.items || []) {
+      const cur = map[it.productId] || { quantity: 0, amountSdg: 0, taxSdg: 0 };
+      cur.quantity += Number(it.quantity) || 0;
+      cur.amountSdg += Number(it.refundAmountSdg) || 0;
+      cur.taxSdg += Number(it.taxRefundSdg ?? it.taxAmountSdg ?? 0);
+      map[it.productId] = cur;
+    }
+  }
+  return map;
+}
+function legacyRefundableLines(sale) {
+  const grand = Number(sale.grandTotalSdg) || 0;
+  const storedNet = round2(sale.items.reduce((s, i) => s + (Number(i.totalSdg) || 0), 0));
+  const storedTax = Number(sale.taxTotalSdg) || 0;
+  if (Math.abs(storedNet + storedTax - grand) < 0.02) {
+    return sale.items.map((i) => ({
+      productId: i.productId,
+      productName: i.productName,
+      quantity: i.quantity,
+      totalSdg: round2((Number(i.totalSdg) || 0) + (Number(i.taxAmountSdg) || 0)),
+      taxAmountSdg: Number(i.taxAmountSdg) || 0
+    }));
+  }
+  const weightSum = storedNet || 1;
+  let allocated = 0;
+  return sale.items.map((i, idx) => {
+    const weight = Number(i.totalSdg) || 0;
+    const paid = idx === sale.items.length - 1 ? round2(grand - allocated) : round2(weight / weightSum * grand);
+    allocated = round2(allocated + paid);
+    const taxShare = storedTax > 0 && storedNet > 0 ? round2(weight / weightSum * storedTax) : 0;
+    return { productId: i.productId, productName: i.productName, quantity: i.quantity, totalSdg: paid, taxAmountSdg: taxShare };
+  });
+}
+
+// src/server/posGuard.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+
 // src/server/db.ts
+init_pg();
+
+// src/server/ids.ts
+import { randomUUID } from "crypto";
+function newId(prefix) {
+  const ts = Date.now().toString(36);
+  return `${prefix}_${ts}_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+}
+function newCode(prefix, pad = 6) {
+  const rand = randomUUID().replace(/-/g, "").slice(0, pad).toUpperCase();
+  return `${prefix}-${rand}`;
+}
+
+// src/server/db.ts
+init_pg();
 var INITIAL_PLANS = [
   {
     id: "plan_starter",
@@ -3405,7 +3599,8 @@ var Database = class {
     const tenant = this.getTenant(params.tenantId);
     const currentQty = inv ? inv.quantity : 0;
     const newQty = currentQty + params.delta;
-    if (newQty < 0 && !params.allowNegative && (!tenant || !tenant.settings.allowNegativeStock)) {
+    const negativeAllowed = params.allowNegative ?? Boolean(tenant?.settings?.allowNegativeStock);
+    if (newQty < 0 && !negativeAllowed) {
       return {
         success: false,
         newBalance: currentQty,
@@ -4042,6 +4237,106 @@ var Database = class {
   }
 };
 var db = new Database();
+
+// src/server/posGuard.ts
+init_pg();
+var LEASE_MS = 3e4;
+var WAIT_MS = 2e4;
+async function ensureLockTable() {
+  await query(`CREATE TABLE IF NOT EXISTS sanad_pos_locks (
+    tenant_id text PRIMARY KEY,
+    token text NOT NULL,
+    expires_at timestamptz NOT NULL
+  )`);
+}
+async function withTenantPosLock(tenantId, fn) {
+  await ensureLockTable();
+  const token2 = randomUUID2();
+  const deadline = Date.now() + WAIT_MS;
+  let delay = 25;
+  for (; ; ) {
+    const { rows } = await query(
+      `INSERT INTO sanad_pos_locks AS l (tenant_id, token, expires_at)
+       VALUES ($1, $2, now() + ($3 || ' milliseconds')::interval)
+       ON CONFLICT (tenant_id) DO UPDATE
+         SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at
+         WHERE l.expires_at < now()
+       RETURNING token`,
+      [tenantId, token2, String(LEASE_MS)]
+    );
+    if (rows[0]?.token === token2) break;
+    if (Date.now() > deadline) {
+      throw new Error("POS_LOCK_TIMEOUT: another write is still in progress for this store");
+    }
+    await new Promise((r) => setTimeout(r, delay + Math.random() * delay));
+    delay = Math.min(delay * 2, 400);
+  }
+  try {
+    return await fn();
+  } finally {
+    await query("DELETE FROM sanad_pos_locks WHERE tenant_id = $1 AND token = $2", [tenantId, token2]).catch(() => {
+    });
+  }
+}
+async function nextSalesInvoiceNumber(tenantId) {
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const prefix = `INV-${year}-`;
+  const max = (db.getSchema().sales || []).filter((s) => s.tenantId === tenantId).reduce((n, s) => {
+    const m = String(s.invoiceNumber || "").match(/^INV-\d{4}-(\d+)$/);
+    return m ? Math.max(n, Number(m[1])) : n;
+  }, 0);
+  const next = await db.nextDocumentSequence(`sales:${tenantId}:${year}`, max + 1);
+  return `${prefix}${String(next).padStart(6, "0")}`;
+}
+async function nextCreditNoteNumber(tenantId) {
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const prefix = `CN-${year}-`;
+  const max = (db.getSchema().returns || []).filter((r) => r.tenantId === tenantId).reduce((n, r) => {
+    const m = String(r.creditNoteNumber || "").match(/^CN-\d{4}-(\d+)$/);
+    return m ? Math.max(n, Number(m[1])) : n;
+  }, 0);
+  const next = await db.nextDocumentSequence(`credit-notes:${tenantId}:${year}`, max + 1);
+  return `${prefix}${String(next).padStart(6, "0")}`;
+}
+function actorPerms(req) {
+  const employee = (db.getSchema().employees || []).find(
+    (e) => e.id === req.actorId && e.tenantId === req.tenantId
+  );
+  return resolveActorPerms(req.actorRole || "cashier", employee || null);
+}
+function maxAllowedDiscountPct(value) {
+  const parsed = Number(value ?? 100);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(100, Math.max(0, parsed));
+}
+function maxDiscountPctForActor(tenantLimit, req) {
+  const storeCap = maxAllowedDiscountPct(tenantLimit);
+  const employee = (db.getSchema().employees || []).find(
+    (e) => e.id === req.actorId && e.tenantId === req.tenantId
+  );
+  if (!employee) return storeCap;
+  return Math.min(storeCap, maxAllowedDiscountPct(employee.maxDiscountPct ?? storeCap));
+}
+function discountPolicyViolation(lines, maxDiscountPct, canOverride) {
+  if (canOverride) return null;
+  for (const line of lines) {
+    const gross = round2(Number(line.quantity) * Number(line.unitPriceSdg));
+    if (!Number.isFinite(gross) || gross <= 0) continue;
+    const totalDiscount = round2(Number(line.discountSdg ?? 0) + Number(line.invoiceDiscountShareSdg ?? 0));
+    if (totalDiscount / gross * 100 > maxDiscountPct + 5e-3) {
+      return line.productName || "\u0627\u0644\u0635\u0646\u0641";
+    }
+  }
+  return null;
+}
+function tracksStock(product) {
+  return product?.trackInventory !== false;
+}
+
+// src/lib/barcodeMatch.ts
+function normalizeBarcode(raw) {
+  return (raw || "").replace(/[\s\u200e\u200f-]/g, "");
+}
 
 // src/server/routes.ts
 init_pg();
@@ -5881,68 +6176,12 @@ var whatsappProviderHost = () => {
 init_telegram();
 init_ntfy();
 
-// src/lib/invoiceMath.ts
-var round2 = (n) => {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return 0;
-  return Math.round((v + Number.EPSILON) * 100) / 100;
-};
-function computeInvoiceTotals(lines, opts = {}) {
-  const inclusive = Boolean(opts.pricesIncludeVat);
-  const totals = lines.map((l) => {
-    const gross = (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0);
-    const disc = Math.min(Math.max(0, Number(l.discount) || 0), Math.max(0, gross));
-    return round2(Math.max(0, gross - disc));
-  });
-  const subtotal = round2(totals.reduce((s, t) => s + t, 0));
-  const discountTotal = round2(Math.min(Math.max(0, Number(opts.invoiceDiscount) || 0), subtotal));
-  const ratio = subtotal > 0 ? (subtotal - discountTotal) / subtotal : 0;
-  const resultLines = lines.map((l, i) => {
-    const rate = Math.max(0, Number(l.taxRate) || 0);
-    const base = totals[i] * ratio;
-    let tax = 0;
-    if (rate > 0) tax = inclusive ? base - base / (1 + rate / 100) : base * (rate / 100);
-    return { total: totals[i], taxAmount: round2(tax) };
-  });
-  const taxTotal = round2(resultLines.reduce((s, l) => s + l.taxAmount, 0));
-  const net = subtotal - discountTotal;
-  const grandTotal = round2(inclusive ? net : net + taxTotal);
-  return { lines: resultLines, subtotal, discountTotal, taxTotal, grandTotal };
-}
-function validateInvoiceLine(item, unitPrice) {
-  const qty = Number(item.quantity);
-  if (!Number.isFinite(qty) || qty <= 0) return "\u0643\u0645\u064A\u0629 \u0627\u0644\u0635\u0646\u0641 \u064A\u062C\u0628 \u0623\u0646 \u062A\u0643\u0648\u0646 \u0631\u0642\u0645\u0627\u064B \u0623\u0643\u0628\u0631 \u0645\u0646 \u0635\u0641\u0631.";
-  if (!Number.isFinite(unitPrice) || unitPrice < 0) return "\u0633\u0639\u0631 \u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D.";
-  const disc = Number(item.discountSdg ?? 0);
-  if (!Number.isFinite(disc) || disc < 0) return "\u062E\u0635\u0645 \u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D.";
-  if (disc > qty * unitPrice + 5e-3) return "\u062E\u0635\u0645 \u0627\u0644\u0635\u0646\u0641 \u0623\u0643\u0628\u0631 \u0645\u0646 \u0642\u064A\u0645\u062A\u0647.";
-  return null;
-}
-function createRefundAllocator(sale) {
-  const grand = Number(sale.grandTotalSdg) || 0;
-  const taxExclusive = (Number(sale.taxTotalSdg) || 0) > 0 && Math.abs(grand - ((Number(sale.subtotalSdg) || 0) - (Number(sale.discountTotalSdg) || 0) + (Number(sale.taxTotalSdg) || 0))) < 0.01;
-  const weight = (i) => (Number(i.totalSdg) || 0) + (taxExclusive ? Number(i.taxAmountSdg) || 0 : 0);
-  const totalWeight = sale.items.reduce((n, i) => n + weight(i), 0);
-  const totalTax = round2(Number(sale.taxTotalSdg) || 0);
-  const taxWeightSum = sale.items.reduce((n, i) => n + (Number(i.taxAmountSdg) || 0), 0);
-  return {
-    grand,
-    taxTotal: totalTax,
-    forQty: (item, qty) => totalWeight > 0 && item.quantity > 0 ? round2(grand * (weight(item) / totalWeight) * (qty / item.quantity)) : 0,
-    /**
-     * ضريبة البند المرتجع = حصة البند من ضريبة الفاتورة، لا نسبة من الإجمالي.
-     * هكذا يبقى إرجاع صنف معفى ضريبته صفر حتى لو كانت الفاتورة تحوي ضريبة.
-     */
-    taxForQty: (item, qty) => taxWeightSum > 0 && item.quantity > 0 ? round2(totalTax * ((Number(item.taxAmountSdg) || 0) / taxWeightSum) * (qty / item.quantity)) : 0
-  };
-}
-
 // src/lib/orderInvoice.ts
 var sameAmount = (a, b) => Math.abs(Number(a) - Number(b)) < 5e-3;
 var money2 = (n) => Number(Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
 var quantity = (n) => Number(Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
 var paymentLabel = (m) => m === "cash" ? "\u0643\u0627\u0634" : m === "bankak" ? "\u0628\u0646\u0643\u0643" : m === "bank_transfer" ? "\u062D\u0648\u0627\u0644\u0629 \u0628\u0646\u0643\u064A\u0629" : m === "credit" ? "\u0622\u062C\u0644 (\u0639\u0644\u0649 \u0627\u0644\u062D\u0633\u0627\u0628)" : "\u063A\u064A\u0631 \u0645\u062D\u062F\u062F";
-var statusLabel = (s) => s === "pending" ? "\u0628\u0627\u0646\u062A\u0638\u0627\u0631 \u0627\u0644\u0631\u062F" : s === "accepted" ? "\u0645\u0642\u0628\u0648\u0644 \u2014 \u062C\u0627\u0631\u064D \u0627\u0644\u062A\u062D\u0636\u064A\u0631" : s === "rejected" ? "\u0645\u0631\u0641\u0648\u0636" : s === "fulfilled" ? "\u062A\u0645 \u0627\u0644\u062A\u0633\u0644\u064A\u0645" : s === "cancelled" ? "\u0645\u0644\u063A\u064A" : "\u2014";
+var statusLabel = (s) => s === "pending" ? "\u0628\u0627\u0646\u062A\u0638\u0627\u0631 \u0627\u0644\u0631\u062F" : s === "accepted" ? "\u0645\u0642\u0628\u0648\u0644 \u2014 \u062C\u0627\u0631\u064D \u0627\u0644\u062A\u062D\u0636\u064A\u0631" : s === "rejected" ? "\u0645\u0631\u0641\u0648\u0636" : s === "fulfilled" ? "\u062A\u0645 \u0627\u0644\u062A\u0633\u0644\u064A\u0645" : s === "cancelled" ? "\u0645\u0644\u063A\u064A" : "\u063A\u064A\u0631 \u0645\u0639\u0631\u0648\u0641\u0629";
 var fmtDate = (iso) => {
   const d = iso ? new Date(iso) : /* @__PURE__ */ new Date();
   if (isNaN(d.getTime())) return "\u2014";
@@ -6030,460 +6269,6 @@ function orderInvoiceText(model) {
     "",
     [model.seller, model.sellerPhone, model.sellerAddress].filter(Boolean).join(" \xB7 ") || "\u0645\u0646\u0635\u0629 \u0633\u0646\u062F"
   ].filter((l) => l !== "").join("\n");
-}
-
-// src/server/posAtomic.ts
-init_pg();
-var guardsReady = null;
-function ensurePosGuards() {
-  if (!isDbEnabled()) return Promise.resolve();
-  if (!guardsReady) {
-    guardsReady = (async () => {
-      await query(`CREATE TABLE IF NOT EXISTS sanad_pos_operations (key text PRIMARY KEY, createdat text NOT NULL)`);
-      await query(`CREATE TABLE IF NOT EXISTS sanad_pos_returned (saleid text NOT NULL, productid text NOT NULL, quantity double precision NOT NULL, PRIMARY KEY (saleid, productid))`);
-      await query(`CREATE TABLE IF NOT EXISTS sanad_supply_invoice_numbers (orderid text PRIMARY KEY, number text NOT NULL, issuedat text NOT NULL)`);
-    })().catch((err) => {
-      guardsReady = null;
-      throw err;
-    });
-  }
-  return guardsReady;
-}
-var memOps = /* @__PURE__ */ new Set();
-var memReturned = /* @__PURE__ */ new Map();
-var memSupplyNumbers = /* @__PURE__ */ new Map();
-async function claimPosOperation(key) {
-  if (!isDbEnabled()) {
-    if (memOps.has(key)) return false;
-    memOps.add(key);
-    return true;
-  }
-  await ensurePosGuards();
-  const { rows } = await query(
-    `INSERT INTO sanad_pos_operations (key, createdat) VALUES ($1, $2)
-     ON CONFLICT (key) DO NOTHING RETURNING key`,
-    [key, (/* @__PURE__ */ new Date()).toISOString()]
-  );
-  return rows.length > 0;
-}
-async function releasePosOperation(key) {
-  if (!isDbEnabled()) {
-    memOps.delete(key);
-    return;
-  }
-  await ensurePosGuards();
-  await query(`DELETE FROM sanad_pos_operations WHERE key = $1`, [key]);
-}
-async function reserveReturnedQty(client, saleId, productId, delta, sold) {
-  const { rows } = await client.query(
-    `INSERT INTO sanad_pos_returned (saleid, productid, quantity)
-     SELECT $1::text, $2::text, $3::double precision WHERE $3::double precision <= $4::double precision
-     ON CONFLICT (saleid, productid)
-     DO UPDATE SET quantity = sanad_pos_returned.quantity + EXCLUDED.quantity
-     WHERE sanad_pos_returned.quantity + EXCLUDED.quantity <= $4::double precision
-     RETURNING quantity`,
-    [saleId, productId, delta, sold]
-  );
-  if (rows.length > 0) return { ok: true, total: Number(rows[0].quantity) };
-  const cur = await client.query(
-    `SELECT quantity FROM sanad_pos_returned WHERE saleid = $1 AND productid = $2`,
-    [saleId, productId]
-  );
-  const already = Number(cur.rows[0]?.quantity || 0);
-  return { ok: false, total: Math.max(0, sold - already) };
-}
-async function seedLegacyReturns(saleId, items) {
-  if (!isDbEnabled() || items.length === 0) return;
-  const first = await claimPosOperation(`returned-seed:${saleId}`);
-  if (!first) return;
-  await ensurePosGuards();
-  for (const it of items) {
-    await query(
-      `INSERT INTO sanad_pos_returned (saleid, productid, quantity) VALUES ($1, $2, $3)
-       ON CONFLICT (saleid, productid) DO UPDATE SET quantity = sanad_pos_returned.quantity + EXCLUDED.quantity`,
-      [saleId, it.productId, Number(it.quantity) || 0]
-    );
-  }
-}
-function invIdFor(tenantId, branchId, productId) {
-  return `inv_${tenantId}_${branchId}_${productId}`.replace(/[^\w-]/g, "_");
-}
-function nowIso() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-function pushMovement(ctx, m) {
-  if (!Array.isArray(ctx.data.stockMovements)) ctx.data.stockMovements = [];
-  ctx.data.stockMovements.unshift(m);
-}
-function buildMovement(ctx, tenantId, branchId, productId, productName, delta, balanceAfter, type, reason, actorName, referenceId) {
-  const product = (ctx.data.products || []).find((p) => p.id === productId);
-  const cost = Number(product?.purchaseCost) || 0;
-  return {
-    id: `mov_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    tenantId,
-    branchId,
-    productId,
-    productName,
-    type,
-    quantityDelta: delta,
-    balanceAfter,
-    costPerUnitSdg: cost,
-    totalValueSdg: Math.abs(delta) * cost,
-    reason,
-    actorName,
-    referenceId,
-    timestamp: nowIso()
-  };
-}
-function readField(row, field) {
-  if (!row) return void 0;
-  if (row[field] !== void 0 && row[field] !== null) return row[field];
-  const extra = row.__extra;
-  if (extra && typeof extra === "object" && extra[field] !== void 0) return extra[field];
-  return void 0;
-}
-async function commitSaleAtomic(ctx, params) {
-  const { sale, deltas, allowNegative, operationKey, actorName, reason } = params;
-  if (!isDbEnabled()) {
-    if (!await claimPosOperation(operationKey)) return { ok: false, code: "DUPLICATE" };
-    const needed2 = /* @__PURE__ */ new Map();
-    for (const d of deltas) needed2.set(d.productId, (needed2.get(d.productId) || 0) + d.delta);
-    if (!allowNegative) {
-      for (const [productId, delta] of needed2) {
-        const inv = (ctx.data.branchInventories || []).find(
-          (i) => i.tenantId === sale.tenantId && i.branchId === sale.branchId && i.productId === productId
-        );
-        const available = inv ? Number(inv.quantity) || 0 : 0;
-        if (available + delta < 0) {
-          await releasePosOperation(operationKey);
-          return { ok: false, code: "INSUFFICIENT_STOCK", productId, available };
-        }
-      }
-    }
-    for (const [productId, delta] of needed2) applyMemoryDelta(ctx, sale, productId, delta, "sale_deduction", reason, actorName);
-    ctx.data.sales.unshift(sale);
-    return { ok: true };
-  }
-  await ensurePosGuards();
-  const invDef = ctx.tableDefFor("branchInventories");
-  const salesDef = ctx.tableDefFor("sales");
-  const movDef = ctx.tableDefFor("stockMovements");
-  if (!invDef || !salesDef) throw new Error("POS schema is not ready");
-  const needed = /* @__PURE__ */ new Map();
-  for (const d of deltas) needed.set(d.productId, (needed.get(d.productId) || 0) + d.delta);
-  const movements = [];
-  const balances = /* @__PURE__ */ new Map();
-  try {
-    await transaction(async (client) => {
-      const claim = await client.query(
-        `INSERT INTO sanad_pos_operations (key, createdat) VALUES ($1, $2)
-         ON CONFLICT (key) DO NOTHING RETURNING key`,
-        [operationKey, nowIso()]
-      );
-      if (claim.rows.length === 0) throw Object.assign(new Error("duplicate"), { posCode: "DUPLICATE" });
-      for (const [productId, delta] of needed) {
-        const found = await client.query(
-          `SELECT id, quantity FROM "sanad_branch_inventories"
-           WHERE "tenantId" = $1 AND "branchId" = $2 AND "productId" = $3 LIMIT 1`,
-          [sale.tenantId, sale.branchId, productId]
-        );
-        let invId;
-        if (found.rows.length > 0) {
-          invId = String(found.rows[0].id);
-        } else {
-          invId = invIdFor(sale.tenantId, sale.branchId, productId);
-          const product2 = (ctx.data.products || []).find((p) => p.id === productId);
-          await client.query(
-            `INSERT INTO "sanad_branch_inventories"
-               (id, "tenantId", "branchId", "productId", quantity, "minAlertQuantity", "lastUpdated")
-             VALUES ($1, $2, $3, $4, 0, $5, $6)
-             ON CONFLICT (id) DO NOTHING`,
-            [invId, sale.tenantId, sale.branchId, productId, Number(product2?.minStockAlert) || 5, nowIso()]
-          );
-        }
-        const upd = await client.query(
-          `UPDATE "sanad_branch_inventories"
-           SET quantity = quantity + $1, "lastUpdated" = $2
-           WHERE id = $3 AND ($4::boolean OR quantity + $1 >= 0)
-           RETURNING quantity`,
-          [delta, nowIso(), invId, allowNegative]
-        );
-        if (upd.rows.length === 0) {
-          const cur = await client.query(`SELECT quantity FROM "sanad_branch_inventories" WHERE id = $1`, [invId]);
-          throw Object.assign(new Error("insufficient"), {
-            posCode: "INSUFFICIENT_STOCK",
-            productId,
-            available: Number(cur.rows[0]?.quantity || 0)
-          });
-        }
-        const quantity2 = Number(upd.rows[0].quantity);
-        balances.set(productId, { id: invId, quantity: quantity2 });
-        const product = (ctx.data.products || []).find((p) => p.id === productId);
-        movements.push(buildMovement(
-          ctx,
-          sale.tenantId,
-          sale.branchId,
-          productId,
-          product?.name || productId,
-          delta,
-          quantity2,
-          "sale_deduction",
-          reason,
-          actorName,
-          sale.id
-        ));
-      }
-      await writeRow(client, salesDef, sale);
-      if (movDef) for (const m of movements) await writeRow(client, movDef, m);
-    });
-  } catch (err) {
-    if (err?.posCode === "DUPLICATE") return { ok: false, code: "DUPLICATE" };
-    if (err?.posCode === "INSUFFICIENT_STOCK") {
-      return { ok: false, code: "INSUFFICIENT_STOCK", productId: err.productId, available: err.available };
-    }
-    throw err;
-  }
-  for (const [productId, info] of balances) {
-    let inv = (ctx.data.branchInventories || []).find((i) => i.id === info.id);
-    if (!inv) {
-      inv = (ctx.data.branchInventories || []).find(
-        (i) => i.tenantId === sale.tenantId && i.branchId === sale.branchId && i.productId === productId
-      );
-    }
-    if (inv) {
-      inv.quantity = info.quantity;
-      inv.lastUpdated = nowIso();
-      ctx.markRowPersisted("branchInventories", inv.id);
-    } else {
-      const product = (ctx.data.products || []).find((p) => p.id === productId);
-      ctx.data.branchInventories.push({
-        id: info.id,
-        tenantId: sale.tenantId,
-        branchId: sale.branchId,
-        productId,
-        quantity: info.quantity,
-        minAlertQuantity: Number(product?.minStockAlert) || 5,
-        lastUpdated: nowIso()
-      });
-      ctx.markRowPersisted("branchInventories", info.id);
-    }
-  }
-  for (const m of movements) {
-    pushMovement(ctx, m);
-    ctx.markRowPersisted("stockMovements", m.id);
-  }
-  ctx.data.sales.unshift(sale);
-  ctx.markRowPersisted("sales", sale.id);
-  return { ok: true };
-}
-function applyMemoryDelta(ctx, sale, productId, delta, type, reason, actorName) {
-  let inv = (ctx.data.branchInventories || []).find(
-    (i) => i.tenantId === sale.tenantId && i.branchId === sale.branchId && i.productId === productId
-  );
-  const product = (ctx.data.products || []).find((p) => p.id === productId);
-  const next = (inv ? Number(inv.quantity) || 0 : 0) + delta;
-  if (inv) {
-    inv.quantity = next;
-    inv.lastUpdated = nowIso();
-  } else {
-    ctx.data.branchInventories.push({
-      id: invIdFor(sale.tenantId, sale.branchId, productId),
-      tenantId: sale.tenantId,
-      branchId: sale.branchId,
-      productId,
-      quantity: next,
-      minAlertQuantity: Number(product?.minStockAlert) || 5,
-      lastUpdated: nowIso()
-    });
-  }
-  pushMovement(ctx, buildMovement(
-    ctx,
-    sale.tenantId,
-    sale.branchId,
-    productId,
-    product?.name || productId,
-    delta,
-    next,
-    type,
-    reason,
-    actorName,
-    sale.id
-  ));
-}
-async function commitRefundAtomic(ctx, params) {
-  const { saleId, tenantId, branchId, operationKey, items, soldQuantities, totalRefundSdg, record, actorName } = params;
-  if (!isDbEnabled()) {
-    if (!await claimPosOperation(operationKey)) return { ok: false, code: "DUPLICATE" };
-    const sale2 = (ctx.data.sales || []).find((s) => s.id === saleId);
-    if (!sale2) throw new Error("sale vanished");
-    if (sale2.status === "refunded") {
-      await releasePosOperation(operationKey);
-      return { ok: false, code: "ALREADY_REFUNDED" };
-    }
-    for (const it of items) {
-      const key = `${saleId}:${it.productId}`;
-      const already = memReturned.get(key) || 0;
-      const sold = soldQuantities.get(it.productId) || 0;
-      if (already + it.quantity > sold + 1e-9) {
-        await releasePosOperation(operationKey);
-        return { ok: false, code: "QTY_EXCEEDED", productId: it.productId, remaining: Math.max(0, sold - already) };
-      }
-      memReturned.set(key, already + it.quantity);
-    }
-    for (const it of items) applyMemoryDelta(ctx, sale2, it.productId, it.quantity, "return_refund", `\u0625\u0631\u062C\u0627\u0639 \u0628\u0645\u0648\u062C\u0628 ${record.creditNoteNumber || record.id}`, actorName);
-    const refunded = (Number(sale2.refundedAmountSdg) || 0) + totalRefundSdg;
-    sale2.refundedAmountSdg = refunded;
-    sale2.status = allReturned(sale2, saleId) ? "refunded" : "partially_refunded";
-    ctx.data.returns.unshift(record);
-    return { ok: true, refundedAmountSdg: refunded };
-  }
-  await ensurePosGuards();
-  const salesDef = ctx.tableDefFor("sales");
-  const returnsDef = ctx.tableDefFor("returns");
-  const movDef = ctx.tableDefFor("stockMovements");
-  if (!salesDef || !returnsDef) throw new Error("POS schema is not ready");
-  const movements = [];
-  const balances = /* @__PURE__ */ new Map();
-  let refundedAmountSdg = 0;
-  let nextStatus = "partially_refunded";
-  try {
-    await transaction(async (client) => {
-      const claim = await client.query(
-        `INSERT INTO sanad_pos_operations (key, createdat) VALUES ($1, $2)
-         ON CONFLICT (key) DO NOTHING RETURNING key`,
-        [operationKey, nowIso()]
-      );
-      if (claim.rows.length === 0) throw Object.assign(new Error("duplicate"), { posCode: "DUPLICATE" });
-      const locked = await client.query(`SELECT * FROM "sanad_sales" WHERE id = $1 FOR UPDATE`, [saleId]);
-      if (locked.rows.length === 0) throw Object.assign(new Error("missing"), { posCode: "ALREADY_REFUNDED" });
-      const saleRow = locked.rows[0];
-      if (String(readField(saleRow, "status")) === "refunded") {
-        throw Object.assign(new Error("refunded"), { posCode: "ALREADY_REFUNDED" });
-      }
-      for (const it of items) {
-        const sold = soldQuantities.get(it.productId) || 0;
-        const reserved = await reserveReturnedQty(client, saleId, it.productId, it.quantity, sold);
-        if (!reserved.ok) {
-          throw Object.assign(new Error("qty"), { posCode: "QTY_EXCEEDED", productId: it.productId, remaining: reserved.total });
-        }
-      }
-      for (const it of items) {
-        const found = await client.query(
-          `SELECT id FROM "sanad_branch_inventories"
-           WHERE "tenantId" = $1 AND "branchId" = $2 AND "productId" = $3 LIMIT 1`,
-          [tenantId, branchId, it.productId]
-        );
-        let invId;
-        if (found.rows.length > 0) invId = String(found.rows[0].id);
-        else {
-          invId = invIdFor(tenantId, branchId, it.productId);
-          const product = (ctx.data.products || []).find((p) => p.id === it.productId);
-          await client.query(
-            `INSERT INTO "sanad_branch_inventories"
-               (id, "tenantId", "branchId", "productId", quantity, "minAlertQuantity", "lastUpdated")
-             VALUES ($1, $2, $3, $4, 0, $5, $6) ON CONFLICT (id) DO NOTHING`,
-            [invId, tenantId, branchId, it.productId, Number(product?.minStockAlert) || 5, nowIso()]
-          );
-        }
-        const upd = await client.query(
-          `UPDATE "sanad_branch_inventories" SET quantity = quantity + $1, "lastUpdated" = $2
-           WHERE id = $3 RETURNING quantity`,
-          [it.quantity, nowIso(), invId]
-        );
-        const quantity2 = Number(upd.rows[0].quantity);
-        balances.set(it.productId, { id: invId, quantity: quantity2 });
-        movements.push(buildMovement(
-          ctx,
-          tenantId,
-          branchId,
-          it.productId,
-          it.productName,
-          it.quantity,
-          quantity2,
-          "return_refund",
-          `\u0625\u0631\u062C\u0627\u0639 \u0628\u0645\u0648\u062C\u0628 \u0625\u0634\u0639\u0627\u0631 \u062F\u0627\u0626\u0646 (${record.creditNoteNumber || record.id})`,
-          actorName,
-          saleId
-        ));
-      }
-      refundedAmountSdg = Math.round(((Number(readField(saleRow, "refundedAmountSdg")) || 0) + totalRefundSdg) * 100) / 100;
-      const ledger = await client.query(`SELECT productid, quantity FROM sanad_pos_returned WHERE saleid = $1`, [saleId]);
-      const returnedMap = new Map(ledger.rows.map((r) => [String(r.productid), Number(r.quantity)]));
-      let complete = true;
-      for (const [productId, sold] of soldQuantities) {
-        if ((returnedMap.get(productId) || 0) + 1e-9 < sold) {
-          complete = false;
-          break;
-        }
-      }
-      nextStatus = complete ? "refunded" : "partially_refunded";
-      const merged = { ...(ctx.data.sales || []).find((s) => s.id === saleId) };
-      merged.refundedAmountSdg = refundedAmountSdg;
-      merged.status = nextStatus;
-      await writeRow(client, salesDef, merged);
-      await writeRow(client, returnsDef, record);
-      if (movDef) for (const m of movements) await writeRow(client, movDef, m);
-    });
-  } catch (err) {
-    if (err?.posCode === "DUPLICATE") return { ok: false, code: "DUPLICATE" };
-    if (err?.posCode === "ALREADY_REFUNDED") return { ok: false, code: "ALREADY_REFUNDED" };
-    if (err?.posCode === "QTY_EXCEEDED") return { ok: false, code: "QTY_EXCEEDED", productId: err.productId, remaining: err.remaining };
-    throw err;
-  }
-  for (const [productId, info] of balances) {
-    const inv = (ctx.data.branchInventories || []).find((i) => i.id === info.id) || (ctx.data.branchInventories || []).find((i) => i.tenantId === tenantId && i.branchId === branchId && i.productId === productId);
-    if (inv) {
-      inv.quantity = info.quantity;
-      inv.lastUpdated = nowIso();
-      ctx.markRowPersisted("branchInventories", inv.id);
-    }
-  }
-  for (const m of movements) {
-    pushMovement(ctx, m);
-    ctx.markRowPersisted("stockMovements", m.id);
-  }
-  const sale = (ctx.data.sales || []).find((s) => s.id === saleId);
-  if (sale) {
-    sale.refundedAmountSdg = refundedAmountSdg;
-    sale.status = nextStatus;
-    ctx.markRowPersisted("sales", sale.id);
-  }
-  ctx.data.returns.unshift(record);
-  ctx.markRowPersisted("returns", record.id);
-  return { ok: true, refundedAmountSdg };
-}
-function allReturned(sale, saleId) {
-  const sold = /* @__PURE__ */ new Map();
-  for (const it of sale.items || []) sold.set(it.productId, (sold.get(it.productId) || 0) + (Number(it.quantity) || 0));
-  for (const [productId, qty] of sold) {
-    if ((memReturned.get(`${saleId}:${productId}`) || 0) + 1e-9 < qty) return false;
-  }
-  return true;
-}
-async function readSupplyInvoiceNumber(orderId) {
-  if (!isDbEnabled()) return memSupplyNumbers.get(orderId) || null;
-  await ensurePosGuards();
-  const { rows } = await query(`SELECT number, issuedat FROM sanad_supply_invoice_numbers WHERE orderid = $1`, [orderId]);
-  if (rows.length === 0) return null;
-  return { number: String(rows[0].number), issuedAt: String(rows[0].issuedat) };
-}
-async function putSupplyInvoiceNumberIfAbsent(orderId, number, issuedAt) {
-  if (!isDbEnabled()) {
-    const existing2 = memSupplyNumbers.get(orderId);
-    if (existing2) return existing2;
-    const value = { number, issuedAt };
-    memSupplyNumbers.set(orderId, value);
-    return value;
-  }
-  await ensurePosGuards();
-  const inserted = await query(
-    `INSERT INTO sanad_supply_invoice_numbers (orderid, number, issuedat) VALUES ($1, $2, $3)
-     ON CONFLICT (orderid) DO NOTHING RETURNING number, issuedat`,
-    [orderId, number, issuedAt]
-  );
-  if (inserted.rows.length > 0) return { number: String(inserted.rows[0].number), issuedAt: String(inserted.rows[0].issuedat) };
-  const existing = await readSupplyInvoiceNumber(orderId);
-  return existing || { number, issuedAt };
 }
 
 // src/server/media.ts
@@ -8461,7 +8246,7 @@ async function reservePurchaseInvoiceNumber(tenantId) {
   return `${prefix}${String(next).padStart(5, "0")}`;
 }
 var supplyInvoiceInFlight = /* @__PURE__ */ new Map();
-async function ensureSupplyInvoiceNumber(order) {
+async function ensureSupplyInvoiceNumber(order, _refreshInsideLock = true) {
   if (order.invoiceNumber) return;
   let pending = supplyInvoiceInFlight.get(order.id);
   if (!pending) {
@@ -8480,42 +8265,6 @@ async function ensureSupplyInvoiceNumber(order) {
     supplyInvoiceInFlight.set(order.id, pending);
   }
   await pending;
-}
-async function nextTenantDocumentNumber(kind, tenantId, existing) {
-  const year = (/* @__PURE__ */ new Date()).getFullYear();
-  const prefix = `${kind}-${year}-`;
-  const re = new RegExp(`^${prefix}(\\d+)$`);
-  let max = 0;
-  for (const value of existing) {
-    const m = re.exec(String(value || ""));
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  const next = await db.nextDocumentSequence(`${kind.toLowerCase()}:${tenantId}:${year}`, max + 1);
-  return `${prefix}${String(next).padStart(6, "0")}`;
-}
-function applySaleToShift(shift, sale) {
-  if (!shift || shift.status !== "open") return;
-  const grand = Number(sale.grandTotalSdg) || 0;
-  shift.salesCount += 1;
-  shift.totalSalesSdg += grand;
-  const method = sale.paymentMethod;
-  const split = sale.splitDetails;
-  if (method === "cash") {
-    shift.totalCashSalesSdg += grand;
-    shift.expectedCashSdg += grand;
-  } else if (method === "bankak") {
-    shift.totalBankakSalesSdg += grand;
-  } else if (method === "syberpay" || method === "fawry") {
-    shift.totalCardSalesSdg += grand;
-  } else if (method === "split" && split) {
-    shift.totalCashSalesSdg += split.cashAmountSdg || 0;
-    shift.expectedCashSdg += split.cashAmountSdg || 0;
-    shift.totalBankakSalesSdg += split.bankakAmountSdg || 0;
-    shift.totalCardSalesSdg += (split.cardAmountSdg || 0) + (split.fawryAmountSdg || 0);
-  }
-}
-function tracksInventory(product) {
-  return product?.trackInventory !== false;
 }
 function supplyInvoiceContext(order) {
   const seller = db.getTenant(order.sellerTenantId);
@@ -8695,7 +8444,7 @@ apiRouter.patch("/supply-orders/:id", merchantAuthMiddleware, async (req, res) =
     if (!buyer || !branch) {
       return res.status(409).json({ error: "BUYER_BRANCH_REQUIRED", message: "\u0644\u0627 \u064A\u0648\u062C\u062F \u0641\u0631\u0639 \u0646\u0634\u0637 \u0644\u0644\u0645\u0634\u062A\u0631\u064A. \u0641\u0639\u0651\u0644 \u0641\u0631\u0639\u0627\u064B \u0642\u0628\u0644 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062A\u0633\u0644\u064A\u0645 \u062D\u062A\u0649 \u064A\u064F\u0633\u062C\u0651\u0644 \u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u0648\u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629." });
     }
-    await ensureSupplyInvoiceNumber(order);
+    await ensureSupplyInvoiceNumber(order, false);
     if (!order.purchaseId) {
       const rate = Number(order.paymentExchangeRate) || 1;
       for (const line of order.items) {
@@ -9052,8 +8801,7 @@ apiRouter.post("/products", merchantAuthMiddleware, (req, res) => {
     customTaxRate,
     description,
     expiryDate,
-    productionDate,
-    trackInventory
+    productionDate
   } = req.body;
   if (!name || !sellingPriceSdg) {
     return res.status(400).json({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u062A\u062C \u0648\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u0628\u0627\u0644\u062C\u0646\u064A\u0647 \u0627\u0644\u0633\u0648\u062F\u0627\u0646\u064A \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
@@ -9081,9 +8829,8 @@ apiRouter.post("/products", merchantAuthMiddleware, (req, res) => {
     /* أقل كمية للطلب على مستوى الصنف */
     minOrderQty: Number(req.body?.minOrderQty) > 0 ? Math.round(Number(req.body.minOrderQty)) : void 0,
     isTaxExempt: Boolean(isTaxExempt),
-    /* الافتراضي صنف مخزوني؛ false تعني خدمة لا رصيد لها. */
-    trackInventory: trackInventory === false ? false : true,
     customTaxRate: customTaxRate !== void 0 && customTaxRate !== "" ? Number(customTaxRate) : void 0,
+    trackInventory: req.body?.trackInventory === false ? false : true,
     isActive: true,
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
@@ -9126,7 +8873,6 @@ apiRouter.put("/products/:id", merchantAuthMiddleware, requireProductEditor, (re
   }
   if ("sellingPriceSdg" in body && !(body.sellingPriceSdg > 0)) return res.status(400).json({ error: "\u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639 \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 \u0623\u0643\u0628\u0631 \u0645\u0646 \u0635\u0641\u0631." });
   if ("isTaxExempt" in body && typeof body.isTaxExempt !== "boolean") return res.status(400).json({ error: "\u062D\u0627\u0644\u0629 \u0627\u0644\u0636\u0631\u064A\u0628\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
-  if ("trackInventory" in body && typeof body.trackInventory !== "boolean") return res.status(400).json({ error: "\u062D\u0627\u0644\u0629 \u062A\u062A\u0628\u0651\u0639 \u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
   if ("barcode" in body && body.barcode.trim() && normalizeBarcode(body.barcode) !== normalizeBarcode(product.barcode)) {
     const code = normalizeBarcode(body.barcode);
     const duplicate = db.getProducts(actor.tenantId).find((p) => p.id !== product.id && p.isActive !== false && normalizeBarcode(p.barcode) === code);
@@ -9158,8 +8904,11 @@ apiRouter.put("/products/:id", merchantAuthMiddleware, requireProductEditor, (re
   }
   if ("minStockAlert" in body) product.minimumStock = body.minStockAlert;
   if ("isTaxExempt" in body) product.isTaxExempt = body.isTaxExempt;
-  if ("trackInventory" in body) product.trackInventory = body.trackInventory;
   if ("customTaxRate" in body) product.customTaxRate = body.customTaxRate === null ? void 0 : body.customTaxRate;
+  if ("trackInventory" in body) {
+    if (typeof body.trackInventory !== "boolean") return res.status(400).json({ error: "\u0642\u064A\u0645\u0629 \u062A\u062A\u0628\u0639 \u0627\u0644\u0645\u062E\u0632\u0648\u0646 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
+    product.trackInventory = body.trackInventory;
+  }
   const repriced = syncItemLinks(db.getSchema());
   db.commit();
   db.logAudit({ tenantId: actor.tenantId, actorId: actor.actorId, actorName: actor.actorName, action: "UPDATE_PRODUCT", entity: "Product", entityId: product.id, details: `\u062A\u0639\u062F\u064A\u0644 \u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB` });
@@ -9561,232 +9310,234 @@ apiRouter.get("/pos/shifts", merchantAuthMiddleware, (req, res) => {
 });
 apiRouter.post("/pos/sales", merchantAuthMiddleware, async (req, res) => {
   const authReq = req;
-  const {
-    id,
-    // client-generated UUID for idempotency & offline sync
-    branchId,
-    shiftId,
-    customerName,
-    customerPhone,
-    customerId,
-    items,
-    paymentMethod,
-    splitDetails,
-    paymentReference,
-    discountTotalSdg,
-    isOfflineCreated,
-    vatEnabled: clientVatEnabled,
-    defaultVatPct: clientDefaultVatPct,
-    pricesIncludeVat: clientPricesIncludeVat
-  } = req.body;
-  if (!branchId || !items || !items.length) {
-    return res.status(400).json({ error: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u063A\u064A\u0631 \u0645\u0643\u062A\u0645\u0644\u0629 (\u064A\u0631\u062C\u0649 \u0627\u062E\u062A\u064A\u0627\u0631 \u0627\u0644\u0641\u0631\u0639 \u0648\u0627\u0644\u0623\u0635\u0646\u0627\u0641)" });
-  }
-  if (id) {
-    const existing = db.getSchema().sales.find((s) => s.id === id && s.tenantId === authReq.tenantId);
-    if (existing) {
-      return res.json({ success: true, sale: existing, isDuplicate: true });
-    }
-  }
-  const branch = db.getSchema().branches.find((b) => b.id === branchId && b.tenantId === authReq.tenantId);
-  if (!branch) return res.status(400).json({ error: "\u0627\u0644\u0641\u0631\u0639 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
-  for (const it of items) {
-    const prod = db.getSchema().products.find((p) => p.id === it.productId && p.tenantId === authReq.tenantId);
-    if (!prod) return res.status(400).json({ error: `\u0627\u0644\u0635\u0646\u0641 ${it.productId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631.` });
-    if (prod.isActive === false && !isOfflineCreated) return res.status(409).json({ error: `\u0627\u0644\u0635\u0646\u0641 \xAB${prod.name}\xBB \u0623\u064F\u0632\u064A\u0644 \u0645\u0646 \u0627\u0644\u0645\u062A\u062C\u0631.` });
-  }
-  if (shiftId) {
-    const shiftCheck = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
-    if (!shiftCheck) return res.status(400).json({ error: "\u0627\u0644\u0648\u0631\u062F\u064A\u0629 \u0644\u0627 \u062A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
-    if (shiftCheck.branchId !== branchId) return res.status(400).json({ error: "\u0627\u0644\u0648\u0631\u062F\u064A\u0629 \u0644\u0627 \u062A\u062A\u0628\u0639 \u0646\u0641\u0633 \u0627\u0644\u0641\u0631\u0639." });
-  }
-  if (customerId) {
-    const custCheck = db.getSchema().customers.find((c) => c.id === customerId && c.tenantId === authReq.tenantId);
-    if (!custCheck) return res.status(400).json({ error: "\u0627\u0644\u0639\u0645\u064A\u0644 \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
-  }
-  if (!isOfflineCreated && items.some((item) => db.getSchema().products.some((p) => p.id === item.productId && p.tenantId === authReq.tenantId && p.isActive === false))) {
-    return res.status(409).json({ error: "\u0623\u062D\u062F \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0623\u064F\u0632\u064A\u0644 \u0645\u0646 \u0627\u0644\u0645\u062A\u062C\u0631. \u062D\u062F\u0651\u062B \u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0648\u0623\u0639\u062F \u0645\u0631\u0627\u062C\u0639\u0629 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629." });
-  }
-  const tenant = db.getTenant(authReq.tenantId);
-  const isVatActive = tenant?.settings?.vatEnabled ?? true;
-  const effectiveDefaultVatPct = Number(tenant?.settings?.defaultVatPct ?? 15);
-  const isPricesIncludeVat = tenant?.settings?.pricesIncludeVat ?? false;
-  const saleActorEmployee = db.getSchema().employees.find((e) => e.tenantId === authReq.tenantId && e.id === authReq.actorId);
-  const saleActorPerms = resolveActorPerms(authReq.actorRole, saleActorEmployee);
-  const resolvedLines = [];
-  for (const item of items) {
-    const product = db.getSchema().products.find((p) => p.id === item.productId && p.tenantId === authReq.tenantId);
-    const unitPrice = Number(item.unitPriceSdg ?? product?.sellingPriceSdg ?? 0);
-    const listPrice = Number(product?.sellingPriceSdg ?? 0);
-    if (!isOfflineCreated && item.unitPriceSdg !== void 0 && Math.abs(unitPrice - listPrice) > 9e-3 && !saleActorPerms.editPrices) {
-      return res.status(403).json({
-        error: "PRICE_OVERRIDE_FORBIDDEN",
-        message: `\u0644\u064A\u0633\u062A \u0644\u062F\u064A\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u062A\u0639\u062F\u064A\u0644 \u0633\u0639\u0631 \xAB${product?.name || "\u0627\u0644\u0635\u0646\u0641"}\xBB. \u0627\u0644\u0633\u0639\u0631 \u0627\u0644\u0645\u0633\u062C\u0651\u0644 ${listPrice.toLocaleString()} \u062C.\u0633.`
-      });
-    }
-    const lineError = validateInvoiceLine(item, unitPrice);
-    if (lineError) {
-      return res.status(400).json({ error: `\xAB${product?.name || item.productName || "\u0635\u0646\u0641"}\xBB: ${lineError}` });
-    }
-    const isTaxExempt = item.isTaxExempt !== void 0 ? Boolean(item.isTaxExempt) : Boolean(product?.isTaxExempt);
-    const rawRate = isTaxExempt || !isVatActive ? 0 : Number(item.taxRate ?? product?.customTaxRate ?? effectiveDefaultVatPct);
-    resolvedLines.push({
-      item,
-      product,
-      qty: Number(item.quantity),
-      unitPrice,
-      discount: Number(item.discountSdg || 0),
-      isTaxExempt,
-      taxRate: Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 0
-    });
-  }
-  const stockDeltas = resolvedLines.filter((r) => tracksInventory(r.product)).map((r) => ({ productId: r.item.productId, delta: -r.qty }));
-  if (!tenant?.settings?.allowNegativeStock) {
-    const needed = /* @__PURE__ */ new Map();
-    for (const d of stockDeltas) needed.set(d.productId, (needed.get(d.productId) || 0) - d.delta);
-    for (const [productId, qty] of needed) {
-      const inv = db.getSchema().branchInventories.find(
-        (i) => i.tenantId === authReq.tenantId && i.branchId === branchId && i.productId === productId
-      );
-      const available = inv ? inv.quantity : 0;
-      if (available < qty) {
-        const name = db.getSchema().products.find((p) => p.id === productId)?.name || productId;
-        return res.status(409).json({ error: "INSUFFICIENT_STOCK", message: `\u0627\u0644\u0631\u0635\u064A\u062F \u0627\u0644\u0645\u062A\u0627\u062D \u0645\u0646 \xAB${name}\xBB \u063A\u064A\u0631 \u0643\u0627\u0641\u064D (${available}).` });
-      }
-    }
-  }
-  const totals = computeInvoiceTotals(
-    resolvedLines.map((r) => ({ quantity: r.qty, unitPrice: r.unitPrice, discount: r.discount, taxRate: r.taxRate })),
-    { pricesIncludeVat: isPricesIncludeVat, invoiceDiscount: Number(discountTotalSdg) || 0 }
-  );
-  const subtotal = totals.subtotal;
-  const discountTotal = totals.discountTotal;
-  const taxTotal = totals.taxTotal;
-  const grandTotal = totals.grandTotal;
-  let invoiceNumber;
   try {
-    invoiceNumber = await nextTenantDocumentNumber(
-      "INV",
-      authReq.tenantId,
-      db.getSchema().sales.filter((s) => s.tenantId === authReq.tenantId).map((s) => s.invoiceNumber)
-    );
-  } catch (err) {
-    console.error("[pos/sales] invoice number reservation failed", err);
-    return res.status(503).json({ error: "\u062A\u0639\u0630\u0651\u0631 \u062D\u062C\u0632 \u0631\u0642\u0645 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629. \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629." });
-  }
-  if (id) {
-    const duplicate = db.getSchema().sales.find((s) => s.id === id && s.tenantId === authReq.tenantId);
-    if (duplicate) return res.json({ success: true, sale: duplicate, isDuplicate: true });
-  }
-  const processedItems = [];
-  resolvedLines.forEach((r, idx) => {
-    const line = totals.lines[idx];
-    processedItems.push({
-      productId: r.item.productId,
-      productName: r.product?.name || r.item.productName || "\u0635\u0646\u0641",
-      unit: r.product?.unit || r.item.unit || "\u062D\u0628\u0629",
-      quantity: r.qty,
-      unitPriceSdg: r.unitPrice,
-      discountSdg: r.discount,
-      totalSdg: line.total,
-      costPerUnitSdg: r.product?.purchaseCost || 0,
-      notes: r.item.notes || void 0,
-      isTaxExempt: r.isTaxExempt,
-      taxRate: r.taxRate,
-      taxAmountSdg: line.taxAmount
-    });
-  });
-  let linkedCustomerId = customerId || void 0;
-  if (!linkedCustomerId && customerPhone && customerPhone.trim().length >= 7) {
-    const foundCust = db.getCustomers(authReq.tenantId).find((c) => c.phone.trim() === customerPhone.trim());
-    if (foundCust) linkedCustomerId = foundCust.id;
-  }
-  let earnedPoints = 0;
-  let updatedCustomer = null;
-  const sale = {
-    id: id || newId("sale"),
-    tenantId: authReq.tenantId,
-    branchId,
-    branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
-    shiftId: shiftId || "",
-    invoiceNumber,
-    customerId: linkedCustomerId,
-    customerName: customerName || db.getSchema().customers.find((c) => c.id === linkedCustomerId)?.name || "\u0639\u0645\u064A\u0644 \u0646\u0642\u062F\u064A",
-    customerPhone: customerPhone || db.getSchema().customers.find((c) => c.id === linkedCustomerId)?.phone || "",
-    items: processedItems,
-    subtotalSdg: subtotal,
-    discountTotalSdg: discountTotal,
-    taxTotalSdg: taxTotal,
-    grandTotalSdg: grandTotal,
-    paymentMethod: paymentMethod || "cash",
-    splitDetails,
-    multiCurrency: req.body.multiCurrency || void 0,
-    paymentReference,
-    status: "completed",
-    cashierId: authReq.actorId,
-    cashierName: authReq.actorName,
-    isOfflineCreated: Boolean(isOfflineCreated),
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  const committed = await commitSaleAtomic(db.atomicContext(), {
-    sale,
-    deltas: stockDeltas,
-    allowNegative: Boolean(tenant?.settings?.allowNegativeStock),
-    operationKey: `sale:${authReq.tenantId}:${sale.id}`,
-    actorName: authReq.actorName,
-    reason: isOfflineCreated ? "\u0628\u064A\u0639 \u0645\u0646 \u0627\u0644\u0643\u0627\u0634\u064A\u0631 (\u0645\u0633\u062C\u0651\u0644 \u062F\u0648\u0646 \u0627\u062A\u0635\u0627\u0644)" : "\u0628\u064A\u0639 \u0645\u0628\u0627\u0634\u0631 \u0641\u064A \u0627\u0644\u0643\u0627\u0634\u064A\u0631"
-  });
-  if (!committed.ok) {
-    if (committed.code === "DUPLICATE") {
+    await withTenantPosLock(authReq.tenantId, async () => {
       await db.refresh();
-      const existing = db.getSchema().sales.find((s) => s.id === sale.id && s.tenantId === authReq.tenantId);
-      if (existing) return res.json({ success: true, sale: existing, isDuplicate: true });
-      return res.status(409).json({ error: "SALE_IN_PROGRESS", message: "\u0647\u0630\u0647 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0642\u064A\u062F \u0627\u0644\u062A\u0633\u062C\u064A\u0644. \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629 \u0628\u0639\u062F \u0644\u062D\u0638\u0627\u062A." });
-    }
-    const name = db.getSchema().products.find((p) => p.id === committed.productId)?.name || committed.productId;
-    return res.status(409).json({ error: "INSUFFICIENT_STOCK", message: `\u0627\u0644\u0631\u0635\u064A\u062F \u0627\u0644\u0645\u062A\u0627\u062D \u0645\u0646 \xAB${name}\xBB \u063A\u064A\u0631 \u0643\u0627\u0641\u064D (${committed.available}).` });
+      const {
+        id,
+        branchId,
+        shiftId,
+        customerName,
+        customerPhone,
+        customerId,
+        items,
+        paymentMethod,
+        splitDetails,
+        paymentReference,
+        discountTotalSdg
+      } = req.body;
+      if (!branchId || !Array.isArray(items) || !items.length) {
+        return res.status(400).json({ error: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u063A\u064A\u0631 \u0645\u0643\u062A\u0645\u0644\u0629 (\u064A\u0631\u062C\u0649 \u0627\u062E\u062A\u064A\u0627\u0631 \u0627\u0644\u0641\u0631\u0639 \u0648\u0627\u0644\u0623\u0635\u0646\u0627\u0641)" });
+      }
+      if (id) {
+        const requestedSaleId = String(id);
+        const existing = db.getSchema().sales.find((s) => s.id === requestedSaleId);
+        if (existing?.tenantId === authReq.tenantId) {
+          return res.json({ success: true, sale: existing, isDuplicate: true });
+        }
+        if (existing) {
+          return res.status(409).json({ error: "SALE_ID_CONFLICT", message: "\u0645\u0639\u0631\u0651\u0641 \u0639\u0645\u0644\u064A\u0629 \u0627\u0644\u0628\u064A\u0639 \u0645\u0633\u062A\u062E\u062F\u0645 \u0645\u0633\u0628\u0642\u0627\u064B. \u0644\u0645 \u064A\u062A\u0645 \u062D\u0641\u0638 \u0627\u0644\u0628\u064A\u0639." });
+        }
+      }
+      const branch = db.getSchema().branches.find((b) => b.id === branchId && b.tenantId === authReq.tenantId);
+      if (!branch) return res.status(400).json({ error: "\u0627\u0644\u0641\u0631\u0639 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+      const tenant = db.getTenant(authReq.tenantId);
+      const perms = actorPerms(authReq);
+      const maxDiscountPct = maxDiscountPctForActor(tenant?.settings?.defaultMaxDiscountPct, authReq);
+      const settings = {
+        vatEnabled: tenant?.settings?.vatEnabled ?? true,
+        defaultVatPct: Number(tenant?.settings?.defaultVatPct ?? 15),
+        pricesIncludeVat: tenant?.settings?.pricesIncludeVat ?? false
+      };
+      const productMap = /* @__PURE__ */ new Map();
+      const normalizedItems = [];
+      const requiredStock = /* @__PURE__ */ new Map();
+      for (const item of items) {
+        const product = db.getSchema().products.find((p) => p.id === item.productId && p.tenantId === authReq.tenantId);
+        if (!product) return res.status(400).json({ error: `\u0627\u0644\u0635\u0646\u0641 ${item.productId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631.` });
+        if (product.isActive === false) return res.status(409).json({ error: `\u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB \u0623\u064F\u0632\u064A\u0644 \u0645\u0646 \u0627\u0644\u0645\u062A\u062C\u0631.` });
+        productMap.set(product.id, product);
+        const unitPrice = Number(item.unitPriceSdg ?? product.sellingPriceSdg ?? 0);
+        if (!Number.isFinite(unitPrice) || unitPrice < 0) return res.status(400).json({ error: `\u0633\u0639\u0631 \u0627\u0644\u0635\u0646\u0641 \xAB${product.name}\xBB \u063A\u064A\u0631 \u0635\u0627\u0644\u062D.` });
+        if (Math.abs(unitPrice - Number(product.sellingPriceSdg || 0)) > 5e-3 && !perms.editPrices) {
+          return res.status(403).json({ error: "PRICE_OVERRIDE_FORBIDDEN", message: `\u062A\u0639\u062F\u064A\u0644 \u0633\u0639\u0631 \xAB${product.name}\xBB \u064A\u062A\u0637\u0644\u0628 \u0635\u0644\u0627\u062D\u064A\u0629 \u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0623\u0633\u0639\u0627\u0631.` });
+        }
+        const lineDiscount = Number(item.discountSdg ?? 0);
+        const normalized = {
+          productId: product.id,
+          productName: product.name,
+          unit: product.unit || item.unit || "\u062D\u0628\u0629",
+          quantity: Number(item.quantity),
+          unitPriceSdg: unitPrice,
+          discountSdg: lineDiscount,
+          isTaxExempt: Boolean(product.isTaxExempt),
+          taxRate: Number(product.customTaxRate ?? settings.defaultVatPct),
+          notes: item.notes || void 0,
+          costPerUnitSdg: product.purchaseCost || 0
+        };
+        const err = validateInvoiceLine(normalized);
+        if (err) return res.status(400).json({ error: `${product.name}: ${err}` });
+        normalizedItems.push(normalized);
+        if (tracksStock(product)) {
+          requiredStock.set(product.id, round2((requiredStock.get(product.id) || 0) + Number(item.quantity)));
+        }
+      }
+      if (shiftId) {
+        const shiftCheck = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
+        if (!shiftCheck) return res.status(400).json({ error: "\u0627\u0644\u0648\u0631\u062F\u064A\u0629 \u0644\u0627 \u062A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+        if (shiftCheck.branchId !== branchId) return res.status(400).json({ error: "\u0627\u0644\u0648\u0631\u062F\u064A\u0629 \u0644\u0627 \u062A\u062A\u0628\u0639 \u0646\u0641\u0633 \u0627\u0644\u0641\u0631\u0639." });
+      }
+      if (customerId) {
+        const custCheck = db.getSchema().customers.find((c) => c.id === customerId && c.tenantId === authReq.tenantId);
+        if (!custCheck) return res.status(400).json({ error: "\u0627\u0644\u0639\u0645\u064A\u0644 \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631." });
+      }
+      const allowNegative = Boolean(tenant?.settings?.allowNegativeStock) || perms.overrideStock && req.body.overrideStock === true;
+      if (!allowNegative) {
+        for (const [productId, qty] of requiredStock) {
+          const available = db.getProductStock(authReq.tenantId, branchId, productId);
+          if (available < qty) {
+            const p = productMap.get(productId);
+            return res.status(409).json({ error: "INSUFFICIENT_STOCK", message: `\u0627\u0644\u0631\u0635\u064A\u062F \u063A\u064A\u0631 \u0643\u0627\u0641\u064D \u0644\u0644\u0635\u0646\u0641 \xAB${p?.name || productId}\xBB (\u0627\u0644\u0645\u062A\u0627\u062D ${available}\u060C \u0627\u0644\u0645\u0637\u0644\u0648\u0628 ${qty}).` });
+          }
+        }
+      }
+      const totals = computeInvoiceTotals(normalizedItems, settings, Number(discountTotalSdg) || 0);
+      const discountViolation = discountPolicyViolation(totals.lines, maxDiscountPct, perms.editPrices);
+      if (discountViolation) {
+        return res.status(403).json({
+          error: "DISCOUNT_LIMIT_EXCEEDED",
+          message: `\u0625\u062C\u0645\u0627\u0644\u064A \u0627\u0644\u062E\u0635\u0645 \u0639\u0644\u0649 \xAB${discountViolation}\xBB \u064A\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u062D\u062F \u0627\u0644\u0645\u0633\u0645\u0648\u062D (${maxDiscountPct}%).`
+        });
+      }
+      const processedItems = totals.lines.map((l) => ({
+        productId: l.productId,
+        productName: l.productName,
+        unit: l.unit,
+        quantity: l.quantity,
+        unitPriceSdg: l.unitPriceSdg,
+        discountSdg: l.discountSdg,
+        totalSdg: l.netSdg,
+        paidSdg: l.totalSdg,
+        invoiceDiscountShareSdg: l.invoiceDiscountShareSdg,
+        costPerUnitSdg: l.costPerUnitSdg || 0,
+        notes: l.notes,
+        isTaxExempt: l.isTaxExempt,
+        taxRate: l.taxRate,
+        taxAmountSdg: l.taxAmountSdg
+      }));
+      const invoiceNumber = await nextSalesInvoiceNumber(authReq.tenantId);
+      let linkedCustomerId = customerId || void 0;
+      if (!linkedCustomerId && customerPhone && String(customerPhone).trim().length >= 7) {
+        const foundCust = db.getCustomers(authReq.tenantId).find((c) => c.phone.trim() === String(customerPhone).trim());
+        if (foundCust) linkedCustomerId = foundCust.id;
+      }
+      let earnedPoints = 0;
+      let updatedCustomer = null;
+      if (linkedCustomerId) {
+        const loyaltyRes = db.recordCustomerSale(authReq.tenantId, linkedCustomerId, totals.grandTotalSdg);
+        if (loyaltyRes) {
+          earnedPoints = loyaltyRes.earnedPoints;
+          updatedCustomer = loyaltyRes.cust;
+        }
+      }
+      const sale = {
+        id: id || newId("sale"),
+        tenantId: authReq.tenantId,
+        branchId,
+        branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
+        shiftId: shiftId || "",
+        invoiceNumber,
+        customerId: linkedCustomerId,
+        customerName: customerName || (updatedCustomer ? updatedCustomer.name : "\u0639\u0645\u064A\u0644 \u0646\u0642\u062F\u064A"),
+        customerPhone: customerPhone || (updatedCustomer ? updatedCustomer.phone : ""),
+        items: processedItems,
+        subtotalSdg: totals.subtotalSdg,
+        discountTotalSdg: totals.discountTotalSdg,
+        taxTotalSdg: totals.taxTotalSdg,
+        grandTotalSdg: totals.grandTotalSdg,
+        paymentMethod: paymentMethod || "cash",
+        splitDetails,
+        multiCurrency: req.body.multiCurrency || void 0,
+        paymentReference,
+        status: "completed",
+        cashierId: authReq.actorId,
+        cashierName: authReq.actorName,
+        isOfflineCreated: false,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      for (const [productId, qty] of requiredStock) {
+        const adj = db.adjustStock({
+          tenantId: authReq.tenantId,
+          branchId,
+          productId,
+          delta: -qty,
+          type: "sale_deduction",
+          reason: `\u0628\u064A\u0639 \u0645\u0628\u0627\u0634\u0631 \u0641\u064A \u0627\u0644\u0643\u0627\u0634\u064A\u0631 (${invoiceNumber})`,
+          actorName: authReq.actorName,
+          referenceId: sale.id,
+          allowNegative
+        });
+        if (!adj.success) {
+          await db.refresh();
+          return res.status(409).json({ error: adj.error || "\u062A\u0639\u0630\u0631 \u062E\u0635\u0645 \u0627\u0644\u0645\u062E\u0632\u0648\u0646." });
+        }
+      }
+      db.getSchema().sales.unshift(sale);
+      const itemsWithNotes = processedItems.filter((it) => it.notes && it.notes.trim().length > 0);
+      if (itemsWithNotes.length > 0 || req.body.isQuickOrder || req.body.orderType) {
+        const kTicket = {
+          id: newId("kds"),
+          saleId: sale.id,
+          invoiceNumber: sale.invoiceNumber,
+          tenantId: authReq.tenantId,
+          branchId,
+          branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
+          customerName: sale.customerName,
+          orderType: req.body.orderType || (itemsWithNotes.length > 0 ? "quick_order" : "takeaway"),
+          items: (itemsWithNotes.length > 0 ? itemsWithNotes : processedItems).map((it, idx) => ({
+            id: newId(`kds_it_${idx}`),
+            productId: it.productId,
+            productName: it.productName,
+            quantity: it.quantity,
+            unit: it.unit,
+            notes: it.notes || "\u0637\u0644\u0628 \u0633\u0631\u064A\u0639",
+            status: "pending"
+          })),
+          status: "pending",
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        db.createKitchenTicket(kTicket);
+      }
+      if (shiftId) {
+        const shift = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
+        if (shift && shift.status === "open") {
+          shift.salesCount += 1;
+          shift.totalSalesSdg = round2(shift.totalSalesSdg + totals.grandTotalSdg);
+          if (paymentMethod === "cash") {
+            shift.totalCashSalesSdg = round2(shift.totalCashSalesSdg + totals.grandTotalSdg);
+            shift.expectedCashSdg = round2(shift.expectedCashSdg + totals.grandTotalSdg);
+          } else if (paymentMethod === "bankak") {
+            shift.totalBankakSalesSdg = round2(shift.totalBankakSalesSdg + totals.grandTotalSdg);
+          } else if (paymentMethod === "syberpay" || paymentMethod === "fawry") {
+            shift.totalCardSalesSdg = round2(shift.totalCardSalesSdg + totals.grandTotalSdg);
+          } else if (paymentMethod === "split" && splitDetails) {
+            shift.totalCashSalesSdg = round2(shift.totalCashSalesSdg + (splitDetails.cashAmountSdg || 0));
+            shift.expectedCashSdg = round2(shift.expectedCashSdg + (splitDetails.cashAmountSdg || 0));
+            shift.totalBankakSalesSdg = round2(shift.totalBankakSalesSdg + (splitDetails.bankakAmountSdg || 0));
+            shift.totalCardSalesSdg = round2(shift.totalCardSalesSdg + (splitDetails.cardAmountSdg || 0) + (splitDetails.fawryAmountSdg || 0));
+          }
+        }
+      }
+      db.commit();
+      await db.flush({ lock: false });
+      if (process.env.NODE_ENV !== "test") notifyLowStock(authReq.tenantId, { branchId }).catch(() => {
+      });
+      res.json({ success: true, sale, earnedPoints, customer: updatedCustomer });
+    });
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: "DB_WRITE_FAILED", message: err?.message || "\u062A\u0639\u0630\u0631 \u062D\u0641\u0638 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629." });
   }
-  if (linkedCustomerId) {
-    const loyaltyRes = db.recordCustomerSale(authReq.tenantId, linkedCustomerId, grandTotal);
-    if (loyaltyRes) {
-      earnedPoints = loyaltyRes.earnedPoints;
-      updatedCustomer = loyaltyRes.cust;
-    }
-  }
-  const itemsWithNotes = processedItems.filter((it) => it.notes && it.notes.trim().length > 0);
-  if (itemsWithNotes.length > 0 || req.body.isQuickOrder || req.body.orderType) {
-    const kTicket = {
-      id: newId("kds"),
-      saleId: sale.id,
-      invoiceNumber: sale.invoiceNumber,
-      tenantId: authReq.tenantId,
-      branchId,
-      branchName: branch?.name || "\u0627\u0644\u0641\u0631\u0639 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
-      customerName: sale.customerName,
-      orderType: req.body.orderType || (itemsWithNotes.length > 0 ? "quick_order" : "takeaway"),
-      items: (itemsWithNotes.length > 0 ? itemsWithNotes : processedItems).map((it, idx) => ({
-        id: newId(`kds_it_${idx}`),
-        productId: it.productId,
-        productName: it.productName,
-        quantity: it.quantity,
-        unit: it.unit,
-        notes: it.notes || "\u0637\u0644\u0628 \u0633\u0631\u064A\u0639",
-        status: "pending"
-      })),
-      status: "pending",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    db.createKitchenTicket(kTicket);
-  }
-  if (shiftId) {
-    const shift = db.getSchema().cashierShifts.find((s) => s.id === shiftId && s.tenantId === authReq.tenantId);
-    applySaleToShift(shift, { grandTotalSdg: grandTotal, paymentMethod, splitDetails });
-  }
-  db.commit();
-  notifyLowStock(authReq.tenantId, { branchId }).catch(() => {
-  });
-  res.json({ success: true, sale, earnedPoints, customer: updatedCustomer });
 });
 apiRouter.get("/pos/sales", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
@@ -9796,172 +9547,120 @@ apiRouter.get("/pos/sales", merchantAuthMiddleware, (req, res) => {
 });
 apiRouter.post("/pos/sales/:id/refund", merchantAuthMiddleware, async (req, res) => {
   const authReq = req;
-  const refundEmployee = db.getSchema().employees.find((e) => e.tenantId === authReq.tenantId && e.id === authReq.actorId);
-  if (!resolveActorPerms(authReq.actorRole, refundEmployee).processReturns) {
-    return res.status(403).json({ error: "REFUND_FORBIDDEN", message: "\u0644\u064A\u0633\u062A \u0644\u062F\u064A\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u0625\u0631\u062C\u0627\u0639 \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631." });
-  }
-  const sale = db.getSchema().sales.find((s) => s.id === req.params.id && s.tenantId === authReq.tenantId);
-  if (!sale) return res.status(404).json({ error: "\u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
-  const { reason, returnItems } = req.body;
-  const requestId = typeof req.body?.requestId === "string" && req.body.requestId.trim() ? req.body.requestId.trim().slice(0, 80) : newId("req");
-  const operationKey = `refund:${authReq.tenantId}:${sale.id}:${requestId}`;
-  const priorNote = db.getSchema().returns.find((r) => r.saleId === sale.id && r.requestId === requestId);
-  if (priorNote) return res.json({ success: true, returnRecord: priorNote, sale, isDuplicate: true });
-  if (sale.status === "refunded") {
-    return res.status(409).json({ error: "ALREADY_REFUNDED", message: "\u062A\u0645 \u0625\u0631\u062C\u0627\u0639 \u0647\u0630\u0647 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0627\u0644\u0643\u0627\u0645\u0644 \u0645\u0633\u0628\u0642\u0627\u064B" });
-  }
-  const existingReturns = db.getSchema().returns.filter((r) => r.saleId === sale.id);
-  const legacyReturns = existingReturns.filter((r) => !r.requestId);
-  await seedLegacyReturns(sale.id, legacyReturns.flatMap((r) => r.items.map((it) => ({ productId: it.productId, quantity: it.quantity }))));
-  const soldQuantities = /* @__PURE__ */ new Map();
-  for (const it of sale.items) soldQuantities.set(it.productId, (soldQuantities.get(it.productId) || 0) + (Number(it.quantity) || 0));
-  const previouslyReturnedMap = {};
-  for (const ret of existingReturns) {
-    for (const it of ret.items) {
-      previouslyReturnedMap[it.productId] = (previouslyReturnedMap[it.productId] || 0) + it.quantity;
-    }
-  }
-  const previouslyRefundedTax = existingReturns.reduce((n, r) => n + (Number(r.taxRefundSdg) || 0), 0);
-  const refundAllocator = createRefundAllocator(sale);
-  const saleGrand = refundAllocator.grand;
-  const requested = /* @__PURE__ */ new Map();
-  if (Array.isArray(returnItems) && returnItems.length > 0) {
-    for (const retItem of returnItems) {
-      const productId = String(retItem?.productId || "");
-      if (!soldQuantities.has(productId)) continue;
-      const qty = Number(retItem?.quantity);
-      if (!Number.isFinite(qty) || qty < 0) {
-        return res.status(400).json({ error: "INVALID_RETURN_QTY", message: "\u0643\u0645\u064A\u0629 \u0627\u0644\u0625\u0631\u062C\u0627\u0639 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
-      }
-      requested.set(productId, (requested.get(productId) || 0) + qty);
-    }
-  } else {
-    for (const [productId, sold] of soldQuantities) {
-      requested.set(productId, Math.max(0, sold - (previouslyReturnedMap[productId] || 0)));
-    }
-  }
-  for (const [productId, qty] of requested) {
-    const remaining = Math.max(0, (soldQuantities.get(productId) || 0) - (previouslyReturnedMap[productId] || 0));
-    if (qty > remaining + 1e-9) {
-      const name = sale.items.find((i) => i.productId === productId)?.productName || productId;
-      return res.status(400).json({
-        error: "RETURN_QTY_EXCEEDED",
-        message: `\u0627\u0644\u0643\u0645\u064A\u0629 \u0627\u0644\u0645\u0637\u0644\u0648\u0628\u0629 \u0645\u0646 \xAB${name}\xBB \u062A\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u0645\u062A\u0628\u0642\u064A \u0644\u0644\u0625\u0631\u062C\u0627\u0639 (${remaining}).`
-      });
-    }
-  }
-  const itemsToRefund = [];
-  for (const [productId, qty] of requested) {
-    if (qty <= 0) continue;
-    const origItem = sale.items.find((i) => i.productId === productId);
-    itemsToRefund.push({
-      productId,
-      productName: origItem.productName,
-      quantity: qty,
-      refundAmountSdg: refundAllocator.forQty(origItem, qty),
-      taxAmountSdg: refundAllocator.taxForQty(origItem, qty)
-    });
-  }
-  if (itemsToRefund.length === 0) {
-    return res.status(400).json({ error: "\u0644\u0645 \u064A\u062A\u0645 \u062A\u062D\u062F\u064A\u062F \u0623\u064A \u0623\u0635\u0646\u0627\u0641 \u0642\u0627\u0628\u0644\u0629 \u0644\u0644\u0625\u0631\u062C\u0627\u0639 \u0623\u0648 \u0627\u0644\u0643\u0645\u064A\u0627\u062A \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629" });
-  }
-  const isFullyRefunded = [...soldQuantities].every(
-    ([productId, sold]) => (previouslyReturnedMap[productId] || 0) + (requested.get(productId) || 0) >= sold - 1e-9
-  );
-  const remainingRefundable = Math.max(0, round2(saleGrand - (Number(sale.refundedAmountSdg) || 0)));
-  let totalRefundSdg = round2(itemsToRefund.reduce((n, r) => n + r.refundAmountSdg, 0));
-  let taxRefundSdg = round2(itemsToRefund.reduce((n, r) => n + r.taxAmountSdg, 0));
-  if (isFullyRefunded || totalRefundSdg > remainingRefundable) {
-    const last = itemsToRefund[itemsToRefund.length - 1];
-    last.refundAmountSdg = round2(Math.max(0, last.refundAmountSdg + (remainingRefundable - totalRefundSdg)));
-    totalRefundSdg = Math.min(round2(itemsToRefund.reduce((n, r) => n + r.refundAmountSdg, 0)), remainingRefundable);
-    if (isFullyRefunded) {
-      const remainingTax = Math.max(0, round2((Number(sale.taxTotalSdg) || 0) - previouslyRefundedTax));
-      last.taxAmountSdg = round2(Math.max(0, last.taxAmountSdg + (remainingTax - taxRefundSdg)));
-      taxRefundSdg = round2(itemsToRefund.reduce((n, r) => n + r.taxAmountSdg, 0));
-    }
-  }
-  if (totalRefundSdg <= 0) {
-    return res.status(400).json({ error: "\u0644\u0627 \u064A\u0648\u062C\u062F \u0645\u0628\u0644\u063A \u0645\u062A\u0628\u0642\u064D \u0642\u0627\u0628\u0644 \u0644\u0644\u0625\u0631\u062C\u0627\u0639 \u0644\u0647\u0630\u0647 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629" });
-  }
-  let creditNoteNumber;
   try {
-    creditNoteNumber = await nextTenantDocumentNumber(
-      "CN",
-      authReq.tenantId,
-      db.getSchema().returns.filter((r) => r.tenantId === authReq.tenantId).map((r) => r.creditNoteNumber)
-    );
-  } catch (err) {
-    console.error("[refund] credit note number reservation failed", err);
-    return res.status(503).json({ error: "\u062A\u0639\u0630\u0651\u0631 \u062D\u062C\u0632 \u0631\u0642\u0645 \u0625\u0634\u0639\u0627\u0631 \u0627\u0644\u062F\u0627\u0626\u0646. \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629." });
-  }
-  const returnRec = {
-    id: newId("ret"),
-    tenantId: authReq.tenantId,
-    saleId: sale.id,
-    invoiceNumber: sale.invoiceNumber,
-    creditNoteNumber,
-    branchId: sale.branchId,
-    cashierId: authReq.actorId,
-    cashierName: authReq.actorName,
-    items: itemsToRefund,
-    totalRefundSdg,
-    taxRefundSdg,
-    requestId,
-    reason: reason || "\u0625\u0631\u062C\u0627\u0639 \u0648\u062A\u0639\u062F\u064A\u0644 \u0643\u0645\u064A\u0627\u062A \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u0645\u0639 \u0625\u0635\u062F\u0627\u0631 \u0625\u0634\u0639\u0627\u0631 \u062F\u0627\u0626\u0646",
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  const committed = await commitRefundAtomic(db.atomicContext(), {
-    saleId: sale.id,
-    tenantId: authReq.tenantId,
-    branchId: sale.branchId,
-    operationKey,
-    items: itemsToRefund.filter((it) => tracksInventory(db.getSchema().products.find((p) => p.id === it.productId))),
-    soldQuantities,
-    totalRefundSdg,
-    record: returnRec,
-    actorName: authReq.actorName
-  });
-  if (!committed.ok) {
-    if (committed.code === "DUPLICATE") {
+    await withTenantPosLock(authReq.tenantId, async () => {
       await db.refresh();
-      const prior = db.getSchema().returns.find((r) => r.saleId === sale.id && r.requestId === requestId);
-      if (prior) {
-        const current = db.getSchema().sales.find((s) => s.id === sale.id);
-        return res.json({ success: true, returnRecord: prior, sale: current, isDuplicate: true });
+      const sale = db.getSchema().sales.find((s) => s.id === req.params.id && s.tenantId === authReq.tenantId);
+      if (!sale) return res.status(404).json({ error: "\u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629" });
+      const perms = actorPerms(authReq);
+      if (!perms.processReturns) return res.status(403).json({ error: "REFUND_FORBIDDEN", message: "\u0627\u0644\u0625\u0631\u062C\u0627\u0639 \u064A\u062A\u0637\u0644\u0628 \u0635\u0644\u0627\u062D\u064A\u0629 \u0625\u0631\u062C\u0627\u0639 \u0627\u0644\u0641\u0648\u0627\u062A\u064A\u0631." });
+      const { reason, returnItems } = req.body;
+      const refundRequestId = req.body.refundRequestId || req.body.requestId;
+      if (refundRequestId) {
+        const dup = db.getSchema().returns.find((r) => r.tenantId === authReq.tenantId && r.saleId === sale.id && (r.refundRequestId || r.requestId) === String(refundRequestId));
+        if (dup) return res.json({ success: true, returnRecord: dup, sale, isDuplicate: true });
       }
-      return res.status(409).json({ error: "REFUND_IN_PROGRESS", message: "\u0639\u0645\u0644\u064A\u0629 \u0625\u0631\u062C\u0627\u0639 \u0644\u0647\u0630\u0647 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0642\u064A\u062F \u0627\u0644\u062A\u0646\u0641\u064A\u0630. \u0623\u0639\u062F \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629 \u0628\u0639\u062F \u0644\u062D\u0638\u0627\u062A." });
-    }
-    if (committed.code === "ALREADY_REFUNDED") {
-      return res.status(409).json({ error: "ALREADY_REFUNDED", message: "\u062A\u0645 \u0625\u0631\u062C\u0627\u0639 \u0647\u0630\u0647 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0627\u0644\u0643\u0627\u0645\u0644 \u0645\u0633\u0628\u0642\u0627\u064B" });
-    }
-    const name = sale.items.find((i) => i.productId === committed.productId)?.productName || committed.productId;
-    return res.status(409).json({
-      error: "RETURN_QTY_EXCEEDED",
-      message: `\u0627\u0644\u0643\u0645\u064A\u0629 \u0627\u0644\u0645\u0631\u062A\u062C\u0639\u0629 \u0645\u0646 \xAB${name}\xBB \u062A\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u0645\u062A\u0628\u0642\u064A (${committed.remaining}).`
+      if (sale.status === "refunded") return res.status(409).json({ error: "ALREADY_REFUNDED", message: "\u062A\u0645 \u0625\u0631\u062C\u0627\u0639 \u0647\u0630\u0647 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0627\u0644\u0643\u0627\u0645\u0644 \u0645\u0633\u0628\u0642\u0627\u064B" });
+      const existingReturns = db.getSchema().returns.filter((r) => r.saleId === sale.id && r.tenantId === authReq.tenantId);
+      const prevMap = previouslyReturnedMap(existingReturns);
+      const requested = {};
+      if (Array.isArray(returnItems) && returnItems.length > 0) {
+        for (const ri of returnItems) {
+          const q2 = Number(ri.quantity);
+          if (q2 === 0) continue;
+          if (!Number.isFinite(q2) || q2 < 0) return res.status(400).json({ error: "\u0643\u0645\u064A\u0629 \u0627\u0644\u0625\u0631\u062C\u0627\u0639 \u064A\u062C\u0628 \u0623\u0646 \u062A\u0643\u0648\u0646 \u0631\u0642\u0645\u0627\u064B \u0645\u0648\u062C\u0628\u0627\u064B." });
+          requested[ri.productId] = round2((requested[ri.productId] || 0) + q2);
+        }
+      } else {
+        const originalByProduct = {};
+        for (const it of sale.items) originalByProduct[it.productId] = round2((originalByProduct[it.productId] || 0) + Number(it.quantity || 0));
+        for (const [pid, qty] of Object.entries(originalByProduct)) {
+          const remaining = round2(qty - (prevMap[pid]?.quantity || 0));
+          if (remaining > 0) requested[pid] = remaining;
+        }
+      }
+      const hasPaid = sale.items.every((i) => typeof i.paidSdg === "number");
+      const refundable = hasPaid ? sale.items.map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, totalSdg: i.paidSdg, taxAmountSdg: i.taxAmountSdg || 0 })) : legacyRefundableLines(sale);
+      const availableByProduct = /* @__PURE__ */ new Map();
+      for (const l of refundable) availableByProduct.set(l.productId, round2((availableByProduct.get(l.productId) || 0) + l.quantity));
+      for (const [pid, q2] of Object.entries(requested)) {
+        const avail = round2((availableByProduct.get(pid) || 0) - (prevMap[pid]?.quantity || 0));
+        if (!availableByProduct.has(pid)) return res.status(400).json({ error: `\u0627\u0644\u0635\u0646\u0641 ${pid} \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629.` });
+        if (q2 > avail + 1e-9) return res.status(400).json({ error: "RETURN_QTY_EXCEEDED", message: `\u0643\u0645\u064A\u0629 \u0627\u0644\u0625\u0631\u062C\u0627\u0639 \u0644\u0644\u0635\u0646\u0641 ${pid} \u062A\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u0645\u062A\u0628\u0642\u064A (${avail}).` });
+      }
+      const allocation = allocateRefund(refundable, prevMap, requested, sale.grandTotalSdg, sale.refundedAmountSdg || 0);
+      if (allocation.lines.length === 0 || allocation.totalRefundSdg <= 0) {
+        return res.status(400).json({ error: "\u0644\u0645 \u064A\u062A\u0645 \u062A\u062D\u062F\u064A\u062F \u0623\u064A \u0623\u0635\u0646\u0627\u0641 \u0642\u0627\u0628\u0644\u0629 \u0644\u0644\u0625\u0631\u062C\u0627\u0639 \u0623\u0648 \u0627\u0644\u0643\u0645\u064A\u0627\u062A \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629" });
+      }
+      const creditNoteNumber = await nextCreditNoteNumber(authReq.tenantId);
+      for (const retItem of allocation.lines) {
+        const product = db.getSchema().products.find((p) => p.id === retItem.productId && p.tenantId === authReq.tenantId);
+        if (!tracksStock(product)) continue;
+        db.adjustStock({
+          tenantId: authReq.tenantId,
+          branchId: sale.branchId,
+          productId: retItem.productId,
+          delta: retItem.quantity,
+          type: "return_refund",
+          reason: `\u0625\u0631\u062C\u0627\u0639 \u0628\u0645\u0648\u062C\u0628 \u0625\u0634\u0639\u0627\u0631 \u062F\u0627\u0626\u0646 (${creditNoteNumber}) \u0644\u0644\u0641\u0627\u062A\u0648\u0631\u0629 (${sale.invoiceNumber}): ${reason || "\u0637\u0644\u0628 \u0627\u0644\u0632\u0628\u0648\u0646"}`,
+          actorName: authReq.actorName,
+          referenceId: sale.id
+        });
+      }
+      sale.refundedAmountSdg = round2((sale.refundedAmountSdg || 0) + allocation.totalRefundSdg);
+      const returnedNow = {};
+      for (const l of allocation.lines) returnedNow[l.productId] = round2((returnedNow[l.productId] || 0) + l.quantity);
+      let isFullyRefunded = true;
+      for (const l of refundable) {
+        const totalReturned = (prevMap[l.productId]?.quantity || 0) + (returnedNow[l.productId] || 0);
+        if (totalReturned < l.quantity - 1e-9) {
+          isFullyRefunded = false;
+          break;
+        }
+      }
+      sale.status = isFullyRefunded ? "refunded" : "partially_refunded";
+      const returnRec = {
+        id: newId("ret"),
+        tenantId: authReq.tenantId,
+        saleId: sale.id,
+        invoiceNumber: sale.invoiceNumber,
+        creditNoteNumber,
+        branchId: sale.branchId,
+        cashierId: authReq.actorId,
+        cashierName: authReq.actorName,
+        items: allocation.lines,
+        totalRefundSdg: allocation.totalRefundSdg,
+        taxRefundSdg: allocation.taxRefundSdg,
+        refundRequestId: refundRequestId ? String(refundRequestId) : void 0,
+        requestId: refundRequestId ? String(refundRequestId) : void 0,
+        reason: reason || "\u0625\u0631\u062C\u0627\u0639 \u0623\u0635\u0646\u0627\u0641 \u0645\u0639 \u0625\u0635\u062F\u0627\u0631 \u0625\u0634\u0639\u0627\u0631 \u062F\u0627\u0626\u0646",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      db.getSchema().returns.unshift(returnRec);
+      if (sale.shiftId) {
+        const shift = db.getSchema().cashierShifts.find((s) => s.id === sale.shiftId && s.tenantId === authReq.tenantId);
+        if (shift && shift.status === "open") {
+          shift.refundsCount += 1;
+          shift.refundsTotalSdg = round2(shift.refundsTotalSdg + allocation.totalRefundSdg);
+          if (sale.paymentMethod === "cash") shift.expectedCashSdg = round2(Math.max(0, shift.expectedCashSdg - allocation.totalRefundSdg));
+        }
+      }
+      db.commit();
+      await db.flush({ lock: false });
+      db.logAudit({
+        tenantId: authReq.tenantId,
+        actorId: authReq.actorId,
+        actorName: authReq.actorName,
+        action: "REFUND_INVOICE",
+        entity: "Sale",
+        entityId: sale.id,
+        details: `\u0625\u0631\u062C\u0627\u0639 \u0641\u0627\u062A\u0648\u0631\u0629 (${sale.invoiceNumber}) \u0648\u0625\u0634\u0639\u0627\u0631 \u062F\u0627\u0626\u0646 (${creditNoteNumber}) \u0628\u0642\u064A\u0645\u0629 ${allocation.totalRefundSdg.toLocaleString()} \u062C.\u0633 (\u0636\u0631\u064A\u0628\u0629 ${allocation.taxRefundSdg.toLocaleString()}). \u0627\u0644\u062D\u0627\u0644\u0629: ${isFullyRefunded ? "\u0645\u0631\u062A\u062C\u0639 \u0628\u0627\u0644\u0643\u0627\u0645\u0644" : "\u0645\u0631\u062A\u062C\u0639 \u062C\u0632\u0626\u064A"}. \u0627\u0644\u0633\u0628\u0628: ${reason}`
+      });
+      res.json({ success: true, returnRecord: returnRec, sale });
     });
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: "DB_WRITE_FAILED", message: err?.message || "\u062A\u0639\u0630\u0631 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u0625\u0631\u062C\u0627\u0639." });
   }
-  if (sale.shiftId) {
-    const shift = db.getSchema().cashierShifts.find((s) => s.id === sale.shiftId);
-    if (shift && shift.status === "open") {
-      shift.refundsCount += 1;
-      shift.refundsTotalSdg += totalRefundSdg;
-      if (sale.paymentMethod === "cash") {
-        shift.expectedCashSdg = Math.max(0, shift.expectedCashSdg - totalRefundSdg);
-      }
-    }
-  }
-  db.commit();
-  db.logAudit({
-    tenantId: authReq.tenantId,
-    actorId: authReq.actorId,
-    actorName: authReq.actorName,
-    action: "REFUND_INVOICE",
-    entity: "Sale",
-    entityId: sale.id,
-    details: `\u0625\u0631\u062C\u0627\u0639 \u0641\u0627\u062A\u0648\u0631\u0629 (${sale.invoiceNumber}) \u0648\u0625\u0635\u062F\u0627\u0631 \u0625\u0634\u0639\u0627\u0631 \u062F\u0627\u0626\u0646 (${creditNoteNumber}) \u0628\u0642\u064A\u0645\u0629 ${totalRefundSdg.toLocaleString()} \u062C.\u0633. \u0627\u0644\u062D\u0627\u0644\u0629: ${isFullyRefunded ? "\u0645\u0631\u062A\u062C\u0639 \u0628\u0627\u0644\u0643\u0627\u0645\u0644" : "\u0645\u0631\u062A\u062C\u0639 \u062C\u0632\u0626\u064A"}. \u0627\u0644\u0633\u0628\u0628: ${reason || "\u2014"}`
-  });
-  res.json({ success: true, returnRecord: returnRec, sale });
 });
 apiRouter.get("/pos/returns", merchantAuthMiddleware, (req, res) => {
   const authReq = req;
@@ -10058,123 +9757,167 @@ apiRouter.get("/pos/customers/:id/history", merchantAuthMiddleware, (req, res) =
     }
   });
 });
-apiRouter.post("/sync/batch", merchantAuthMiddleware, (req, res) => {
+apiRouter.post("/sync/batch", merchantAuthMiddleware, async (req, res) => {
   const authReq = req;
   const { sales } = req.body;
-  if (!sales || !Array.isArray(sales)) {
-    return res.status(400).json({ error: "\u062A\u0646\u0633\u064A\u0642 \u0627\u0644\u062D\u0632\u0645\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D" });
-  }
+  if (!sales || !Array.isArray(sales)) return res.status(400).json({ error: "\u062A\u0646\u0633\u064A\u0642 \u0627\u0644\u062D\u0632\u0645\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D" });
   const syncedIds = [];
   const renumbered = [];
   const errors = [];
-  const tenant = db.getTenant(authReq.tenantId);
-  const allowedPayments = ["cash", "bankak", "fawry", "syberpay", "split"];
-  for (const saleData of sales) {
-    const saleId = typeof saleData?.id === "string" ? saleData.id : "";
-    try {
-      if (!saleId) throw new Error("\u0645\u0639\u0631\u0651\u0641 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0645\u0641\u0642\u0648\u062F");
-      const existing = db.getSchema().sales.find((s) => s.id === saleId);
-      if (existing) {
-        if (existing.tenantId !== authReq.tenantId) throw new Error("\u0645\u0639\u0631\u0651\u0641 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0645\u0633\u062A\u062E\u062F\u0645");
-        syncedIds.push(saleId);
-        continue;
-      }
-      const syncBranch = db.getSchema().branches.find((b) => b.id === saleData.branchId && b.tenantId === authReq.tenantId);
-      if (!syncBranch) throw new Error(`\u0627\u0644\u0641\u0631\u0639 ${saleData.branchId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631`);
-      const rawItems = Array.isArray(saleData.items) ? saleData.items : [];
-      if (!rawItems.length) throw new Error("\u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0644\u0627 \u0623\u0635\u0646\u0627\u0641");
-      const lines = rawItems.map((it) => {
-        const prod = db.getSchema().products.find((p) => p.id === it.productId && p.tenantId === authReq.tenantId);
-        if (!prod) throw new Error(`\u0627\u0644\u0635\u0646\u0641 ${it.productId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631`);
-        const unitPrice = Number(it.unitPriceSdg ?? prod.sellingPriceSdg ?? 0);
-        const lineError = validateInvoiceLine(it, unitPrice);
-        if (lineError) throw new Error(`\xAB${prod.name}\xBB: ${lineError}`);
-        const isTaxExempt = Boolean(it.isTaxExempt);
-        const rate = isTaxExempt ? 0 : Number(it.taxRate) || 0;
-        return { it, prod, qty: Number(it.quantity), unitPrice, discount: Number(it.discountSdg || 0), isTaxExempt, taxRate: rate > 0 ? rate : 0 };
-      });
-      const inclusive = saleData.pricesIncludeVat !== void 0 ? Boolean(saleData.pricesIncludeVat) : Boolean(tenant?.settings?.pricesIncludeVat);
-      const totals = computeInvoiceTotals(
-        lines.map((l) => ({ quantity: l.qty, unitPrice: l.unitPrice, discount: l.discount, taxRate: l.taxRate })),
-        { pricesIncludeVat: inclusive, invoiceDiscount: Number(saleData.discountTotalSdg) || 0 }
-      );
-      const taken = (n) => db.getSchema().sales.some((s) => s.tenantId === authReq.tenantId && s.invoiceNumber === n);
-      const printedInvoiceNumber = String(saleData.invoiceNumber || "").trim();
-      let invoiceNumber = printedInvoiceNumber || newCode("INV-OFF");
-      if (taken(invoiceNumber)) {
-        let k = 2;
-        while (taken(`${invoiceNumber}-${k}`)) k++;
-        invoiceNumber = `${invoiceNumber}-${k}`;
-        renumbered.push({ id: saleId, from: printedInvoiceNumber, to: invoiceNumber });
-      }
-      const shift = saleData.shiftId ? db.getSchema().cashierShifts.find((s) => s.id === saleData.shiftId && s.tenantId === authReq.tenantId && s.branchId === saleData.branchId) : void 0;
-      const customer = saleData.customerId ? db.getSchema().customers.find((c) => c.id === saleData.customerId && c.tenantId === authReq.tenantId) : void 0;
-      const createdAtDate = new Date(saleData.createdAt);
-      const paymentMethod = allowedPayments.includes(saleData.paymentMethod) ? saleData.paymentMethod : "cash";
-      const newSale = {
-        id: saleId,
-        tenantId: authReq.tenantId,
-        branchId: saleData.branchId,
-        branchName: syncBranch.name,
-        shiftId: shift ? shift.id : "",
-        invoiceNumber,
-        customerId: customer?.id,
-        customerName: String(saleData.customerName || customer?.name || "\u0639\u0645\u064A\u0644 \u0646\u0642\u062F\u064A"),
-        customerPhone: String(saleData.customerPhone || customer?.phone || ""),
-        items: lines.map((l, idx) => ({
-          productId: l.it.productId,
-          productName: l.prod.name,
-          unit: l.prod.unit || l.it.unit || "\u062D\u0628\u0629",
-          quantity: l.qty,
-          unitPriceSdg: l.unitPrice,
-          discountSdg: l.discount,
-          totalSdg: totals.lines[idx].total,
-          costPerUnitSdg: l.prod.purchaseCost || 0,
-          notes: l.it.notes || void 0,
-          isTaxExempt: l.isTaxExempt,
-          taxRate: l.taxRate,
-          taxAmountSdg: totals.lines[idx].taxAmount
-        })),
-        subtotalSdg: totals.subtotal,
-        discountTotalSdg: totals.discountTotal,
-        taxTotalSdg: totals.taxTotal,
-        grandTotalSdg: totals.grandTotal,
-        paymentMethod,
-        splitDetails: saleData.splitDetails || void 0,
-        multiCurrency: saleData.multiCurrency || void 0,
-        paymentReference: saleData.paymentReference || void 0,
-        status: "completed",
-        /* هوية الكاشير من الجلسة فقط: الحزمة القادمة من الجهاز لا تُعيّن موظفاً. */
-        cashierId: authReq.actorId,
-        cashierName: authReq.actorName,
-        isOfflineCreated: true,
-        offlineSyncedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        createdAt: isNaN(createdAtDate.getTime()) ? (/* @__PURE__ */ new Date()).toISOString() : createdAtDate.toISOString()
+  const mismatches = [];
+  try {
+    await withTenantPosLock(authReq.tenantId, async () => {
+      await db.refresh();
+      const tenant = db.getTenant(authReq.tenantId);
+      const settings = {
+        vatEnabled: tenant?.settings?.vatEnabled ?? true,
+        defaultVatPct: Number(tenant?.settings?.defaultVatPct ?? 15),
+        pricesIncludeVat: tenant?.settings?.pricesIncludeVat ?? false
       };
-      for (const item of newSale.items) {
-        if (!tracksInventory(db.getSchema().products.find((p) => p.id === item.productId))) continue;
-        db.adjustStock({
-          tenantId: authReq.tenantId,
-          branchId: newSale.branchId,
-          productId: item.productId,
-          delta: -item.quantity,
-          type: "sale_deduction",
-          reason: `\u0645\u0632\u0627\u0645\u0646\u0629 \u0645\u0628\u064A\u0639\u0627\u062A \u062F\u0648\u0646 \u0627\u062A\u0635\u0627\u0644 (\u0641\u0627\u062A\u0648\u0631\u0629 ${newSale.invoiceNumber})`,
-          actorName: newSale.cashierName || authReq.actorName,
-          allowNegative: true
-        });
+      const perms = actorPerms(authReq);
+      const maxDiscountPct = maxDiscountPctForActor(tenant?.settings?.defaultMaxDiscountPct, authReq);
+      for (const saleData of sales) {
+        try {
+          const saleId = String(saleData.id ?? "").trim();
+          if (!saleId) throw new Error("\u0645\u0639\u0631\u0651\u0641 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D.");
+          const existing = db.getSchema().sales.find((s) => s.id === saleId);
+          if (existing?.tenantId === authReq.tenantId) {
+            syncedIds.push(saleId);
+            continue;
+          }
+          if (existing) throw new Error("SALE_ID_CONFLICT: \u0645\u0639\u0631\u0651\u0641 \u0639\u0645\u0644\u064A\u0629 \u0627\u0644\u0628\u064A\u0639 \u0645\u0633\u062A\u062E\u062F\u0645 \u0641\u064A \u0645\u062A\u062C\u0631 \u0622\u062E\u0631.");
+          const syncBranch = db.getSchema().branches.find((b) => b.id === saleData.branchId && b.tenantId === authReq.tenantId);
+          if (!syncBranch) throw new Error(`\u0627\u0644\u0641\u0631\u0639 ${saleData.branchId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631`);
+          if (!Array.isArray(saleData.items) || !saleData.items.length) throw new Error("\u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u062F\u0648\u0646 \u0628\u0646\u0648\u062F");
+          const normalizedItems = [];
+          for (const it of saleData.items) {
+            const prod = db.getSchema().products.find((p) => p.id === it.productId && p.tenantId === authReq.tenantId);
+            if (!prod) throw new Error(`\u0627\u0644\u0635\u0646\u0641 ${it.productId} \u0644\u0627 \u064A\u062A\u0628\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u062A\u062C\u0631`);
+            const unitPriceSdg = Number(it.unitPriceSdg ?? prod.sellingPriceSdg ?? 0);
+            if (!Number.isFinite(unitPriceSdg) || unitPriceSdg < 0) {
+              throw new Error(`\u0633\u0639\u0631 \xAB${prod.name}\xBB \u063A\u064A\u0631 \u0635\u0627\u0644\u062D.`);
+            }
+            if (Math.abs(unitPriceSdg - Number(prod.sellingPriceSdg || 0)) > 5e-3 && !perms.editPrices) {
+              throw new Error(`PRICE_OVERRIDE_FORBIDDEN: \u0633\u0639\u0631 \xAB${prod.name}\xBB \u0641\u064A \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u062F\u0648\u0646 \u0627\u062A\u0635\u0627\u0644 \u0644\u0627 \u064A\u0637\u0627\u0628\u0642 \u0627\u0644\u0633\u0639\u0631 \u0627\u0644\u062D\u0627\u0644\u064A. \u0627\u0637\u0644\u0628 \u0645\u0631\u0627\u062C\u0639\u0629 \u0645\u062F\u064A\u0631 \u0627\u0644\u0645\u062A\u062C\u0631 \u0642\u0628\u0644 \u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629.`);
+            }
+            const line = {
+              productId: prod.id,
+              productName: prod.name,
+              unit: prod.unit || it.unit || "\u062D\u0628\u0629",
+              quantity: Number(it.quantity),
+              unitPriceSdg,
+              discountSdg: Number(it.discountSdg ?? 0),
+              isTaxExempt: Boolean(prod.isTaxExempt),
+              taxRate: Number(prod.customTaxRate ?? settings.defaultVatPct),
+              notes: it.notes || void 0,
+              costPerUnitSdg: prod.purchaseCost || 0
+            };
+            const err = validateInvoiceLine(line);
+            if (err) throw new Error(`${prod.name}: ${err}`);
+            normalizedItems.push(line);
+          }
+          const totals = computeInvoiceTotals(normalizedItems, settings, Number(saleData.discountTotalSdg) || 0);
+          const discountViolation = discountPolicyViolation(totals.lines, maxDiscountPct, perms.editPrices);
+          if (discountViolation) {
+            throw new Error(`DISCOUNT_LIMIT_EXCEEDED: \u0625\u062C\u0645\u0627\u0644\u064A \u0627\u0644\u062E\u0635\u0645 \u0639\u0644\u0649 \xAB${discountViolation}\xBB \u064A\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u062D\u062F \u0627\u0644\u0645\u0633\u0645\u0648\u062D (${maxDiscountPct}%).`);
+          }
+          const printedGrand = Number(saleData.grandTotalSdg);
+          const mismatch = Number.isFinite(printedGrand) && Math.abs(printedGrand - totals.grandTotalSdg) > 0.01 ? { printedGrandTotalSdg: round2(printedGrand), serverGrandTotalSdg: totals.grandTotalSdg } : void 0;
+          const invoiceNumber = await nextSalesInvoiceNumber(authReq.tenantId);
+          const items = totals.lines.map((l) => ({
+            productId: l.productId,
+            productName: l.productName,
+            unit: l.unit,
+            quantity: l.quantity,
+            unitPriceSdg: l.unitPriceSdg,
+            discountSdg: l.discountSdg,
+            totalSdg: l.netSdg,
+            paidSdg: l.totalSdg,
+            invoiceDiscountShareSdg: l.invoiceDiscountShareSdg,
+            costPerUnitSdg: l.costPerUnitSdg || 0,
+            notes: l.notes,
+            isTaxExempt: l.isTaxExempt,
+            taxRate: l.taxRate,
+            taxAmountSdg: l.taxAmountSdg
+          }));
+          let linkedCustomerId = saleData.customerId || void 0;
+          if (linkedCustomerId) {
+            const c = db.getSchema().customers.find((c2) => c2.id === linkedCustomerId && c2.tenantId === authReq.tenantId);
+            if (!c) linkedCustomerId = void 0;
+          }
+          if (linkedCustomerId) db.recordCustomerSale(authReq.tenantId, linkedCustomerId, totals.grandTotalSdg);
+          const newSale = {
+            id: saleId,
+            tenantId: authReq.tenantId,
+            branchId: saleData.branchId,
+            branchName: syncBranch.name,
+            shiftId: saleData.shiftId || "",
+            invoiceNumber,
+            offlineInvoiceNumber: saleData.invoiceNumber ? String(saleData.invoiceNumber) : void 0,
+            customerId: linkedCustomerId,
+            customerName: saleData.customerName || "\u0639\u0645\u064A\u0644 \u0646\u0642\u062F\u064A",
+            customerPhone: saleData.customerPhone || "",
+            items,
+            subtotalSdg: totals.subtotalSdg,
+            discountTotalSdg: totals.discountTotalSdg,
+            taxTotalSdg: totals.taxTotalSdg,
+            grandTotalSdg: totals.grandTotalSdg,
+            paymentMethod: saleData.paymentMethod || "cash",
+            splitDetails: saleData.splitDetails,
+            multiCurrency: saleData.multiCurrency,
+            paymentReference: saleData.paymentReference,
+            status: "completed",
+            cashierId: authReq.actorId,
+            cashierName: authReq.actorName,
+            isOfflineCreated: true,
+            offlineSyncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            offlineTotalsMismatch: mismatch,
+            createdAt: saleData.createdAt || (/* @__PURE__ */ new Date()).toISOString()
+          };
+          for (const item of items) {
+            const prod = db.getSchema().products.find((p) => p.id === item.productId);
+            if (!tracksStock(prod)) continue;
+            db.adjustStock({
+              tenantId: authReq.tenantId,
+              branchId: newSale.branchId,
+              productId: item.productId,
+              delta: -item.quantity,
+              type: "sale_deduction",
+              reason: `\u0645\u0632\u0627\u0645\u0646\u0629 \u0628\u064A\u0639 \u062F\u0648\u0646 \u0627\u062A\u0635\u0627\u0644 (${invoiceNumber}${newSale.offlineInvoiceNumber ? ` / ${newSale.offlineInvoiceNumber}` : ""})`,
+              actorName: authReq.actorName,
+              referenceId: newSale.id,
+              // The offline sale already happened at the counter; record it even
+              // if stock goes negative so the merchant can reconcile afterwards.
+              allowNegative: true
+            });
+          }
+          db.getSchema().sales.unshift(newSale);
+          if (newSale.shiftId) {
+            const shift = db.getSchema().cashierShifts.find((s) => s.id === newSale.shiftId && s.tenantId === authReq.tenantId);
+            if (shift && shift.status === "open") {
+              shift.salesCount += 1;
+              shift.totalSalesSdg = round2(shift.totalSalesSdg + newSale.grandTotalSdg);
+              if (newSale.paymentMethod === "cash") {
+                shift.totalCashSalesSdg = round2(shift.totalCashSalesSdg + newSale.grandTotalSdg);
+                shift.expectedCashSdg = round2(shift.expectedCashSdg + newSale.grandTotalSdg);
+              } else if (newSale.paymentMethod === "bankak") {
+                shift.totalBankakSalesSdg = round2(shift.totalBankakSalesSdg + newSale.grandTotalSdg);
+              }
+            }
+          }
+          if (newSale.offlineInvoiceNumber && newSale.offlineInvoiceNumber !== invoiceNumber) renumbered.push({ id: newSale.id, from: newSale.offlineInvoiceNumber, to: invoiceNumber });
+          if (mismatch) mismatches.push({ id: newSale.id, invoiceNumber, ...mismatch });
+          syncedIds.push(newSale.id);
+        } catch (err) {
+          errors.push({ id: saleData.id, error: err.message || "\u062E\u0637\u0623 \u0623\u062B\u0646\u0627\u0621 \u0627\u0644\u0645\u0639\u0627\u0644\u062C\u0629" });
+        }
       }
-      if (customer) {
-        db.recordCustomerSale(authReq.tenantId, customer.id, totals.grandTotal);
-      }
-      applySaleToShift(shift, newSale);
-      db.getSchema().sales.unshift(newSale);
-      syncedIds.push(newSale.id);
-    } catch (err) {
-      errors.push({ id: saleId, error: err.message || "\u062E\u0637\u0623 \u0623\u062B\u0646\u0627\u0621 \u0627\u0644\u0645\u0639\u0627\u0644\u062C\u0629" });
-    }
+      db.commit();
+      await db.flush({ lock: false });
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "DB_WRITE_FAILED", message: err?.message || "\u062A\u0639\u0630\u0631\u062A \u0627\u0644\u0645\u0632\u0627\u0645\u0646\u0629." });
   }
-  db.commit();
   db.logAudit({
     tenantId: authReq.tenantId,
     actorId: authReq.actorId,
@@ -10182,16 +9925,9 @@ apiRouter.post("/sync/batch", merchantAuthMiddleware, (req, res) => {
     action: "SYNC_OFFLINE_SALES",
     entity: "SyncQueue",
     entityId: newId("batch"),
-    details: `\u0645\u0632\u0627\u0645\u0646\u0629 ${syncedIds.length} \u0641\u0648\u0627\u062A\u064A\u0631 \u0628\u064A\u0639 \u0645\u0646 \u0627\u0644\u0643\u0627\u0634\u064A\u0631 \u062F\u0648\u0646 \u0627\u062A\u0635\u0627\u0644.`
+    details: `\u0645\u0632\u0627\u0645\u0646\u0629 ${syncedIds.length} \u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u064A\u0639 \u062F\u0648\u0646 \u0627\u062A\u0635\u0627\u0644. \u0641\u0631\u0648\u0642 \u0625\u062C\u0645\u0627\u0644\u064A\u0627\u062A: ${mismatches.length}.`
   });
-  res.json({
-    success: true,
-    syncedCount: syncedIds.length,
-    syncedIds,
-    /* تغيير الرقم يظهر للتاجر ولا يحدث بصمت خلف ظهره. */
-    renumbered,
-    errors
-  });
+  res.json({ success: true, syncedCount: syncedIds.length, syncedIds, errors, mismatches, renumbered });
 });
 apiRouter.get("/storefront/:slug", (req, res) => {
   const tenant = db.getTenantBySlug(req.params.slug);
@@ -13518,7 +13254,7 @@ function createApp() {
     if (isMutation) {
       const originalJson = res.json.bind(res);
       let flushed = false;
-      res.json = (body) => {
+      res.json = ((body) => {
         if (flushed) return originalJson(body);
         flushed = true;
         db.flush({ lock: false }).then(() => originalJson(body)).catch((err) => {
@@ -13533,7 +13269,7 @@ function createApp() {
           });
         });
         return res;
-      };
+      });
     }
     withInstanceLock(async () => {
       try {
