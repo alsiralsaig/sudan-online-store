@@ -1,32 +1,38 @@
-#!/bin/bash
-# تهيئة أدوات بناء أندرويد داخل مساحة العمل (JDK 17 + Android SDK).
-# تُنفَّذ مرة واحدة قبل build_native_apks.sh (المجلدات المحذوفة/غير المحفوظة تُعاد بناؤها).
+#!/usr/bin/env bash
+# Install the local JDK 21 + Android SDK required by Capacitor 7.
 set -euo pipefail
 
-TC=/home/user/.toolchain
-export TMPDIR=/home/user/.tmp
+TC="${SANAD_TOOLCHAIN_DIR:-/home/user/.toolchain}"
+TMPDIR="${TMPDIR:-/home/user/.tmp}"
 mkdir -p "$TC" "$TMPDIR"
 
-if [ ! -x "$TC/jdk17/bin/java" ]; then
-  echo "== تحميل JDK 17 =="
-  curl -sL -o "$TMPDIR/jdk17.tar.gz" "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse"
-  mkdir -p "$TC/jdk17"
-  tar -xzf "$TMPDIR/jdk17.tar.gz" -C "$TC/jdk17" --strip-components=1
-  rm -f "$TMPDIR/jdk17.tar.gz"
+if [[ ! -x "$TC/jdk21/bin/java" ]]; then
+  echo "== Downloading JDK 21 =="
+  curl -fL --retry 3 -o "$TMPDIR/jdk21.tar.gz" \
+    "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
+  mkdir -p "$TC/jdk21"
+  tar -xzf "$TMPDIR/jdk21.tar.gz" -C "$TC/jdk21" --strip-components=1
+  rm -f "$TMPDIR/jdk21.tar.gz"
 fi
-"$TC/jdk17/bin/java" -version 2>&1 | head -n 1
+"$TC/jdk21/bin/java" -version 2>&1 | head -n 1
 
-if [ ! -d "$TC/android-sdk/platforms/android-33" ]; then
-  echo "== تحميل Android SDK =="
-  mkdir -p "$TC/android-sdk/cmdline-tools"
-  curl -sL -o "$TMPDIR/cmdtools.zip" "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
-  ( cd "$TC/android-sdk/cmdline-tools" && unzip -q -o "$TMPDIR/cmdtools.zip" && rm -rf latest && mv cmdline-tools latest )
+SDK="$TC/android-sdk"
+export JAVA_HOME="$TC/jdk21"
+export PATH="$JAVA_HOME/bin:$PATH"
+if [[ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]]; then
+  echo "== Download Android SDK command-line tools =="
+  mkdir -p "$SDK/cmdline-tools"
+  curl -fL --retry 3 -o "$TMPDIR/cmdtools.zip" \
+    "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+  unzip -q -o "$TMPDIR/cmdtools.zip" -d "$SDK/cmdline-tools"
+  rm -rf "$SDK/cmdline-tools/latest"
+  mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
   rm -f "$TMPDIR/cmdtools.zip"
-  export JAVA_HOME="$TC/jdk17"
-  export PATH="$JAVA_HOME/bin:$PATH"
-  yes | "$TC/android-sdk/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$TC/android-sdk" --licenses >/dev/null 2>&1 || true
-  "$TC/android-sdk/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$TC/android-sdk" \
-    "platform-tools" "platforms;android-33" "build-tools;33.0.1" "build-tools;34.0.0" >/dev/null 2>&1
 fi
-ls "$TC/android-sdk/platforms" "$TC/android-sdk/build-tools"
-echo "TOOLCHAIN READY"
+
+SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
+"$SDKMANAGER" --sdk_root="$SDK" \
+  "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+ls "$SDK/platforms" "$SDK/build-tools"
+echo "TOOLCHAIN READY (JDK 21, Android API 35)"

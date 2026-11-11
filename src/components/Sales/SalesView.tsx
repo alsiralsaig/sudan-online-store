@@ -27,8 +27,8 @@ import {
 } from 'lucide-react';
 import type { Sale, Branch, ReturnRecord } from '../../types/index.ts';
 import { api } from '../../lib/api.ts';
-import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
-import { createRefundAllocator } from '../../lib/invoiceMath.ts';
+import { generateZatcaTlvBase64Safe, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { allocateRefund, previouslyReturnedMap, legacyRefundableLines } from '../../lib/invoiceMath.ts';
 import { getThermalReceiptSettings } from '../../lib/printerSettings.ts';
 
 interface SalesViewProps {
@@ -69,8 +69,10 @@ export const SalesView: React.FC<SalesViewProps> = ({
   const [returnItemQtys, setReturnItemQtys] = useState<Record<string, number>>({});
   const [refundReason, setRefundReason] = useState('طلب الزبون استرجاع الصنف');
   const [isRefunding, setIsRefunding] = useState(false);
-  const refundRequestIdRef = React.useRef<{ saleId: string; id: string } | null>(null);
   const [refundError, setRefundError] = useState('');
+  // Stable idempotency key for the current refund attempt: a network retry must
+  // not issue a second credit note. Regenerated each time the modal is opened.
+  const [refundRequestId, setRefundRequestId] = useState('');
 
   // Thermal settings
   const receiptSettings = getThermalReceiptSettings();
@@ -118,6 +120,11 @@ export const SalesView: React.FC<SalesViewProps> = ({
     setRefundingSale(sale);
     setRefundError('');
     setRefundReason('طلب الزبون استرجاع الصنف ومطابقة الجرد');
+    setRefundRequestId(
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `ref_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    );
 
     // Calculate previously returned quantities for this sale
     const previouslyReturnedMap: Record<string, number> = {};
@@ -198,20 +205,20 @@ export const SalesView: React.FC<SalesViewProps> = ({
     setReturnItemQtys(updated);
   };
 
-  /* المعاينة تستعمل نفس موزّع الخادم: نصيب البند مما دُفع فعلاً بعد الخصم ومع الضريبة.
-     الحساب القديم (سعر البند الصافي) كان يعرض للتاجر رقماً غير الذي سيُسترد. */
-  const refundAllocator = React.useMemo(
-    () => (refundingSale ? createRefundAllocator(refundingSale) : null),
-    [refundingSale],
-  );
-
+  // Calculate total refund amount with the SAME allocator the server uses,
+  // so the preview matches the issued credit note exactly.
   const calculateTotalRefund = () => {
-    if (!refundingSale || !refundAllocator) return 0;
-    const total = refundingSale.items.reduce((sum, item) => {
-      const qty = returnItemQtys[item.productId] || 0;
-      return qty > 0 ? sum + refundAllocator.forQty(item, qty) : sum;
-    }, 0);
-    return Math.round(total * 100) / 100;
+    if (!refundingSale) return 0;
+    const relatedReturns = returnsList.filter((r) => r.saleId === refundingSale.id);
+    const prevMap = previouslyReturnedMap(relatedReturns);
+    const hasPaid = refundingSale.items.every((i) => typeof i.paidSdg === 'number');
+    const refundable = hasPaid
+      ? refundingSale.items.map((i) => ({ productId: i.productId, productName: i.productName, quantity: i.quantity, totalSdg: i.paidSdg as number, taxAmountSdg: i.taxAmountSdg || 0 }))
+      : legacyRefundableLines(refundingSale as any);
+    const requested: Record<string, number> = {};
+    for (const [pid, q] of Object.entries(returnItemQtys)) if (q > 0) requested[pid] = q;
+    const alloc = allocateRefund(refundable, prevMap, requested, refundingSale.grandTotalSdg, refundingSale.refundedAmountSdg || 0);
+    return alloc.totalRefundSdg;
   };
 
   // Confirm Refund with Credit Note Issuance
@@ -234,24 +241,14 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
     setIsRefunding(true);
 
-    /* معرّف واحد لكل محاولة إرجاع: لو انقطع الاتصال وأعاد التاجر الإرسال
-       بنفس المعرّف لا يُصدر الخادم إشعاراً دائناً ثانياً. */
-    if (!refundRequestIdRef.current || refundRequestIdRef.current.saleId !== refundingSale.id) {
-      refundRequestIdRef.current = {
-        saleId: refundingSale.id,
-        id: `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
-      };
-    }
-
     try {
       const res = await api.refundSale(refundingSale.id, {
         reason: refundReason,
         returnItems: returnItemsPayload,
-        requestId: refundRequestIdRef.current.id,
+        refundRequestId,
       });
 
       if (res.success) {
-        refundRequestIdRef.current = null;
         setRefundingSale(null);
         await onRefresh();
         await loadReturns();
@@ -778,7 +775,9 @@ export const SalesView: React.FC<SalesViewProps> = ({
                     <tbody className="divide-y divide-slate-100">
                       {refundingSale.items.map((item) => {
                         const returnQty = returnItemQtys[item.productId] || 0;
-                        const itemRefundTotal = refundAllocator ? refundAllocator.forQty(item, returnQty) : 0;
+                        const unitEffective =
+                          item.quantity > 0 ? item.totalSdg / item.quantity : item.unitPriceSdg;
+                        const itemRefundTotal = Math.round(unitEffective * returnQty);
 
                         return (
                           <tr
@@ -834,11 +833,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
                               </div>
                             </td>
                             <td className="py-2.5 px-3 font-mono text-slate-700">
-                              {/* نصيب الوحدة مما دُفع فعلاً، متسق مع قيمة الإرجاع المعروضة */}
-                              {(item.quantity > 0 && refundAllocator
-                                ? refundAllocator.forQty(item, 1)
-                                : 0
-                              ).toLocaleString()} ج.س
+                              {Math.round(unitEffective).toLocaleString()} ج.س
                             </td>
                             <td className="py-2.5 px-3 font-mono font-bold text-rose-700">
                               {itemRefundTotal.toLocaleString()} ج.س
@@ -1043,29 +1038,22 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
               {/* QR Code */}
               <div className="text-center pt-1 flex flex-col items-center">
-                <div
-                  className="w-24 h-24 bg-white p-1 border border-slate-200 rounded"
-                  dangerouslySetInnerHTML={{
-                    __html: generateQrSvg(
-                      generateZatcaTlvBase64({
-                        sellerName: receiptSettings.storeName,
-                        taxNumber: receiptSettings.taxNumber,
-                        timestamp: viewingCreditNote.createdAt,
-                        totalWithVat: Number(viewingCreditNote.totalRefundSdg || 0).toFixed(2),
-                        /* الضريبة المحفوظة وقت الإصدار هي المرجع.
-                           نسبة من إجمالي الفاتورة كانت تُظهر ضريبة على مرتجع معفى.
-                           الإشعارات القديمة بلا حقل نحسبها بنداً بنداً. */
-                        vatTotal: Number(
-                          viewingCreditNote.taxRefundSdg ??
-                          viewingCreditNote.items.reduce((n, it) => n + (Number(it.taxAmountSdg) || 0), 0),
-                        ).toFixed(2),
-                      }),
-                      88
-                    ),
-                  }}
-                />
+                {(() => {
+                  const tlv = generateZatcaTlvBase64Safe({
+                    sellerName: receiptSettings.storeName,
+                    taxNumber: receiptSettings.taxNumber,
+                    timestamp: viewingCreditNote.createdAt,
+                    totalWithVat: viewingCreditNote.totalRefundSdg.toString(),
+                    vatTotal: (viewingCreditNote.taxRefundSdg || 0).toString(),
+                  });
+                  return tlv ? (
+                    <div className="w-24 h-24 bg-white p-1 border border-slate-200 rounded" dangerouslySetInnerHTML={{ __html: generateQrSvg(tlv, 88) }} />
+                  ) : (
+                    <div className="w-24 h-24 flex items-center justify-center text-[9px] text-amber-600 text-center border border-amber-300 rounded p-1">تعذّر توليد QR</div>
+                  );
+                })()}
                 <span className="text-[9px] text-slate-400 mt-1 font-mono">
-                  إشعار دائن ضريبي إلكتروني
+                  رمز الإشعار الدائن الإلكتروني
                 </span>
               </div>
             </div>
@@ -1203,21 +1191,20 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
               {/* QR Code */}
               <div className="text-center pt-2 flex flex-col items-center">
-                <div
-                  className="w-24 h-24 bg-white p-1 border border-slate-200 rounded"
-                  dangerouslySetInnerHTML={{
-                    __html: generateQrSvg(
-                      generateZatcaTlvBase64({
-                        sellerName: receiptSettings.storeName,
-                        taxNumber: receiptSettings.taxNumber,
-                        timestamp: viewingSale.createdAt,
-                        totalWithVat: Number(viewingSale.grandTotalSdg || 0).toFixed(2),
-                        vatTotal: Number(viewingSale.taxTotalSdg || 0).toFixed(2),
-                      }),
-                      96
-                    ),
-                  }}
-                />
+                {(() => {
+                  const tlv = generateZatcaTlvBase64Safe({
+                    sellerName: receiptSettings.storeName,
+                    taxNumber: receiptSettings.taxNumber,
+                    timestamp: viewingSale.createdAt,
+                    totalWithVat: viewingSale.grandTotalSdg.toString(),
+                    vatTotal: (viewingSale.taxTotalSdg || 0).toString(),
+                  });
+                  return tlv ? (
+                    <div className="w-24 h-24 bg-white p-1 border border-slate-200 rounded" dangerouslySetInnerHTML={{ __html: generateQrSvg(tlv, 96) }} />
+                  ) : (
+                    <div className="w-24 h-24 flex items-center justify-center text-[9px] text-amber-600 text-center border border-amber-300 rounded p-1">تعذّر توليد QR</div>
+                  );
+                })()}
                 <span className="text-[9px] text-slate-400 mt-1 font-mono">رمز الفاتورة الإلكترونية</span>
               </div>
             </div>

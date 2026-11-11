@@ -219,8 +219,8 @@ try {
   await db.refresh();
   const synced = db.getSchema().sales.find((s: any) => s.id === 'sale_off_forge') as any;
   ok('الكاشير من الجلسة لا من الحمولة', synced.cashierId !== 'FORGED' && synced.cashierName !== 'مزيّف', { id: synced.cashierId, name: synced.cashierName });
-  ok('رقم الفاتورة المطبوع محفوظ', synced.invoiceNumber === 'INV-OFF-TEST-0001', synced.invoiceNumber);
-  ok('لا تغيير صامت على الرقم', Array.isArray(sync.body.renumbered) && sync.body.renumbered.length === 0, sync.body.renumbered);
+  ok('رقم الفاتورة المطبوع محفوظ', synced.offlineInvoiceNumber === 'INV-OFF-TEST-0001', synced.offlineInvoiceNumber);
+  ok('لا تغيير صامت على الرقم', Array.isArray(sync.body.renumbered) && sync.body.renumbered[0]?.from === synced.offlineInvoiceNumber && sync.body.renumbered[0]?.to === synced.invoiceNumber, sync.body.renumbered);
 
   const sync2 = await call('/sync/batch', 'POST', {
     sales: [{
@@ -274,6 +274,72 @@ try {
   }, token, cashierCookie);
   ok('كاشير يبيع بالسعر المسجّل عادياً', fair.status === 200, fair.body);
   ok('هوية الكاشير الحقيقية مُسجّلة', fair.body.sale?.cashierId === cashierEmp.id, fair.body.sale?.cashierId);
+
+  // Sale ids are global database primary keys: a tenant must never overwrite another tenant's sale.
+  const foreignSale: any = {
+    id: 'sale_cross_tenant_id_conflict', tenantId: 'tenant_nile_boutique', branchId: 'branch_psd_main',
+    branchName: 'فرع بورتسودان', shiftId: '', invoiceNumber: 'INV-2026-990001',
+    customerName: 'سجل متجر آخر', customerPhone: '', items: [], subtotalSdg: 100,
+    discountTotalSdg: 0, taxTotalSdg: 0, grandTotalSdg: 100, paymentMethod: 'cash',
+    status: 'completed', cashierId: 'foreign_cashier', cashierName: 'كاشير آخر', createdAt: new Date().toISOString(),
+  };
+  db.getSchema().sales.unshift(foreignSale); db.commit(); await db.flush();
+  const stockBeforeIdCollision = await stockOf(P1);
+  const onlineIdCollision = await call('/pos/sales', 'POST', {
+    id: foreignSale.id, branchId, items: [{ productId: P1, quantity: 1, unitPriceSdg: listPrice }],
+  }, token, cashierCookie);
+  ok('البيع المتصل يرفض معرّفاً يخص متجراً آخر',
+    onlineIdCollision.status === 409 && onlineIdCollision.body.error === 'SALE_ID_CONFLICT', onlineIdCollision.body);
+  const syncIdCollision = await call('/sync/batch', 'POST', {
+    sales: [{ id: foreignSale.id, branchId, invoiceNumber: 'INV-OFF-COLLISION',
+      items: [{ productId: P1, quantity: 1, unitPriceSdg: listPrice }], paymentMethod: 'cash', createdAt: new Date().toISOString() }],
+  }, token, cashierCookie);
+  ok('المزامنة ترفض معرّفاً يخص متجراً آخر',
+    syncIdCollision.status === 200 && syncIdCollision.body.syncedCount === 0 && /SALE_ID_CONFLICT/.test(syncIdCollision.body.errors?.[0]?.error || ''), syncIdCollision.body);
+  const foreignAfterCollision = db.getSchema().sales.find((s: any) => s.id === foreignSale.id) as any;
+  ok('بيانات المتجر الآخر ومخزون المتجر الحالي لم تتغير',
+    foreignAfterCollision?.tenantId === foreignSale.tenantId && foreignAfterCollision?.invoiceNumber === foreignSale.invoiceNumber && (await stockOf(P1)) === stockBeforeIdCollision,
+    { tenantId: foreignAfterCollision?.tenantId, invoiceNumber: foreignAfterCollision?.invoiceNumber, stock: await stockOf(P1) });
+
+  // Both online and offline paths must enforce store-wide and employee-specific caps.
+  // The store cap is 100%, but this cashier's own cap is 10% in the seed data.
+  const tenantForPolicy = db.getSchema().tenants.find((t: any) => t.id === tenantId) as any;
+  const priorDiscountCap = tenantForPolicy.settings.defaultMaxDiscountPct;
+  tenantForPolicy.settings = { ...tenantForPolicy.settings, defaultMaxDiscountPct: 100 };
+  db.commit(); await db.flush();
+  const stockBeforePolicyChecks = await stockOf(P1);
+  const invoiceDiscountAttack = await call('/pos/sales', 'POST', {
+    id: 'sale_invoice_discount_attack', branchId,
+    items: [{ productId: P1, quantity: 1, unitPriceSdg: listPrice }],
+    discountTotalSdg: listPrice, paymentMethod: 'cash',
+  }, token, cashierCookie);
+  ok('الكاشير لا يتجاوز الحد بخصم الفاتورة الإجمالي',
+    invoiceDiscountAttack.status === 403 && invoiceDiscountAttack.body.error === 'DISCOUNT_LIMIT_EXCEEDED', invoiceDiscountAttack.body);
+  ok('رفض خصم الفاتورة لا يخصم المخزون', (await stockOf(P1)) === stockBeforePolicyChecks, await stockOf(P1));
+
+  const forgedPriceSync = await call('/sync/batch', 'POST', {
+    sales: [{ id: 'sale_sync_price_attack', branchId, invoiceNumber: 'INV-OFF-PRICE-ATTACK',
+      items: [{ productId: P1, quantity: 1, unitPriceSdg: 1 }], paymentMethod: 'cash', createdAt: new Date().toISOString() }],
+  }, token, cashierCookie);
+  ok('مزامنة الكاشير ترفض السعر المصطنع',
+    forgedPriceSync.status === 200 && forgedPriceSync.body.syncedCount === 0 && /PRICE_OVERRIDE_FORBIDDEN/.test(forgedPriceSync.body.errors?.[0]?.error || ''), forgedPriceSync.body);
+  ok('رفض السعر المصطنع لا ينشئ بيعاً ولا يخصم مخزوناً',
+    !db.getSchema().sales.some((s: any) => s.id === 'sale_sync_price_attack') && (await stockOf(P1)) === stockBeforePolicyChecks,
+    await stockOf(P1));
+
+  const forgedDiscountSync = await call('/sync/batch', 'POST', {
+    sales: [{ id: 'sale_sync_discount_attack', branchId, invoiceNumber: 'INV-OFF-DISCOUNT-ATTACK',
+      items: [{ productId: P1, quantity: 1, unitPriceSdg: listPrice }], discountTotalSdg: listPrice,
+      paymentMethod: 'cash', createdAt: new Date().toISOString() }],
+  }, token, cashierCookie);
+  ok('مزامنة الكاشير ترفض الخصم فوق الحد',
+    forgedDiscountSync.status === 200 && forgedDiscountSync.body.syncedCount === 0 && /DISCOUNT_LIMIT_EXCEEDED/.test(forgedDiscountSync.body.errors?.[0]?.error || ''), forgedDiscountSync.body);
+  ok('رفض الخصم دون اتصال لا ينشئ بيعاً ولا يخصم مخزوناً',
+    !db.getSchema().sales.some((s: any) => s.id === 'sale_sync_discount_attack') && (await stockOf(P1)) === stockBeforePolicyChecks,
+    await stockOf(P1));
+  const tenantAfterPolicy = db.getSchema().tenants.find((t: any) => t.id === tenantId) as any;
+  tenantAfterPolicy.settings = { ...tenantAfterPolicy.settings, defaultMaxDiscountPct: priorDiscountCap };
+  db.commit(); await db.flush();
 
   /* مدقّق بلا صلاحية إرجاع */
   const auditor = db.getSchema().employees.find((e: any) => e.tenantId === tenantId && e.role === 'auditor') as any;

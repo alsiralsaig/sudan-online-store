@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createSingleFlight } from '../../lib/singleFlight.ts';
+import { runSaleFollowUps } from '../../lib/saleFollowUp.ts';
 import {
   Search,
   Barcode,
@@ -56,7 +58,7 @@ import {
   type RateSide,
 } from '../../lib/marketRates.ts';
 import { RateSourceLine } from '../Common/RateSourceLine.tsx';
-import { generateZatcaTlvBase64, generateQrSvg } from '../../lib/zatcaQr.ts';
+import { generateZatcaTlvBase64Safe, generateQrSvg } from '../../lib/zatcaQr.ts';
 import { computeInvoiceTotals } from '../../lib/invoiceMath.ts';
 import { CameraBarcodeScanner } from './CameraBarcodeScanner.tsx';
 import { CopyBarcodeButton } from '../Common/CopyBarcodeButton.tsx';
@@ -195,10 +197,31 @@ export const PosView: React.FC<PosViewProps> = ({
   const [splitCash, setSplitCash] = useState<number>(0);
   const [splitBankak, setSplitBankak] = useState<number>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const saleSubmission = useRef(createSingleFlight());
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Completed Receipt Modal
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
+  const [saleFollowUpWarning, setSaleFollowUpWarning] = useState<string | null>(null);
+  const autoPrintedSaleId = useRef<string | null>(null);
+  const [pendingSale, setPendingSale] = useState<Sale | null>(null);
+  const [recoveryBlocked, setRecoveryBlocked] = useState(false);
+  const refreshPendingAttempt = () => {
+    try { setPendingSale(api.getPendingSaleAttempt()); setRecoveryBlocked(false); }
+    catch { setRecoveryBlocked(true); }
+  };
+  useEffect(() => {
+    refreshPendingAttempt();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key.startsWith('sanad_sale_attempt_v1:')) refreshPendingAttempt();
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', refreshPendingAttempt);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', refreshPendingAttempt);
+    };
+  }, [tenant?.id, currentBranch?.id]);
 
   // Sync settings when updated in other tabs or Admin
   useEffect(() => {
@@ -593,14 +616,25 @@ export const PosView: React.FC<PosViewProps> = ({
   const defaultVatPct = receiptSettings.defaultVatPct ?? 15;
   const isPricesIncludeVat = receiptSettings.pricesIncludeVat ?? false;
 
-  // الضريبة تُحسب بعد معرفة خصم الفاتورة (انظر invoiceTotals أدناه) وبنفس دالة السيرفر.
+  let computedTaxTotal = 0;
   const processedCartItems = cart.map((item) => {
     const isExempt = Boolean(item.product.isTaxExempt);
     const taxRate = isExempt || !isVatActive ? 0 : Number(item.product.customTaxRate ?? defaultVatPct);
+    const lineTotal = item.quantity * item.unitPrice - item.discount;
+    let taxAmount = 0;
+    if (isVatActive && taxRate > 0) {
+      if (isPricesIncludeVat) {
+        taxAmount = lineTotal - lineTotal / (1 + taxRate / 100);
+      } else {
+        taxAmount = lineTotal * (taxRate / 100);
+      }
+    }
+    computedTaxTotal += taxAmount;
     return {
       ...item,
       isTaxExempt: isExempt,
       taxRate,
+      taxAmount,
     };
   });
 
@@ -667,19 +701,26 @@ export const PosView: React.FC<PosViewProps> = ({
   const autoPromoDiscountTotal = appliedPromotions.reduce((acc, p) => acc + p.discountSdg, 0);
   const totalCombinedDiscount = discountTotal + autoPromoDiscountTotal;
 
-  // كانت الضريبة تُحسب قبل خصم الفاتورة فيدفع العميل ضريبة على مبلغ لم يدفعه، وبلا تقريب للفاصلة العائمة.
+  // Single source of truth: same math the server uses.
   const invoiceTotals = computeInvoiceTotals(
     processedCartItems.map((i) => ({
+      productId: i.product.id,
+      productName: i.product.name,
+      unit: i.product.unit,
       quantity: i.quantity,
-      unitPrice: i.unitPrice,
-      discount: i.discount,
+      unitPriceSdg: i.unitPrice,
+      discountSdg: i.discount,
+      isTaxExempt: i.isTaxExempt,
       taxRate: i.taxRate,
+      notes: i.notes || undefined,
+      costPerUnitSdg: i.product.purchaseCost,
     })),
-    { pricesIncludeVat: isPricesIncludeVat, invoiceDiscount: totalCombinedDiscount },
+    { vatEnabled: isVatActive, defaultVatPct, pricesIncludeVat: isPricesIncludeVat },
+    totalCombinedDiscount
   );
-  const subtotal = invoiceTotals.subtotal;
-  const taxTotal = invoiceTotals.taxTotal;
-  const grandTotal = invoiceTotals.grandTotal;
+  const subtotal = invoiceTotals.subtotalSdg;
+  const taxTotal = invoiceTotals.taxTotalSdg;
+  const grandTotal = invoiceTotals.grandTotalSdg;
 
   // Open Payment modal
   const handleProceedToPayment = () => {
@@ -699,123 +740,164 @@ export const PosView: React.FC<PosViewProps> = ({
     setIsPaymentModalOpen(true);
   };
 
+  const showSavedSale = async (res: { sale: Sale; isOffline?: boolean; customer?: Customer }) => {
+    setPendingSale(null);
+    setRecoveryBlocked(false);
+    setSaleFollowUpWarning(null);
+    setCompletedSale(res.sale);
+    if (res.customer) {
+      setSelectedCustomer(res.customer);
+    }
+    setCart([]);
+    setDiscountTotal(0);
+    setIsPaymentModalOpen(false);
+    const refreshed = await runSaleFollowUps([
+      () => onSaleCompleted(res.sale, res.isOffline),
+      () => onRefreshShift(),
+    ]);
+    if (!refreshed) {
+      setSaleFollowUpWarning('البيع محفوظ، لكن تعذر تحديث بعض بيانات الشاشة. لا تُعد البيع؛ راجع الفاتورة وسجل المبيعات.');
+    }
+  };
+
+  const handleRecoverSale = () => saleSubmission.current.run(async () => {
+    setIsSubmitting(true);
+    setErrorMsg(null);
+    try { await showSavedSale(await api.retryPendingSale()); }
+    catch (err: any) {
+      setErrorMsg(err.message || 'تعذر استعادة البيع. لا تُعد البيع؛ حاول الاستعادة عند عودة الاتصال.');
+      refreshPendingAttempt();
+    } finally { setIsSubmitting(false); }
+  });
+
   // Submit Sale
-  const handleFinalizeSale = async () => {
+  const handleFinalizeSale = () => saleSubmission.current.run(async () => {
     if (!currentBranch || !activeShift) return;
 
     setIsSubmitting(true);
     setErrorMsg(null);
 
-    const saleItems: SaleItem[] = processedCartItems.map((i, idx) => ({
-      productId: i.product.id,
-      productName: i.product.name,
-      unit: i.product.unit,
-      quantity: i.quantity,
-      unitPriceSdg: i.unitPrice,
-      discountSdg: i.discount,
-      totalSdg: invoiceTotals.lines[idx].total,
-      costPerUnitSdg: i.product.purchaseCost,
-      notes: i.notes || undefined,
-      isTaxExempt: i.isTaxExempt,
-      taxRate: i.taxRate,
-      taxAmountSdg: invoiceTotals.lines[idx].taxAmount,
-    }));
-
-    const currencyNames: Record<string, string> = {
-      USD: 'دولار أمريكي',
-      SAR: 'ريال سعودي',
-      AED: 'درهم إماراتي',
-      EUR: 'يورو',
-    };
-    const currencySymbols: Record<string, string> = {
-      USD: '$',
-      SAR: 'ر.س',
-      AED: 'د.إ',
-      EUR: '€',
-    };
-
-    let multiCurrencyData: MultiCurrencyPayment | undefined = undefined;
-    if (selectedCurrency !== 'SDG' && customExchangeRate > 0) {
-      const totalForeign = Number((grandTotal / customExchangeRate).toFixed(2));
-      const receivedForeign = Number(foreignCashReceived) || totalForeign;
-      const changeForeign = Math.max(0, Number((receivedForeign - totalForeign).toFixed(2)));
-      const changeSdg = Math.round(changeForeign * customExchangeRate);
-
-      multiCurrencyData = {
-        currencyCode: selectedCurrency,
-        currencyName: currencyNames[selectedCurrency] || selectedCurrency,
-        currencySymbol: currencySymbols[selectedCurrency] || selectedCurrency,
-        exchangeRate: customExchangeRate,
-        totalForeign,
-        amountReceivedForeign: receivedForeign,
-        changeForeign,
-        changeSdg,
-      };
-    }
-
-    const payload = {
-      branchId: currentBranch.id,
-      shiftId: activeShift.id,
-      customerId: selectedCustomer?.id,
-      customerName: selectedCustomer ? selectedCustomer.name : customerName,
-      customerPhone: selectedCustomer ? selectedCustomer.phone : customerPhone,
-      items: saleItems,
-      // الإجماليات تُرسل كاملة: الفاتورة المحفوظة دون اتصال تُعرض وتُطبع منها مباشرة
-      // (كانت تنقص subtotalSdg وgrandTotalSdg فينهار عرض الإيصال بعد بيع دون اتصال).
-      subtotalSdg: subtotal,
-      discountTotalSdg: invoiceTotals.discountTotal,
-      taxTotalSdg: taxTotal,
-      grandTotalSdg: grandTotal,
-      status: 'completed',
-      branchName: currentBranch.name,
-      vatEnabled: isVatActive,
-      defaultVatPct,
-      pricesIncludeVat: isPricesIncludeVat,
-      paymentMethod,
-      paymentReference: paymentMethod === 'bankak' ? paymentReference : undefined,
-      splitDetails:
-        paymentMethod === 'split'
-          ? {
-              cashAmountSdg: Number(splitCash),
-              bankakAmountSdg: Number(splitBankak),
-              fawryAmountSdg: 0,
-              cardAmountSdg: 0,
-            }
-          : undefined,
-      multiCurrency: multiCurrencyData,
-    };
-
     try {
-      const res: any = await api.recordSale(payload);
-      if (res.success) {
-        setCompletedSale(res.sale);
-        if (res.customer) {
-          setSelectedCustomer(res.customer);
-        }
-        setCart([]);
-        setDiscountTotal(0);
-        setIsPaymentModalOpen(false);
-        onSaleCompleted(res.sale, res.isOffline);
-        onRefreshShift();
+      const saleItems: SaleItem[] = invoiceTotals.lines.map((l) => ({
+        productId: l.productId,
+        productName: l.productName,
+        unit: l.unit,
+        quantity: l.quantity,
+        unitPriceSdg: l.unitPriceSdg,
+        discountSdg: l.discountSdg,
+        totalSdg: l.netSdg,
+        paidSdg: l.totalSdg,
+        invoiceDiscountShareSdg: l.invoiceDiscountShareSdg,
+        costPerUnitSdg: l.costPerUnitSdg || 0,
+        notes: l.notes,
+        isTaxExempt: l.isTaxExempt,
+        taxRate: l.taxRate,
+        taxAmountSdg: l.taxAmountSdg,
+      }));
 
-        // Auto-print to default printer if enabled
-        if (printerSettings.autoPrintOnSale) {
-          setTimeout(() => {
-            executePosPrint('printable-receipt', printerSettings);
-          }, 350);
-        }
+      const currencyNames: Record<string, string> = {
+        USD: 'دولار أمريكي',
+        SAR: 'ريال سعودي',
+        AED: 'درهم إماراتي',
+        EUR: 'يورو',
+      };
+      const currencySymbols: Record<string, string> = {
+        USD: '$',
+        SAR: 'ر.س',
+        AED: 'د.إ',
+        EUR: '€',
+      };
+
+      let multiCurrencyData: MultiCurrencyPayment | undefined = undefined;
+      if (selectedCurrency !== 'SDG' && customExchangeRate > 0) {
+        const totalForeign = Number((grandTotal / customExchangeRate).toFixed(2));
+        const receivedForeign = Number(foreignCashReceived) || totalForeign;
+        const changeForeign = Math.max(0, Number((receivedForeign - totalForeign).toFixed(2)));
+        const changeSdg = Math.round(changeForeign * customExchangeRate);
+
+        multiCurrencyData = {
+          currencyCode: selectedCurrency,
+          currencyName: currencyNames[selectedCurrency] || selectedCurrency,
+          currencySymbol: currencySymbols[selectedCurrency] || selectedCurrency,
+          exchangeRate: customExchangeRate,
+          totalForeign,
+          amountReceivedForeign: receivedForeign,
+          changeForeign,
+          changeSdg,
+        };
       }
+
+      const payload = {
+        branchId: currentBranch.id,
+        shiftId: activeShift.id,
+        customerId: selectedCustomer?.id,
+        customerName: selectedCustomer ? selectedCustomer.name : customerName,
+        customerPhone: selectedCustomer ? selectedCustomer.phone : customerPhone,
+        items: saleItems,
+        subtotalSdg: subtotal,
+        grandTotalSdg: grandTotal,
+        discountTotalSdg: totalCombinedDiscount,
+        taxTotalSdg: taxTotal,
+        vatEnabled: isVatActive,
+        defaultVatPct,
+        pricesIncludeVat: isPricesIncludeVat,
+        paymentMethod,
+        paymentReference: paymentMethod === 'bankak' ? paymentReference : undefined,
+        splitDetails:
+          paymentMethod === 'split'
+            ? {
+                cashAmountSdg: Number(splitCash),
+                bankakAmountSdg: Number(splitBankak),
+                fawryAmountSdg: 0,
+                cardAmountSdg: 0,
+              }
+            : undefined,
+        multiCurrency: multiCurrencyData,
+      };
+
+      const res: any = await api.recordSale(payload);
+      if (!res.success || !res.sale) throw new Error('لم يصل تأكيد حفظ البيع. راجع الحالة قبل إعادة المحاولة.');
+      await showSavedSale(res);
     } catch (err: any) {
       setErrorMsg(err.message || 'حدث خطأ أثناء إتمام عملية البيع');
+      refreshPendingAttempt();
     } finally {
       setIsSubmitting(false);
     }
-  };
+  });
 
   // Thermal print trigger
   const handlePrint = async () => {
-    await executePosPrint('printable-receipt', printerSettings);
+    try {
+      if (!document.getElementById('printable-receipt')) throw new Error('Receipt not ready');
+      const result = await executePosPrint('printable-receipt', printerSettings);
+      if (!result.success) throw new Error(result.message);
+    } catch {
+      setSaleFollowUpWarning('البيع محفوظ، لكن تعذر فتح الطباعة. لا تُعد البيع؛ استخدم زر الطباعة للمحاولة مجدداً.');
+    }
   };
+
+  // React has committed the saved receipt before this effect runs. No arbitrary delay.
+  useEffect(() => {
+    if (!completedSale || !printerSettings.autoPrintOnSale || autoPrintedSaleId.current === completedSale.id) return;
+    autoPrintedSaleId.current = completedSale.id;
+    void handlePrint();
+  }, [completedSale, printerSettings.autoPrintOnSale]);
+
+  if (pendingSale || recoveryBlocked) {
+    return (
+      <section dir="rtl" className="p-6 space-y-4 bg-amber-50 text-amber-950 rounded-xl" aria-label="استعادة بيع سابق">
+        <h2 className="text-xl font-bold">توجد محاولة بيع تحتاج مراجعة</h2>
+        <p>قد يكون البيع محفوظاً على السيرفر. لا تُعد إدخاله؛ استعد نفس العملية أولاً.</p>
+        {pendingSale && <p>مرجع المحاولة: <span dir="ltr">{pendingSale.id}</span> — الإجمالي المسجل: {pendingSale.grandTotalSdg?.toLocaleString()} ج.س</p>}
+        {recoveryBlocked && <p>تعذر قراءة سجل المحاولة على الجهاز. راجع سجل المبيعات والدعم قبل بدء بيع جديد.</p>}
+        {errorMsg && <p role="alert">{errorMsg}</p>}
+        {pendingSale && <button type="button" disabled={isSubmitting} onClick={handleRecoverSale} className="px-4 py-3 bg-amber-900 text-white rounded-lg disabled:opacity-50">
+          {isSubmitting ? 'جارٍ استعادة البيع...' : 'استعادة البيع السابق'}
+        </button>}
+      </section>
+    );
+  }
 
   return (
     <div className="flex flex-col lg:flex-row min-h-0 lg:h-[calc(100dvh-9.5rem)] overflow-x-hidden overflow-y-auto lg:overflow-hidden bg-slate-950">
@@ -1856,6 +1938,11 @@ export const PosView: React.FC<PosViewProps> = ({
               </div>
             </div>
 
+            {saleFollowUpWarning && (
+              <div role="alert" className="p-3 bg-amber-50 text-amber-950 text-sm border-b border-amber-200">
+                {saleFollowUpWarning}
+              </div>
+            )}
             {/* Thermal Receipt Content Container */}
             <div id="printable-receipt" className="p-4 bg-white text-slate-900 font-sans text-xs space-y-2 select-text">
               {/* Optional Custom Logo */}
@@ -2017,22 +2104,22 @@ export const PosView: React.FC<PosViewProps> = ({
               {/* ZATCA / TLV Base64 QR Code */}
               {receiptSettings.showQrCode && (
                 <div className="flex flex-col items-center justify-center pt-2 pb-1">
-                  <div
-                    className="w-24 h-24"
-                    dangerouslySetInnerHTML={{
-                      __html: generateQrSvg(
-                        generateZatcaTlvBase64({
-                          sellerName:
-                            receiptSettings.storeName || tenant?.tradeName || tenant?.name || 'المتجر',
-                          taxNumber: receiptSettings.taxNumber || tenant?.taxNumber || '',
-                          timestamp: completedSale.createdAt,
-                          totalWithVat: Number(completedSale.grandTotalSdg || 0).toFixed(2),
-                          vatTotal: Number(completedSale.taxTotalSdg || 0).toFixed(2),
-                        }),
-                        96
-                      ),
-                    }}
-                  />
+                  {(() => {
+                    const tlv = generateZatcaTlvBase64Safe({
+                      sellerName: receiptSettings.storeName || tenant?.tradeName || tenant?.name || 'المتجر',
+                      taxNumber: receiptSettings.taxNumber || tenant?.taxNumber || '',
+                      timestamp: completedSale.createdAt,
+                      totalWithVat: completedSale.grandTotalSdg.toString(),
+                      vatTotal: (completedSale.taxTotalSdg || 0).toString(),
+                    });
+                    return tlv ? (
+                      <div className="w-24 h-24" dangerouslySetInnerHTML={{ __html: generateQrSvg(tlv, 96) }} />
+                    ) : (
+                      <div className="w-24 h-24 flex items-center justify-center text-[9px] text-amber-600 text-center border border-amber-300 rounded p-1">
+                        اسم المتجر طويل جداً — تعذّر توليد QR
+                      </div>
+                    );
+                  })()}
                   <span className="text-[9px] text-slate-400 mt-1 font-mono">رمز الفاتورة الإلكترونية</span>
                 </div>
               )}

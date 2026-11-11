@@ -45,7 +45,7 @@ await new Promise<void>((r) => server.once('listening', r));
 const base = `http://127.0.0.1:${(server.address() as any).port}`;
 const login = await fetch(base + '/api/auth/merchant/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
 const { token } = await login.json() as any;
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH });
 let passed = 0;
 const ok = (name: string, c: unknown) => { assert.ok(c, name); passed++; console.log(`  ✅ ${name}`); };
 

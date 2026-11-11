@@ -157,10 +157,9 @@ export function merchantAuthMiddleware(req: Request, res: Response, next: NextFu
    * جلسة الموظف (staff): رمز الموظف نفسه هو المصادقة، فلا نحتاج رأس
    * x-actor-id — بل العكس: نرفض أي محاولة لانتحال دور غيره من نفس الجهاز.
    */
-  /* رمز الموظف يُقرأ من الكوكي المخصص فقط.
-     extractToken كان يرتد إلى Bearer، فيلتقط رمز **التاجر** ويعامله كرمز
-     موظف؛ يفشل التحقق فيُكمل الطلب بلا actorId ولا actorRole أصلاً —
-     فتُسجّل المبيعات بلا كاشير وتُقيَّم الصلاحيات كأنه كاشير مجهول. */
+  // Staff identity must come from the staff cookie ONLY. Falling back to the
+  // Bearer (merchant) token here made verifySession('staff') fail and returned
+  // next() without ever setting actorId/actorRole.
   const staffToken = parseCookies(req.headers.cookie as string | undefined)['sanad_staff_token'];
   if (staffToken) {
     const staffClaims = verifySession(staffToken, secret, 'staff');

@@ -55,6 +55,8 @@ export async function cacheProductsLocally(products: Product[]): Promise<void> {
     }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    // A transaction can abort after a request succeeded, without an error event.
+    tx.onabort = () => reject(tx.error || new Error('لم يكتمل الحفظ المحلي على الجهاز. أعد المحاولة ولا تغلق الصفحة.'));
   });
 }
 
@@ -77,6 +79,8 @@ export async function saveOfflineSale(sale: Sale): Promise<void> {
     store.put(sale);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    // A transaction can abort after a request succeeded, without an error event.
+    tx.onabort = () => reject(tx.error || new Error('لم يكتمل الحفظ المحلي على الجهاز. أعد المحاولة ولا تغلق الصفحة.'));
   });
 }
 
@@ -99,6 +103,8 @@ export async function removeOfflineSale(id: string): Promise<void> {
     store.delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    // A transaction can abort after a request succeeded, without an error event.
+    tx.onabort = () => reject(tx.error || new Error('لم يكتمل الحفظ المحلي على الجهاز. أعد المحاولة ولا تغلق الصفحة.'));
   });
 }
 
@@ -112,6 +118,8 @@ export async function clearSyncedSales(ids: string[]): Promise<void> {
     }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    // A transaction can abort after a request succeeded, without an error event.
+    tx.onabort = () => reject(tx.error || new Error('لم يكتمل الحفظ المحلي على الجهاز. أعد المحاولة ولا تغلق الصفحة.'));
   });
 }
 

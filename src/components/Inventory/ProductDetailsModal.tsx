@@ -29,6 +29,7 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
   const [quantity, setQuantity] = useState(String(stock));
   const [stockAtEdit, setStockAtEdit] = useState<number | null>(null);
   const [taxExempt, setTaxExempt] = useState(Boolean(product.isTaxExempt));
+  const [trackInventory, setTrackInventory] = useState(product.trackInventory !== false);
   const [taxRate, setTaxRate] = useState(product.customTaxRate == null ? '' : String(product.customTaxRate));
   const [imageUrl, setImageUrl] = useState(product.imageUrl || '');
   /* تواريخ الإنتاج والانتهاء — تظهر بعد الحفظ وتُعدَّل من هنا */
@@ -75,7 +76,7 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
     }
     const payload: Record<string, unknown> = {
       name: name.trim(), sku: sku.trim(), barcode: barcode.trim(), category: category.trim(), unit: unit.trim(),
-      sellingPriceSdg: Number(price), minStockAlert: Number(minimum), isTaxExempt: taxExempt,
+      sellingPriceSdg: Number(price), minStockAlert: Number(minimum), isTaxExempt: taxExempt, trackInventory,
       customTaxRate: taxRate === '' ? null : Number(taxRate), imageUrl, videoUrl,
       productionDate, expiryDate,
       minOrderQty: Number(minOrderQty) > 0 ? Number(minOrderQty) : null,
@@ -145,7 +146,7 @@ export const ProductDetailsModal: React.FC<Props> = ({ product, branch, stock, s
               </p>
             )}
             <div><label className={labelClass} htmlFor="edit-product-stock">الرصيد في {branch?.name || 'الفرع'}</label><input id="edit-product-stock" type="number" step="any" disabled={!branch || !stockReady} value={stockAtEdit === null ? String(stock) : quantity} onChange={(e) => { if (stockAtEdit === null) setStockAtEdit(stock); setQuantity(e.target.value); }} className={inputClass} /><p className="text-xs text-slate-500 mt-1">تغيير الرصيد يُسجّل كتسوية مخزنية لهذا الفرع فقط.</p></div>
-            <div className="grid grid-cols-2 gap-3 items-end"><label className="flex items-center gap-2 text-slate-700 font-bold"><input type="checkbox" checked={taxExempt} onChange={(e) => setTaxExempt(e.target.checked)} /> معفى من الضريبة</label><div><label className={labelClass} htmlFor="edit-product-tax">نسبة ضريبة خاصة %</label><input id="edit-product-tax" type="number" min="0" max="100" step="any" placeholder="الافتراضية" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} className={inputClass} /></div></div>
+            <div className="grid grid-cols-3 gap-3 items-end"><label className="flex items-center gap-2 text-slate-700 font-bold"><input type="checkbox" checked={trackInventory} onChange={(e) => setTrackInventory(e.target.checked)} /> يتتبع المخزون</label><label className="flex items-center gap-2 text-slate-700 font-bold"><input type="checkbox" checked={taxExempt} onChange={(e) => setTaxExempt(e.target.checked)} /> معفى من الضريبة</label><div><label className={labelClass} htmlFor="edit-product-tax">نسبة ضريبة خاصة %</label><input id="edit-product-tax" type="number" min="0" max="100" step="any" placeholder="الافتراضية" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} className={inputClass} /></div></div>
             <div className="grid grid-cols-2 gap-3">
               <div><span className={labelClass}>صورة الصنف</span>{imageUrl && <img src={imageUrl} alt="صورة الصنف" className="h-24 w-full object-contain rounded-lg border border-slate-200 mb-2"  referrerPolicy="no-referrer" />}<div className="flex flex-wrap gap-2"><label className="cursor-pointer px-3 py-2 rounded-lg bg-emerald-600 text-white flex items-center gap-1"><ImageIcon className="w-4 h-4" /> اختيار صورة<input type="file" accept="image/*" className="hidden" onChange={(e) => { void upload(e.target.files?.[0], 'image'); e.target.value = ''; }} /></label><label className="cursor-pointer px-3 py-2 rounded-lg bg-slate-200 text-slate-800 flex items-center gap-1"><Camera className="w-4 h-4" /> تصوير<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { void upload(e.target.files?.[0], 'image'); e.target.value = ''; }} /></label>{imageUrl && <button type="button" onClick={() => setImageUrl('')} className="text-rose-600 underline">حذف الصورة</button>}</div></div>
               <div><span className={labelClass}>فيديو الصنف</span>{videoUrl && <video src={videoUrl} className="h-24 w-full rounded-lg mb-2" controls playsInline />}<label className="cursor-pointer px-3 py-2 rounded-lg bg-slate-200 text-slate-800 inline-flex items-center gap-1"><Video className="w-4 h-4" /> اختيار فيديو<input type="file" accept="video/*" className="hidden" onChange={(e) => { void upload(e.target.files?.[0], 'video'); e.target.value = ''; }} /></label><p className="text-xs text-slate-500 mt-1">حتى {PRODUCT_VIDEO_MAX_SECONDS} ثانية</p>{videoUrl && <button type="button" onClick={() => setVideoUrl('')} className="text-rose-600 underline">حذف الفيديو</button>}</div>
