@@ -856,39 +856,25 @@ export default function App() {
         onRefreshFromServer={() => { loadPrimaryData(); setIsCloudOpen(false); }}
       />
 
-      {/* Compact merchant context: two calm, aligned rows instead of a tall information panel. */}
-      <div className="theme-context-bar border-b border-sky-200 bg-sky-50 px-3 py-2 text-xs text-slate-700">
-        <div className="mx-auto flex max-w-7xl flex-col gap-2">
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <Building className="h-4 w-4 shrink-0 text-sky-700" />
-              <span className="max-w-[42vw] truncate font-bold text-slate-800">{tenant?.tradeName || tenant?.name || 'متجرك'}</span>
-              {tenant?.city && <span className="hidden text-slate-500 sm:inline">· {tenant.city}</span>}
-            </div>
-            <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
-              <label className="flex h-9 items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-2 text-[11px]">
-                <span className="text-slate-500">الفرع</span>
-                <select aria-label="فرع العمل" value={currentBranch?.id || ''} onChange={(e) => handleBranchSwitch(e.target.value)} className="max-w-[34vw] bg-transparent font-bold text-slate-800 outline-none sm:max-w-[180px]">
-                  {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
-              </label>
-              <label className="flex h-9 items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-2 text-[11px]">
-                <Users className="h-3.5 w-3.5 text-sky-700" />
-                <select aria-label="من يعمل الآن" value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''} onChange={(e) => handleActorSwitch(e.target.value)} className="max-w-[34vw] bg-transparent font-bold text-slate-800 outline-none sm:max-w-[190px]">
-                  {visibleEmployees.length === 0 ? <option value="">{ownerDisplayName || 'المالك'}</option> : visibleEmployees.map((e) => <option key={e.id} value={e.id}>{e.name} — {roleLabel(e.role)}</option>)}
-                </select>
-              </label>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-sky-100 pt-2">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button onClick={() => switchAppMode('client')} title="فتح تطبيق الجمهور" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-sky-600 px-2.5 text-[11px] font-bold text-white"><Globe className="h-3.5 w-3.5" /><span>الجمهور</span></button>
-              <button onClick={async () => { try { const reg = await navigator.serviceWorker?.getRegistration(); const sub = await reg?.pushManager.getSubscription(); if (sub) await api.unsubscribePush(sub.endpoint); } catch {} await api.merchantLogout(); api.clearLocalSession(); setMerchantAuthed(false); }} title="خروج المتجر" className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-bold text-slate-700">خروج</button>
-              <span className="rounded-lg bg-white/80 px-2 py-1 font-mono text-[11px] text-slate-600">SDG · جنيه سوداني</span>
-            </div>
-            {pendingOfflineCount > 0 && <span className="rounded-lg bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">فواتير معلقة: {pendingOfflineCount}</span>}
-          </div>
+      {/* Store name is already shown in the header; keep only four compact controls here. */}
+      <div className="theme-context-bar border-b border-sky-200 bg-sky-50 px-2 py-2 text-xs text-slate-700">
+        <div className="mx-auto grid max-w-7xl grid-cols-4 gap-1.5 sm:gap-2">
+          <label title={`فرع العمل: ${currentBranch?.name || 'الفرع الرئيسي'}`} className="flex h-11 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-xl border border-sky-200 bg-white px-1.5">
+            <Building className="h-3.5 w-3.5 shrink-0 text-sky-700" />
+            <select aria-label="فرع العمل" value={currentBranch?.id || ''} onChange={(e) => handleBranchSwitch(e.target.value)} className="min-w-0 w-full truncate bg-transparent text-center text-[10px] font-bold text-slate-800 outline-none sm:text-xs">
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </label>
+          <label title={`المستخدم الحالي: ${visibleEmployees.find((e) => e.id === actor.id)?.name || ownerDisplayName || 'المالك'}`} className="flex h-11 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-xl border border-sky-200 bg-white px-1.5">
+            <Users className="h-3.5 w-3.5 shrink-0 text-sky-700" />
+            <select aria-label="من يعمل الآن" value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''} onChange={(e) => handleActorSwitch(e.target.value)} className="min-w-0 w-full truncate bg-transparent text-center text-[10px] font-bold text-slate-800 outline-none sm:text-xs">
+              {visibleEmployees.length === 0 ? <option value="">{ownerDisplayName || 'المالك'}</option> : visibleEmployees.map((e) => <option key={e.id} value={e.id}>{e.name} — {roleLabel(e.role)}</option>)}
+            </select>
+          </label>
+          <span title="العملة الافتراضية: الجنيه السوداني" className="flex h-11 min-w-0 items-center justify-center rounded-xl border border-sky-200 bg-white px-1 text-[10px] font-bold text-slate-700 sm:text-xs">SDG · ج.س</span>
+          <button onClick={async () => { try { const reg = await navigator.serviceWorker?.getRegistration(); const sub = await reg?.pushManager.getSubscription(); if (sub) await api.unsubscribePush(sub.endpoint); } catch {} await api.merchantLogout(); api.clearLocalSession(); setMerchantAuthed(false); }} title="خروج المتجر" className="flex h-11 min-w-0 items-center justify-center rounded-xl border border-slate-200 bg-white px-1 text-[10px] font-bold text-slate-700 sm:text-xs">خروج</button>
         </div>
+        {pendingOfflineCount > 0 && <div className="mx-auto mt-1.5 max-w-7xl text-center text-[10px] font-bold text-amber-800">فواتير معلقة: {pendingOfflineCount}</div>}
       </div>
 
       {/* Main Content Viewport */}
@@ -1068,4 +1054,4 @@ export default function App() {
     </div>
     </PullToRefresh>
   );
-}
+              }
