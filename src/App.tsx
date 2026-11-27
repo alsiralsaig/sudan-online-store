@@ -13,6 +13,7 @@ import { BranchesEmployeesView } from './components/BranchesEmployees/BranchesEm
 import { StorefrontView } from './components/Storefront/StorefrontView.tsx';
 import { SubscriptionView } from './components/Subscription/SubscriptionView.tsx';
 import { MerchantAdsView } from './components/Merchant/MerchantAdsView.tsx';
+import { MerchantHomeDashboard } from './components/Merchant/MerchantHomeDashboard.tsx';
 import { SanadContactSection } from './components/Common/SanadContactSection.tsx';
 import { SanadWhatsAppFab } from './components/Common/SanadWhatsAppFab.tsx';
 import { SanadErrorBoundary } from './components/Common/SanadErrorBoundary.tsx';
@@ -26,7 +27,6 @@ import { InAppAlertBanner } from './components/Common/InAppAlertBanner.tsx';
 import { PushOptInCard } from './components/Common/PushOptInCard.tsx';
 import { SanadAIAssistant } from './components/Common/SanadAIAssistant.tsx';
 import { SanadAppModeBar, type PlatformAppMode } from './components/Common/SanadAppModeBar.tsx';
-import { AdminWelcomeBanner } from './components/Admin/AdminWelcomeBanner.tsx';
 import { MerchantCloudModal } from './components/Common/MerchantCloudModal.tsx';
 import { PullToRefresh } from './components/Common/PullToRefresh.tsx';
 
@@ -57,7 +57,7 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<string>('pos');
+  const [currentTab, setCurrentTab] = useState<string>('welcome');
 
   // Deep links from notifications: /?app=merchant&tab=storefront
   useEffect(() => {
@@ -935,17 +935,11 @@ export default function App() {
       <SanadErrorBoundary appName="تطبيق التاجر">
       <main className="flex-1 overflow-auto">
         {currentTab === 'welcome' && (
-          <div className="px-3 sm:px-6 py-4">
-            <AdminWelcomeBanner
-              tenantName={tenant?.tradeName || tenant?.name}
-              branchName={currentBranch?.name}
-              onNavigateTab={(t) => setCurrentTab(t)}
-              onSwitchToClientApp={() => switchAppMode('client')}
-              totalProductsCount={products.length}
-              activeShiftsCount={shifts.filter((s) => s.status === 'open').length}
-              pendingOrdersCount={3}
-            />
-          </div>
+          <MerchantHomeDashboard
+            tenantName={tenant?.tradeName || tenant?.name}
+            branchName={currentBranch?.name}
+            onNavigateTab={(tab) => setCurrentTab(tab)}
+          />
         )}
 
         {currentTab === 'pos' && (
@@ -1104,4 +1098,4 @@ export default function App() {
     </div>
     </PullToRefresh>
   );
-}
+                }
