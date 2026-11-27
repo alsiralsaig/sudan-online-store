@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowRightLeft, BadgeDollarSign, BarChart3, Boxes, Building2, ChefHat,
-  ClipboardList, Coins, FileText, Megaphone, PackagePlus, Receipt,
-  ShoppingBag, ShoppingCart, Truck, Users, Wallet, ScanSearch, Home,
+  ArrowLeft, ArrowRight, ArrowRightLeft, BadgeDollarSign, BarChart3, Boxes,
+  Building2, ChefHat, Check, ChevronDown, ChevronLeft, ChevronRight, Coins,
+  Home, Megaphone, Package, Receipt, ScanSearch, ShoppingBag, ShoppingCart,
+  Truck, Users, Wallet, X,
 } from 'lucide-react';
+import type { Product } from '../../types/index.ts';
 
 type MerchantTab =
   | 'welcome' | 'pos' | 'inventory' | 'sales' | 'reports' | 'shifts'
@@ -14,16 +16,20 @@ type MerchantTab =
 interface Props {
   tenantName?: string;
   branchName?: string;
+  products: Product[];
+  featuredProductIds: string[];
+  canManageFeatured: boolean;
+  onSaveFeatured: (ids: string[]) => Promise<void>;
   onNavigateTab: (tab: MerchantTab) => void;
 }
 
-const services: { id: MerchantTab; title: string; hint: string; Icon: React.ElementType; primary?: boolean }[] = [
-  { id: 'pos', title: 'بيع للزبون', hint: 'سجّل عملية بيع جديدة', Icon: ShoppingCart, primary: true },
-  { id: 'inventory', title: 'بضاعتي ومنتجاتي', hint: 'شوف الأصناف والكميات', Icon: Boxes, primary: true },
-  { id: 'sales', title: 'المبيعات والفواتير', hint: 'راجع البيع والفواتير', Icon: Receipt, primary: true },
-  { id: 'purchases_expenses', title: 'المشتريات والمصروفات', hint: 'سجّل بضاعة أو مصروفًا', Icon: Truck, primary: true },
+const services: { id: MerchantTab; title: string; hint: string; Icon: React.ElementType }[] = [
+  { id: 'pos', title: 'بيع للزبون', hint: 'بيع سريع وسهل', Icon: ShoppingCart },
+  { id: 'inventory', title: 'بضاعتي ومنتجاتي', hint: 'شوف الأصناف والكميات', Icon: Boxes },
+  { id: 'sales', title: 'المبيعات والفواتير', hint: 'راجع البيع والفواتير', Icon: Receipt },
+  { id: 'purchases_expenses', title: 'المشتريات والمصروفات', hint: 'سجّل بضاعة أو مصروفًا', Icon: Truck },
+  { id: 'shifts', title: 'الورديات والخزينة', hint: 'فتح وردية ومراجعة النقد', Icon: Wallet },
   { id: 'reports', title: 'التقارير والأرباح', hint: 'ملخص حركة متجرك', Icon: BarChart3 },
-  { id: 'shifts', title: 'الورديات والخزينة', hint: 'فتح وردية ومراجعة النقدية', Icon: Wallet },
   { id: 'links', title: 'الموردون والربط', hint: 'تواصل مع الموردين', Icon: Users },
   { id: 'inventory_audit', title: 'جرد البضاعة', hint: 'طابق الكميات بالمحل', Icon: ScanSearch },
   { id: 'transfers', title: 'نقل بضاعة بين الفروع', hint: 'للمتاجر متعددة الفروع', Icon: ArrowRightLeft },
@@ -33,44 +39,112 @@ const services: { id: MerchantTab; title: string; hint: string; Icon: React.Elem
   { id: 'my_ads', title: 'إعلانات متجري', hint: 'إدارة إعلاناتك', Icon: Megaphone },
   { id: 'kitchen', title: 'شاشة المطبخ', hint: 'للمطاعم والمقاهي', Icon: ChefHat },
   { id: 'subscription', title: 'الاشتراك والباقات', hint: 'تفاصيل اشتراكك', Icon: BadgeDollarSign },
-  { id: 'welcome', title: 'الرئيسية', hint: 'الرجوع لهذه الصفحة', Icon: Home },
+  { id: 'welcome', title: 'الرئيسية', hint: 'الرجوع للصفحة الرئيسية', Icon: Home },
 ];
+const quickIds: MerchantTab[] = ['pos', 'inventory', 'sales', 'purchases_expenses', 'shifts', 'reports'];
+const MAX_FEATURED = 6;
 
-export const MerchantHomeDashboard: React.FC<Props> = ({ tenantName, branchName, onNavigateTab }) => (
-  <main dir="rtl" className="min-h-full bg-slate-50 px-3 py-4 sm:px-6 sm:py-6">
-    <div className="mx-auto max-w-6xl">
-      <section className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-emerald-800 px-5 py-6 text-white shadow-sm sm:px-8">
-        <div>
-          <p className="mb-1 text-sm font-semibold text-emerald-100">{tenantName || 'سَنَد للتاجر'}</p>
-          <h1 className="text-2xl font-extrabold sm:text-3xl">أهلًا بك 👋</h1>
-          <p className="mt-2 text-base text-emerald-50 sm:text-lg">شنو حابب تعمل اليوم؟ اختار الخدمة من المربعات تحت.</p>
+export const MerchantHomeDashboard: React.FC<Props> = ({
+  tenantName, branchName, products, featuredProductIds, canManageFeatured,
+  onSaveFeatured, onNavigateTab,
+}) => {
+  const [showAll, setShowAll] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [draftIds, setDraftIds] = useState<string[]>(featuredProductIds);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [slide, setSlide] = useState(0);
+  const [failedImages, setFailedImages] = useState<string[]>([]);
+
+  useEffect(() => setDraftIds(featuredProductIds), [featuredProductIds]);
+  const featured = useMemo(() => {
+    const byId = new Map(products.map((product) => [product.id, product]));
+    return featuredProductIds.map((id) => byId.get(id)).filter((p): p is Product => Boolean(p));
+  }, [products, featuredProductIds]);
+
+  useEffect(() => {
+    if (featured.length < 2) { setSlide(0); return; }
+    const timer = window.setInterval(() => setSlide((n) => (n + 1) % featured.length), 4500);
+    return () => window.clearInterval(timer);
+  }, [featured.length]);
+
+  const shownServices = showAll ? services : services.filter((service) => quickIds.includes(service.id));
+  const toggleProduct = (id: string) => {
+    setDraftIds((current) => current.includes(id)
+      ? current.filter((item) => item !== id)
+      : current.length >= MAX_FEATURED ? current : [...current, id]);
+  };
+  const saveSelection = async () => {
+    setSaving(true); setSaveError('');
+    try { await onSaveFeatured(draftIds); setPickerOpen(false); }
+    catch { setSaveError('ما قدرنا نحفظ الاختيار. جرّب مرة تانية.'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <main dir="rtl" className="min-h-full bg-slate-50 px-3 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-6xl">
+        <section className="mb-5" aria-label="منتجات يختارها صاحب المتجر">
+            <div className="mb-2 flex items-center justify-between gap-2 px-1"><div><h2 className="text-lg font-extrabold text-slate-900">منتجات اخترتها ✨</h2><p className="text-xs text-slate-500">عرض جمالي فقط · ما يوضح حالة المخزون</p></div>{canManageFeatured && <button type="button" onClick={() => { setDraftIds(featuredProductIds); setPickerOpen(true); }} className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm">اختيار المنتجات</button>}</div>
+            {featured.length ? (
+              <div className="relative h-[220px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm sm:h-[320px]">
+                <style>{'@keyframes sanadProductFadeIn { from { opacity: .35; transform: scale(1.015); } to { opacity: 1; transform: scale(1); } }'}</style>
+                {featured[slide % featured.length].imageUrl && !failedImages.includes(featured[slide % featured.length].id) ? (
+                  <img
+                    key={featured[slide % featured.length].id}
+                    src={featured[slide % featured.length].imageUrl}
+                    alt=""
+                    className="absolute inset-0 h-full w-full animate-[sanadProductFadeIn_650ms_ease-out] object-cover"
+                    onError={() => setFailedImages((old) => [...old, featured[slide % featured.length].id])}
+                  />
+                ) : (
+                  <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-emerald-100 to-sky-100 text-emerald-700"><Package size={52}/></div>
+                )}
+                {featured.length > 1 && <>
+                  <button type="button" aria-label="المنتج السابق" onClick={() => setSlide((n) => (n - 1 + featured.length) % featured.length)} className="absolute right-3 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full bg-slate-950/45 text-white shadow backdrop-blur-sm"><ChevronRight size={22}/></button>
+                  <button type="button" aria-label="المنتج التالي" onClick={() => setSlide((n) => (n + 1) % featured.length)} className="absolute left-3 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full bg-slate-950/45 text-white shadow backdrop-blur-sm"><ChevronLeft size={22}/></button>
+                  <div className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5" aria-label={`الصورة ${slide + 1} من ${featured.length}`}>
+                    {featured.map((product, index) => <button key={product.id} type="button" onClick={() => setSlide(index)} aria-label={`عرض الصورة ${index + 1}`} className={`h-2 rounded-full shadow transition-all ${index === slide ? 'w-6 bg-white' : 'w-2 bg-white/65'}`} />)}
+                  </div>
+                </>}
+              </div>
+            ) : (
+              <div className="flex min-h-[120px] items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-4"><div><b className="text-sm text-slate-800">ما اخترت منتجات للعرض بعد</b><p className="mt-1 text-xs text-slate-500">اختر صور منتجاتك المفضلة لتظهر هنا بشكل متحرك.</p></div>{canManageFeatured && <button type="button" onClick={() => setPickerOpen(true)} className="shrink-0 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white">اختيار</button>}</div>
+            )}
+          </section>
+        <div className="mb-2 flex items-center justify-between px-1">
+          <div><h2 className="text-lg font-extrabold text-slate-900">{showAll ? 'كل خدمات متجرك' : 'خدمات متجرك'}</h2><p className="mt-0.5 text-xs text-slate-500">{showAll ? 'اختار الخدمة المطلوبة' : 'أهم خدماتك في مكان واحد'}</p></div>
+          <button type="button" onClick={() => setShowAll((value) => !value)} className="inline-flex h-9 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800 hover:bg-emerald-100" aria-expanded={showAll}>
+            {showAll ? <><ArrowRight size={15}/> الرئيسية</> : <>عرض الكل <ArrowLeft size={15}/></>}
+          </button>
         </div>
-        {branchName && <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm">🏬 {branchName}</div>}
-      </section>
 
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-2 px-1">
-        <h2 className="text-xl font-extrabold text-slate-900">خدمات متجرك</h2>
-        <p className="text-sm text-slate-500">كل خدمات القائمة في مكان واحد</p>
+        <section aria-label={showAll ? 'كل خدمات التاجر' : 'الخدمات الأكثر استخدامًا'} className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-3">
+          {shownServices.map(({ id, title, hint, Icon }, index) => (
+            <button key={id} type="button" onClick={() => onNavigateTab(id)} className="flex min-h-[102px] items-center gap-2.5 rounded-2xl border border-slate-200 bg-white p-3 text-right shadow-sm transition hover:border-sky-200 hover:shadow-md focus-visible:outline focus-visible:outline-4 focus-visible:outline-sky-200 sm:min-h-[112px] sm:gap-3 sm:p-4">
+              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${index < 6 ? 'bg-sky-100 text-sky-700' : 'bg-emerald-50 text-emerald-700'}`}><Icon size={21} strokeWidth={2.2}/></span>
+              <span className="min-w-0 flex-1"><b className="block text-sm leading-snug text-slate-900 sm:text-base">{title}</b><small className="mt-1 block text-[11px] leading-snug text-slate-500 sm:text-xs">{hint}</small></span>
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-slate-50 text-sky-700"><ChevronLeft size={17}/></span>
+            </button>
+          ))}
+        </section>
+
+        <p className="mt-4 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-950">محتاج مساعدة؟ تواصل مع الدعم من زر المساعدة أعلى الصفحة.</p>
       </div>
 
-      <section aria-label="كل خدمات التاجر" className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
-        {services.map(({ id, title, hint, Icon, primary }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onNavigateTab(id)}
-            className={`group flex min-h-[148px] flex-col items-start justify-between rounded-3xl border p-4 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline focus-visible:outline-4 focus-visible:outline-emerald-300 sm:min-h-[168px] sm:p-5 ${primary ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'}`}
-            aria-label={`${title}: ${hint}`}
-          >
-            <span className={`grid h-12 w-12 place-items-center rounded-2xl sm:h-14 sm:w-14 ${primary ? 'bg-emerald-700 text-white' : 'bg-emerald-50 text-emerald-800'}`}>
-              <Icon aria-hidden="true" size={27} strokeWidth={2.2} />
-            </span>
-            <span className="mt-4 block text-base font-extrabold leading-snug text-slate-900 sm:text-lg">{title}</span>
-            <span className="mt-1 block text-xs leading-relaxed text-slate-500 sm:text-sm">{hint}</span>
-          </button>
-        ))}
-      </section>
-      <p className="mt-5 rounded-2xl bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-950">محتاج مساعدة؟ تواصل مع الدعم من زر المساعدة في أعلى الصفحة.</p>
-    </div>
-  </main>
-);
+      {pickerOpen && (
+        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="featured-title" dir="rtl">
+          <div className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-t-3xl bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-5">
+            <div className="mb-3 flex items-center justify-between"><div><h2 id="featured-title" className="text-lg font-extrabold">اختار منتجات للعرض</h2><p className="text-xs text-slate-500">حد أقصى {MAX_FEATURED} منتجات · اختيارك يُحفظ لكل المتجر</p></div><button type="button" onClick={() => setPickerOpen(false)} aria-label="إغلاق" className="grid h-9 w-9 place-items-center rounded-full bg-slate-100"><X size={18}/></button></div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+              {products.filter((p) => p.isActive !== false).map((product) => { const checked = draftIds.includes(product.id); const disabled = !checked && draftIds.length >= MAX_FEATURED; return <button key={product.id} type="button" disabled={disabled} onClick={() => toggleProduct(product.id)} className={`flex w-full items-center gap-3 rounded-xl border p-2.5 text-right ${checked ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 bg-white'} ${disabled ? 'opacity-45' : ''}`}><span className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100">{product.imageUrl ? <img src={product.imageUrl} alt="" className="h-full w-full object-cover"/> : <span className="grid h-full place-items-center text-slate-400"><Package size={21}/></span>}</span><span className="min-w-0 flex-1"><b className="block truncate text-sm">{product.name}</b><small className="text-xs text-slate-500">{product.category || 'بدون تصنيف'}</small></span><span className={`grid h-6 w-6 place-items-center rounded-full border ${checked ? 'border-emerald-700 bg-emerald-700 text-white' : 'border-slate-300 text-transparent'}`}><Check size={15}/></span></button>; })}
+              {!products.length && <p className="p-6 text-center text-sm text-slate-500">ما في منتجات مسجلة في المتجر بعد.</p>}
+            </div>
+            {saveError && <p className="mt-2 text-sm text-rose-700">{saveError}</p>}
+            <div className="mt-4 flex gap-2"><button type="button" disabled={saving} onClick={saveSelection} className="flex-1 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white disabled:opacity-60">{saving ? 'جارٍ الحفظ…' : 'حفظ الاختيار'}</button><button type="button" disabled={saving} onClick={() => setPickerOpen(false)} className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700">إلغاء</button></div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+};

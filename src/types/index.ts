@@ -20,6 +20,7 @@ export interface TenantSettings {
   showVatBreakdown?: boolean;
   showTaxPerItem?: boolean;
   loyaltyRateSdgPerPoint?: number; // e.g. 1000 SDG = 1 point
+  featuredProductIds?: string[];
 }
 
 export interface Tenant {

@@ -186,26 +186,6 @@ export const Header: React.FC<HeaderProps> = ({
         {/* كانت shrink-0 بلا wrap فكانت الأزرار الأخيرة (جرس الإشعارات) تخرج
             خارج الشاشة على الجوال ولا تُرى أصلاً */}
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 min-w-0">
-          {/* Dual-App Switcher Pill */}
-          <div className="hidden sm:flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
-            <button
-              onClick={() => onTabChange('pos')}
-              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white text-emerald-800 shadow-2xs flex items-center gap-1.5"
-            >
-              <Store className="w-3.5 h-3.5 text-emerald-600" />
-              <span>تطبيق الإدارة</span>
-            </button>
-            <button
-              onClick={onSwitchToClientApp || onOpenStorefront}
-              className="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-700 hover:text-emerald-700 flex items-center gap-1.5 transition-colors"
-              title="الانتقال إلى تطبيق الجمهور والعملاء SanadClientApp"
-            >
-              <Globe className="w-3.5 h-3.5 text-amber-500" />
-              <span>تطبيق الجمهور (SanadClientApp)</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            </button>
-          </div>
-
           {/*
             «طلب متجر» و«تفعيل بالكود» أُزيلا من شريط التاجر:
             التاجر داخل متجره بالفعل، فلا معنى لطلب متجر جديد أو تفعيل كود
@@ -284,6 +264,17 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
           </div>
+
+          {/* الجمهور في المساحة الفارغة يسار أدوات الشريط العلوي */}
+          <button
+            onClick={onSwitchToClientApp || onOpenStorefront}
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-sky-400/40 bg-sky-600 px-2.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-sky-500 sm:px-3 sm:text-xs"
+            title="الانتقال إلى تطبيق الجمهور والعملاء"
+            aria-label="فتح تطبيق الجمهور"
+          >
+            <Globe className="h-4 w-4 shrink-0" />
+            <span>الجمهور</span>
+          </button>
 
           {/* Pending Sync Button if any */}
           {pendingOfflineCount > 0 && (
