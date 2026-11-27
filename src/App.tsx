@@ -47,6 +47,7 @@ import {
   Users,
   Globe,
   Sparkles,
+  ChevronDown,
   Building,
   RotateCcw,
   CheckCircle,
@@ -859,15 +860,19 @@ export default function App() {
       {/* Store name is already shown in the header; keep only four compact controls here. */}
       <div className="theme-context-bar border-b border-sky-200 bg-sky-50 px-2 py-2 text-xs text-slate-700">
         <div className="mx-auto grid max-w-7xl grid-cols-4 gap-1.5 sm:gap-2">
-          <label title={`فرع العمل: ${currentBranch?.name || 'الفرع الرئيسي'}`} className="flex h-11 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-xl border border-sky-200 bg-white px-1.5">
+          <label title={`فرع العمل: ${currentBranch?.name || 'الفرع الرئيسي'}`} className="relative flex h-11 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-xl border border-sky-200 bg-white px-1.5">
             <Building className="h-3.5 w-3.5 shrink-0 text-sky-700" />
-            <select aria-label="فرع العمل" value={currentBranch?.id || ''} onChange={(e) => handleBranchSwitch(e.target.value)} className="min-w-0 w-full truncate bg-transparent text-center text-[10px] font-bold text-slate-800 outline-none sm:text-xs">
+            <span className="truncate text-[10px] font-bold text-slate-800 sm:text-xs">فرع</span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-600" />
+            <select aria-label={`اختيار الفرع، الحالي: ${currentBranch?.name || 'الفرع الرئيسي'}`} value={currentBranch?.id || ''} onChange={(e) => handleBranchSwitch(e.target.value)} className="absolute inset-0 h-full w-full cursor-pointer opacity-0">
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </label>
-          <label title={`المستخدم الحالي: ${visibleEmployees.find((e) => e.id === actor.id)?.name || ownerDisplayName || 'المالك'}`} className="flex h-11 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-xl border border-sky-200 bg-white px-1.5">
+          <label title={`المستخدم الحالي: ${visibleEmployees.find((e) => e.id === actor.id)?.name || ownerDisplayName || 'المالك'}`} className="relative flex h-11 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-xl border border-sky-200 bg-white px-1.5">
             <Users className="h-3.5 w-3.5 shrink-0 text-sky-700" />
-            <select aria-label="من يعمل الآن" value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''} onChange={(e) => handleActorSwitch(e.target.value)} className="min-w-0 w-full truncate bg-transparent text-center text-[10px] font-bold text-slate-800 outline-none sm:text-xs">
+            <span className="truncate text-[10px] font-bold text-slate-800 sm:text-xs">مالك</span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-600" />
+            <select aria-label={`اختيار المستخدم، الحالي: ${visibleEmployees.find((e) => e.id === actor.id)?.name || ownerDisplayName || 'المالك'}`} value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''} onChange={(e) => handleActorSwitch(e.target.value)} className="absolute inset-0 h-full w-full cursor-pointer opacity-0">
               {visibleEmployees.length === 0 ? <option value="">{ownerDisplayName || 'المالك'}</option> : visibleEmployees.map((e) => <option key={e.id} value={e.id}>{e.name} — {roleLabel(e.role)}</option>)}
             </select>
           </label>
