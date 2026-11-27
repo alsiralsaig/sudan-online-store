@@ -84,11 +84,21 @@ export const MerchantHomeDashboard: React.FC<Props> = ({
   return (
     <main dir="rtl" className="min-h-full bg-slate-50 px-3 py-4 sm:px-6 sm:py-6">
       <div className="mx-auto max-w-6xl">
-        <section className="mb-4 flex items-center justify-between gap-3 overflow-hidden rounded-3xl bg-gradient-to-l from-emerald-800 to-emerald-700 px-4 py-5 text-white shadow-sm sm:px-7">
-          <div className="min-w-0"><p className="truncate text-xs font-semibold text-emerald-100">{tenantName || 'سَنَد للتاجر'}{branchName ? ` · ${branchName}` : ''}</p><h1 className="mt-1 text-2xl font-extrabold">أهلًا بك 👋</h1><p className="mt-1 text-sm text-emerald-50 sm:text-base">شنو حابب تعمل اليوم؟</p></div>
-          <div className="hidden h-16 w-16 shrink-0 place-items-center rounded-2xl bg-white/10 text-4xl sm:grid">🛍️</div>
-        </section>
-
+        <section className="mb-5" aria-label="منتجات يختارها صاحب المتجر">
+            <div className="mb-2 flex items-center justify-between gap-2 px-1"><div><h2 className="text-lg font-extrabold text-slate-900">منتجات اخترتها ✨</h2><p className="text-xs text-slate-500">عرض جمالي فقط · ما يوضح حالة المخزون</p></div>{canManageFeatured && <button type="button" onClick={() => { setDraftIds(featuredProductIds); setPickerOpen(true); }} className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm">اختيار المنتجات</button>}</div>
+            {featured.length ? (
+              <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="grid min-h-[150px] grid-cols-[42%_1fr] transition-all duration-500 sm:min-h-[190px]" key={featured[slide % featured.length].id}>
+                  <div className="relative min-h-[150px] overflow-hidden bg-gradient-to-br from-emerald-50 to-sky-100 sm:min-h-[190px]">
+                    {featured[slide % featured.length].imageUrl && !failedImages.includes(featured[slide % featured.length].id) ? <img src={featured[slide % featured.length].imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" onError={() => setFailedImages((old) => [...old, featured[slide % featured.length].id])}/> : <div className="grid h-full place-items-center text-4xl text-emerald-700"><Package size={44}/></div>}
+                  </div>
+                  <div className="flex flex-col justify-center p-4 sm:p-6"><span className="text-[11px] font-bold text-emerald-700">اختيار صاحب المتجر</span><h3 className="mt-1 line-clamp-2 text-base font-extrabold text-slate-900 sm:text-xl">{featured[slide % featured.length].name}</h3><p className="mt-1 text-xs text-slate-500">{featured[slide % featured.length].category || 'من منتجات المتجر'}</p><div className="mt-4 flex items-center gap-2"><button type="button" aria-label="المنتج السابق" onClick={() => setSlide((n) => (n - 1 + featured.length) % featured.length)} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-700"><ChevronRight size={18}/></button><span className="text-xs text-slate-500">{slide + 1} / {featured.length}</span><button type="button" aria-label="المنتج التالي" onClick={() => setSlide((n) => (n + 1) % featured.length)} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-700"><ChevronLeft size={18}/></button></div></div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-[120px] items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-4"><div><b className="text-sm text-slate-800">ما اخترت منتجات للعرض بعد</b><p className="mt-1 text-xs text-slate-500">اختر صور منتجاتك المفضلة لتظهر هنا بشكل متحرك.</p></div>{canManageFeatured && <button type="button" onClick={() => setPickerOpen(true)} className="shrink-0 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white">اختيار</button>}</div>
+            )}
+          </section>
         <div className="mb-2 flex items-center justify-between px-1">
           <div><h2 className="text-lg font-extrabold text-slate-900">{showAll ? 'كل خدمات متجرك' : 'خدمات متجرك'}</h2><p className="mt-0.5 text-xs text-slate-500">{showAll ? 'اختار الخدمة المطلوبة' : 'أهم خدماتك في مكان واحد'}</p></div>
           <button type="button" onClick={() => setShowAll((value) => !value)} className="inline-flex h-9 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800 hover:bg-emerald-100" aria-expanded={showAll}>
@@ -106,23 +116,6 @@ export const MerchantHomeDashboard: React.FC<Props> = ({
           ))}
         </section>
 
-        {!showAll && (
-          <section className="mt-5" aria-label="منتجات يختارها صاحب المتجر">
-            <div className="mb-2 flex items-center justify-between gap-2 px-1"><div><h2 className="text-lg font-extrabold text-slate-900">منتجات اخترتها ✨</h2><p className="text-xs text-slate-500">عرض جمالي فقط · ما يوضح حالة المخزون</p></div>{canManageFeatured && <button type="button" onClick={() => { setDraftIds(featuredProductIds); setPickerOpen(true); }} className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm">اختيار المنتجات</button>}</div>
-            {featured.length ? (
-              <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <div className="grid min-h-[150px] grid-cols-[42%_1fr] transition-all duration-500 sm:min-h-[190px]" key={featured[slide % featured.length].id}>
-                  <div className="relative min-h-[150px] overflow-hidden bg-gradient-to-br from-emerald-50 to-sky-100 sm:min-h-[190px]">
-                    {featured[slide % featured.length].imageUrl && !failedImages.includes(featured[slide % featured.length].id) ? <img src={featured[slide % featured.length].imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" onError={() => setFailedImages((old) => [...old, featured[slide % featured.length].id])}/> : <div className="grid h-full place-items-center text-4xl text-emerald-700"><Package size={44}/></div>}
-                  </div>
-                  <div className="flex flex-col justify-center p-4 sm:p-6"><span className="text-[11px] font-bold text-emerald-700">اختيار صاحب المتجر</span><h3 className="mt-1 line-clamp-2 text-base font-extrabold text-slate-900 sm:text-xl">{featured[slide % featured.length].name}</h3><p className="mt-1 text-xs text-slate-500">{featured[slide % featured.length].category || 'من منتجات المتجر'}</p><div className="mt-4 flex items-center gap-2"><button type="button" aria-label="المنتج السابق" onClick={() => setSlide((n) => (n - 1 + featured.length) % featured.length)} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-700"><ChevronRight size={18}/></button><span className="text-xs text-slate-500">{slide + 1} / {featured.length}</span><button type="button" aria-label="المنتج التالي" onClick={() => setSlide((n) => (n + 1) % featured.length)} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-700"><ChevronLeft size={18}/></button></div></div>
-                </div>
-              </div>
-            ) : (
-              <div className="flex min-h-[120px] items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-4"><div><b className="text-sm text-slate-800">ما اخترت منتجات للعرض بعد</b><p className="mt-1 text-xs text-slate-500">اختر صور منتجاتك المفضلة لتظهر هنا بشكل متحرك.</p></div>{canManageFeatured && <button type="button" onClick={() => setPickerOpen(true)} className="shrink-0 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white">اختيار</button>}</div>
-            )}
-          </section>
-        )}
         <p className="mt-4 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-950">محتاج مساعدة؟ تواصل مع الدعم من زر المساعدة أعلى الصفحة.</p>
       </div>
 
