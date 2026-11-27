@@ -856,78 +856,38 @@ export default function App() {
         onRefreshFromServer={() => { loadPrimaryData(); setIsCloudOpen(false); }}
       />
 
-      {/* Context Bar — merchant sees only his store + branch & role switcher (no tenant list) */}
-      <div className="theme-context-bar bg-slate-800 text-slate-300 [&[data-theme=light]]:bg-sky-50 text-[11px] px-6 py-1.5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            <Building className="w-3.5 h-3.5 text-sky-400" />
-            <span className="font-semibold text-white ctx-tenant">{tenant?.tradeName || tenant?.name || 'متجرك'}</span>
-            <span className="text-slate-500 ctx-city">• {tenant?.city || ''}</span>
+      {/* Compact merchant context: two calm, aligned rows instead of a tall information panel. */}
+      <div className="theme-context-bar border-b border-sky-200 bg-sky-50 px-3 py-2 text-xs text-slate-700">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Building className="h-4 w-4 shrink-0 text-sky-700" />
+              <span className="max-w-[42vw] truncate font-bold text-slate-800">{tenant?.tradeName || tenant?.name || 'متجرك'}</span>
+              {tenant?.city && <span className="hidden text-slate-500 sm:inline">· {tenant.city}</span>}
+            </div>
+            <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+              <label className="flex h-9 items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-2 text-[11px]">
+                <span className="text-slate-500">الفرع</span>
+                <select aria-label="فرع العمل" value={currentBranch?.id || ''} onChange={(e) => handleBranchSwitch(e.target.value)} className="max-w-[34vw] bg-transparent font-bold text-slate-800 outline-none sm:max-w-[180px]">
+                  {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </label>
+              <label className="flex h-9 items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-2 text-[11px]">
+                <Users className="h-3.5 w-3.5 text-sky-700" />
+                <select aria-label="من يعمل الآن" value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''} onChange={(e) => handleActorSwitch(e.target.value)} className="max-w-[34vw] bg-transparent font-bold text-slate-800 outline-none sm:max-w-[190px]">
+                  {visibleEmployees.length === 0 ? <option value="">{ownerDisplayName || 'المالك'}</option> : visibleEmployees.map((e) => <option key={e.id} value={e.id}>{e.name} — {roleLabel(e.role)}</option>)}
+                </select>
+              </label>
+            </div>
           </div>
-
-          {/* Branch Switcher */}
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-white ctx-label">فرع العمل:</span>
-            <select
-              value={currentBranch?.id || ''}
-              onChange={(e) => handleBranchSwitch(e.target.value)}
-              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-0.5 text-[11px] focus:outline-none ctx-select"
-            >
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-sky-100 pt-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button onClick={() => switchAppMode('client')} title="فتح تطبيق الجمهور" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-sky-600 px-2.5 text-[11px] font-bold text-white"><Globe className="h-3.5 w-3.5" /><span>الجمهور</span></button>
+              <button onClick={async () => { try { const reg = await navigator.serviceWorker?.getRegistration(); const sub = await reg?.pushManager.getSubscription(); if (sub) await api.unsubscribePush(sub.endpoint); } catch {} await api.merchantLogout(); api.clearLocalSession(); setMerchantAuthed(false); }} title="خروج المتجر" className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-bold text-slate-700">خروج</button>
+              <span className="rounded-lg bg-white/80 px-2 py-1 font-mono text-[11px] text-slate-600">SDG · جنيه سوداني</span>
+            </div>
+            {pendingOfflineCount > 0 && <span className="rounded-lg bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">فواتير معلقة: {pendingOfflineCount}</span>}
           </div>
-
-          {/*
-            * دور المستخدم مقفل على الموظف الذي دخل برمزه. تغييره يتطلب رمز
-            * الموظف الآخر (زر «تبديل الموظف»)، فلا يستطيع الكاشير أن يستلم
-            * صلاحيات المالك بضغطة واحدة.
-            */}
-          <div className="flex items-center gap-1.5">
-            <Users className="w-3.5 h-3.5 text-sky-400" />
-            <span className="font-semibold text-white ctx-label">من يعمل الآن:</span>
-            <select
-              value={visibleEmployees.some((e) => e.id === actor.id) ? actor.id : visibleEmployees[0]?.id || ''}
-              onChange={(e) => handleActorSwitch(e.target.value)}
-              className="bg-slate-900 text-white border border-slate-600 rounded px-2 py-1 text-[11px] focus:outline-none font-semibold max-w-[70vw] sm:max-w-xs ctx-select"
-            >
-              {visibleEmployees.length === 0 ? (
-                <option value="">{ownerDisplayName || 'المالك'}</option>
-              ) : (
-                visibleEmployees.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name} — {roleLabel(e.role)}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button onClick={async()=>{ try { const reg = await navigator.serviceWorker?.getRegistration(); const sub = await reg?.pushManager.getSubscription(); if (sub) await api.unsubscribePush(sub.endpoint); } catch {} await api.merchantLogout(); api.clearLocalSession(); setMerchantAuthed(false); }} className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-slate-600 rounded-lg text-[11px] ctx-btn-ghost">خروج المتجر</button>
-          <button
-            onClick={() => switchAppMode('client')}
-            className="px-2.5 py-1 bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-all shadow-xs"
-            title="فتح تطبيق المتسوقين والجمهور SanadClientApp"
-          >
-            <Globe className="w-3.5 h-3.5 text-white" />
-            <span>عرض تطبيق الجمهور (SanadClientApp)</span>
-          </button>
-        </div>
-
-        {/* Offline indicator quick status */}
-        <div className="flex items-center gap-3 font-mono text-[10px] ctx-meta">
-          <span>العملة الافتراضية: SDG (جنيه سوداني)</span>
-          {pendingOfflineCount > 0 && (
-            <span className="text-amber-400 font-bold ctx-pending">
-              • فواتير أوفلاين معلقة: {pendingOfflineCount}
-            </span>
-          )}
         </div>
       </div>
 
@@ -938,6 +898,16 @@ export default function App() {
           <MerchantHomeDashboard
             tenantName={tenant?.tradeName || tenant?.name}
             branchName={currentBranch?.name}
+            products={products}
+            featuredProductIds={tenant?.settings?.featuredProductIds || []}
+            canManageFeatured={actor.role === 'owner'}
+            onSaveFeatured={async (ids) => {
+              if (!tenant) throw new Error('بيانات المتجر غير جاهزة');
+              const result = await api.updateCurrentTenant({
+                settings: { ...tenant.settings, featuredProductIds: ids },
+              });
+              setTenant(result.tenant);
+            }}
             onNavigateTab={(tab) => setCurrentTab(tab)}
           />
         )}
@@ -1098,4 +1068,4 @@ export default function App() {
     </div>
     </PullToRefresh>
   );
-                }
+}
